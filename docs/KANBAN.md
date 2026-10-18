@@ -28,7 +28,7 @@ a mexer vai perder.
 
 ## Em andamento (WIP = 1)
 
-🔵 **Slice "a sessão que sobrevive"** — persistência + conta + identidade (ADR #16 e #17). É um
+🔵 **Slice "a sessão que sobrevive"** — persistência + conta + identidade (ADRs #16, #17 e #19). É um
 assunto só: sem identidade, "salvar" não tem dono. Quatro entregas, cada uma utilizável sozinha.
 
 | # | Entrega | Estado |
@@ -36,7 +36,26 @@ assunto só: sem identidade, "salvar" não tem dono. Quatro entregas, cada uma u
 | 1 | Postgres + migrations + cena que sobrevive ao restart | ✅ (commit `6873327`) |
 | 2 | Login + sessão assinada em cookie (a conta já nasce no banco) | ✅ (commit `7691266`) |
 | 3 | Selo da Missão: campanha criada de propósito, selo gerado, selo desconhecido recusado | ✅ (commit `cd4b3c8`) |
-| 4 | Papel pelo vínculo com a campanha; `GM_KEY` vira legado | 🔜 próximo |
+| 4 | Papel pelo vínculo com a campanha; `GM_KEY` vira legado; cadastro com freio e interruptor | ✅ (entrega 4) |
+
+**Entrega 4 fechada.** O papel de mestre deixou de ser "é a conta dona da campanha" e passou a ser uma
+linha no vínculo (`membership.role`). O dono virou o **administrador** (apaga a missão), e quem cria
+recebe o vínculo `gm` **na mesma instrução** que cria a campanha — um CTE que escreve, porque duas
+tabelas que podem se separar deixariam o dono sem o papel na própria missão, em silêncio. Junto veio o
+**cadastro**: `POST /api/accounts`, aberto por padrão, com teto (`REGISTER_PER_MINUTE`) e interruptor
+(`REGISTRATION=closed`, que também esconde o botão no lobby). O que um cadastro entrega a um estranho é
+pouco — entrar ainda exige o selo, e mestre ainda exige vínculo. O `GM_KEY` **não** saiu, e agora está
+dito por quê: sem recuperação de senha, tirá-lo trancaria o grupo de fora. É legado assumido, e sai
+quando a recuperação existir.
+
+Três coisas que a prática corrigiu nesta entrega:
+
+- **A lista virou "minhas mesas", não "minhas campanhas".** Quem entra numa missão passa a vê-la na
+  lista, com o papel à mostra (`mestre` / `agente`) — é o caminho do agente para não redigitar o selo.
+- **O `×` só aparece para o dono**, e o servidor confere de novo. A lista é conveniência; quem autoriza
+  é o servidor.
+- **A ordem dos ADRs estava trocada** desde a entrega anterior (#18 antes de #17). O log agora lê em
+  ordem, de #1 a #19.
 
 **Entrega 3 fechada.** A campanha deixou de nascer de carona: quem cria é a conta, e vira dona. O selo
 é sorteado pelo servidor — `CORVO-AMBAR-VEU-74`, três palavras sem acento e dois dígitos, ~28 bits —
@@ -57,6 +76,8 @@ Duas coisas que a prática corrigiu, e uma delas vale para sempre:
 
 **Fog por jogador (Fase 3) fica fora deste slice**, de propósito: é lógica de jogo, não persistência,
 e entraria só para inflar o WIP.
+
+**Slice fechado, 4 de 4.** O próximo WIP não está escolhido; o caminho natural é a **Fase 3**.
 
 ---
 
@@ -89,6 +110,13 @@ Que aconteceu com os outros:
 - Biblioteca de mapas e tokens (upload pelo mestre)
 - **Renomear missão** — hoje o nome só é escolhido na criação; quem errou cria outra
 
+**Contas (o que ficou fora da entrega 4):**
+
+- **Promover um agente a mestre** — a linha do vínculo já existe e o `room:join` já a lê; falta o botão
+  (uma rota de dono + a lista de membros). É o que faz o vínculo valer para além de quem criou a missão
+- **Apagar a própria conta** — mexe em campanha órfã: a missão pertence ao dono, e o dono pode querer ir
+  embora. Decidir o que acontece com a missão dele faz parte da tarefa, não é detalhe
+
 **Infra e produto:**
 
 - Domínio + Cloudflare Access + túnel nomeado (URL fixa e acesso convidado)
@@ -112,7 +140,7 @@ Nada aqui bloqueia jogar. Bloqueia **escalar sem retrabalho**.
 | Banco de dados | **Feito** | Postgres no ar com migrations e a cena em JSONB (ADR #17, entrega 1) |
 | Framework de servidor | **Decidido** | Nada de NestJS — o servidor é máquina de estado quente, não CRUD |
 | Site público e wiki | **Alvo** | Next estático + MDX no repo. Entra **depois** da mesa |
-| Identidade | **Feito (entregas 2 e 3)** | Login, sessão assinada em cookie, papel pela conta dona da campanha e missão criada de propósito com selo gerado. Falta o `GM_KEY` sair (entrega 4) |
+| Identidade | **Feito (entregas 2, 3 e 4)** | Login, sessão assinada em cookie, **cadastro** com freio e interruptor, papel de mestre pelo **vínculo** com a missão, e missão criada de propósito com selo gerado. O `GM_KEY` continua como legado, até existir recuperação de senha |
 | Arquivos (mapas/tokens) | Pendente | Volume + Caddy vs. objeto (S3/MinIO) |
 | Publicar o repositório | Pendente | Afeta CI e o Project board |
 
@@ -131,6 +159,12 @@ isso aponta*.
 
 ## Feito (últimos)
 
+- ✅ **Papel pelo vínculo + cadastro** (entrega 4 do slice) — `membership.role` decide quem é mestre, o
+  dono vira administrador, o vínculo `gm` nasce junto da campanha (um CTE que escreve), o cadastro
+  entra com teto e interruptor, e a lista do lobby virou "minhas mesas" com o papel à mostra. Testes
+  novos em `auth.mjs` (34 verificações, incluindo a conta criada pelo próprio cadastro entrando como
+  agente), com a chave errada no bolso provando que o papel vem do vínculo. Verificado local e pela URL
+  pública, mais `persist.mjs` atravessando um restart — ADR #19
 - ✅ **Selo da Missão** (entrega 3 do slice) — campanha criada de propósito pela conta dona, selo
   sorteado (três palavras + dois dígitos), selo desconhecido recusado sem criar nada, apagar só pelo
   dono, e `/api` como prefixo único de tudo que o servidor responde em HTTP. Testes novos

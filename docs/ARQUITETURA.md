@@ -161,15 +161,16 @@ em memória. Perder a partida por causa do banco seria pior do que não ter banc
 
 ---
 
-## Contas e sessão (ADR #16, entrega 2)
+## Contas e sessão (ADRs #16 e #19, entregas 2 e 4)
 
-O login passa por **HTTP**, não pelo socket. Três rotas, e só:
+O login passa por **HTTP**, não pelo socket. Quatro rotas, e só:
 
 | Rota | O que faz |
 |---|---|
 | `POST /api/auth/login` | `{ name, password }` → confere o `scrypt` e devolve o cookie de sessão |
+| `POST /api/accounts` | `{ name, password }` → **cria a conta** e já devolve o cookie (cadastro, ADR #19) |
 | `POST /api/auth/logout` | Apaga o cookie no cliente |
-| `GET /api/auth/me` | `{ ok, account }` — quem este navegador é, se alguém for |
+| `GET /api/auth/me` | `{ ok, account, signup }` — quem este navegador é, e se o servidor aceita cadastro novo |
 
 O jogo continua inteiro no Socket.IO. A divisão é deliberada: tempo real e CRUD são módulos
 separados, para trocar um sem encostar no outro (`server/src/http.ts`).
@@ -192,7 +193,7 @@ POST /api/auth/login ─▶ cookie assinado (HMAC-SHA256, HttpOnly, SameSite=Lax
 navegador abre o socket ─▶ handshake leva o cookie ─▶ servidor sabe QUEM é, antes de qualquer evento
                           │
                           ▼
-room:join ─▶ nome vem da conta; papel vem do dono da campanha
+room:join ─▶ nome vem da conta; papel vem do vínculo com a missão
 ```
 
 O cookie é **stateless**: carrega `{accountId, name, iat, exp}` e a assinatura. Sem tabela de
@@ -203,16 +204,44 @@ todas as sessões de uma vez, o que é o botão de pânico suficiente por agora.
 Sem `SESSION_SECRET` configurado, o login fica **desligado** e o servidor avisa no log: só convidado
 entra. É melhor isso do que assinar sessão com uma chave inventada.
 
-### Duas formas de ser mestre (durante a migração)
+### Cadastro: aberto, com freio e interruptor (ADR #19)
+
+Criar conta é `POST /api/accounts`: nome de 2 a 24 caracteres, senha de 6 a 200, e o servidor já
+devolve o cookie — quem se cadastra entra, sem tela de "agora digite de novo o que você acabou de
+digitar".
+
+**O cadastro é aberto por padrão.** `REGISTRATION=closed` fecha a porta (o lobby para de oferecer
+"criar conta", o servidor responde 403 e o boot avisa), e `REGISTER_PER_MINUTE` (padrão 10) limita a
+rajada. O freio é modesto porque o que um cadastro entrega a um estranho é pouco: **entrar ainda exige
+o Selo da Missão, e ser mestre ainda exige vínculo**. A conta sozinha não abre mesa nenhuma — o limite
+existe para não entupir o `scrypt`, que é caro de propósito e roda na mesma thread da partida.
+
+`GET /api/auth/me` devolve `signup` junto de "quem sou eu": o lobby precisa saber se pode oferecer o
+formulário antes de a pessoa preencher.
+
+**Nome repetido é dito na cara aqui — no login, não.** É a única assimetria, e é inevitável: o índice
+`unique` recusaria de qualquer jeito, e uma mensagem genérica só faria a pessoa tentar de novo à toa.
+No login a resposta continua cega, porque ali não custa nada ser cego (e evita a enumeração de nomes).
+
+### Quem é mestre: o vínculo, não a posse (ADR #19)
 
 | Caminho | Como | Situação |
 |---|---|---|
-| **Conta dona da campanha** | Login. `campaign.gm_account_id` bate com a conta da sessão | O caminho novo — **sem senha nenhuma** |
-| `GM_KEY` | Senha compartilhada digitada no lobby | Bootstrap. Sai na entrega 4, quando o vínculo virar papel |
+| **Vínculo de mestre** | `membership.role = 'gm'` para aquela missão | O caminho de verdade — **sem senha nenhuma** |
+| `GM_KEY` | Senha compartilhada digitada no lobby | **Legado**, mantido por não existir recuperação de senha |
 
-Recusar em vez de rebaixar em silêncio é de propósito: quem digitou a senha errada precisa entender
-por que não manda no mapa. O `ack` diz qual dos dois caminhos falhou — "senha incorreta" para quem
-está logado mandaria procurar o problema no lugar errado.
+`campaign.gm_account_id` continua existindo, mas virou o **dono**: quem administra (apaga a missão,
+aparece como dono na lista). Quem criou a missão recebe um vínculo `gm` **na mesma instrução** que a
+cria — um CTE que escreve, e no Postgres ele roda inteiro ou não roda. Se as duas coisas pudessem se
+separar, o dono ficaria sem o papel de mestre na própria missão, em silêncio.
+
+**Estar na mesa é ser agente dela; ser mestre é outorga explícita.** Entrar grava vínculo de jogador, e
+o conflito não rebaixa ninguém: um mestre pode querer jogar como agente numa sessão. Sem essa regra,
+entrar com a `GM_KEY` — uma senha compartilhada — promoveria a pessoa para sempre, em silêncio.
+
+Recusar em vez de rebaixar em silêncio é de propósito: quem digitou a senha errada precisa entender por
+que não manda no mapa. O `ack` diz qual dos dois caminhos falhou — "senha incorreta" para quem está
+logado mandaria procurar o problema no lugar errado.
 
 **Convidado continua convidado:** sem conta, o nome é digitado (até 24 caracteres) e a identidade é o
 id do socket, como sempre foi. A conta é um upgrade, não um pedágio — o grupo entra sem cadastro.
@@ -249,9 +278,9 @@ A campanha passou a ser criada **de propósito**, e não de carona:
 
 | Rota | Quem pode | O que faz |
 |---|---|---|
-| `POST /api/campaigns` | conta | Cria a missão (nome + selo sorteado) e torna a conta **dona** |
-| `GET /api/campaigns` | conta | As missões da conta — perder o selo não pode ser perder a mesa |
-| `DELETE /api/campaigns/:selo` | dona | Apaga a missão, a cena e o vínculo junto |
+| `POST /api/campaigns` | conta | Cria a missão (nome + selo sorteado), torna a conta **dona** e **mestra** |
+| `GET /api/campaigns` | conta | **Minhas mesas**: as que criei e as que entrei, com o papel de cada uma |
+| `DELETE /api/campaigns/:selo` | dona | Apaga a missão, a cena e os vínculos junto |
 
 Antes, entrar com um selo novo criava a linha na hora: qualquer um com a URL criava campanha sem
 limite — e a tabela encheu de `SMOKE-*` e `AUTH-*` só de rodar teste. Agora **selo desconhecido não
@@ -281,7 +310,7 @@ limite de pacotes.
 
 | Momento | O que aparece |
 |---|---|
-| Logado, no lobby | Lista **Missões de \<conta\>** — clicar preenche o selo, `×` apaga (com confirmação que avisa que a cena vai junto) |
+| Logado, no lobby | Lista **Missões de \<conta\>**, com **mestre** ou **agente** em cada uma — clicar preenche o selo; o `×`, que só o dono vê, apaga com confirmação |
 | Recém-criada | O selo é destacado e já cai no campo: é o que o mestre dita para o grupo |
 | Convidado | Digita o selo uma vez; fica guardado no navegador para a próxima |
 | Na mesa | O cabeçalho mostra o **nome** da missão; o selo continua à mão do mestre |
@@ -352,7 +381,7 @@ Cliente → Servidor
 
 | Evento | Payload | Quem pode |
 |---|---|---|
-| `room:join` | `{ code, name, role, key }` + ack | todos — `code` precisa ser um **selo existente**; `role: "gm"` exige a conta dona da campanha **ou** `key` |
+| `room:join` | `{ code, name, role, key }` + ack | todos — `code` precisa ser um **selo existente**; `role: "gm"` exige **vínculo de mestre** com a missão **ou** `key` |
 | `actor:intent-move` | `{ actorId, row, col }` | dono do ator ou GM |
 | `fog:discover` | `{ cells: [{row, col}] }` | todos — o servidor só aceita célula que algum ator enxerga |
 | `map:walls` | `{ op: "set" \| "clear", cells }` | GM |
@@ -385,7 +414,7 @@ delta entra **atrás do mesmo adapter** — o resto do sistema não muda.
 então quem entra usa o ack como primeiro estado; sem isso a tela fica vazia por um instante.
 
 O ack também é o canal de recusa: `{ ok: false, error }`. **Dois** motivos usam isso hoje — o **selo
-desconhecido** (ADR #18) e entrar como mestre sem ser a conta dona da campanha e com `key` errada. Nos
+desconhecido** (ADR #18) e entrar como mestre sem vínculo de mestre na missão e com `key` errada. Nos
 dois casos o cliente volta para o lobby mostrando o motivo, em vez de ficar conectado sem estar na
 sala. A recusa de mestre também **descarta a sala** se ela tiver ficado vazia: a sala foi carregada só
 para decidir o papel, e sem isso ela ficaria para sempre em memória, vazia e invisível. A recusa de
@@ -396,16 +425,17 @@ sessão" e em "Selo da Missão".
 
 ### Quem é mestre
 
-Duas formas convivem até a entrega 4 (ver "Contas e sessão"): **login com a conta dona da campanha**
-(o caminho novo, sem senha nenhuma) ou **`GM_KEY`**, a senha única compartilhada (o bootstrap).
+Quem decide é o **vínculo com a missão**: `membership.role = 'gm'`. Quem cria a missão recebe esse
+vínculo (e é também o **dono**, que é quem apaga). O `GM_KEY` continua valendo como escapatória — é
+legado, e sai quando existir recuperação de senha (ver "Quem é mestre: o vínculo, não a posse").
 
-Sem `GM_KEY` definida e sem conta, qualquer um vira mestre — o que só é aceitável em rede local: o
-servidor avisa no log ao subir, e `deploy/check-publico.ps1` avisa de novo se as portas estiverem
-abertas para a internet.
+Sem `GM_KEY` definida, ela não recusa ninguém: qualquer um entra como mestre. O que só é aceitável em
+rede local — o servidor avisa no log ao subir, e `deploy/check-publico.ps1` avisa de novo se as portas
+estiverem abertas para a internet.
 
 O papel é decidido **uma vez, na entrada**, e vale para a conexão inteira. Não existe promover ou
 rebaixar alguém com a mesa aberta: a identidade não muda no meio de uma partida, e um evento novo só
-precisa consultar o que já foi decidido. Ver `DECISOES.md` #12 e #16.
+precisa consultar o que já foi decidido. Ver `DECISOES.md` #12, #16 e #19.
 
 ### O adapter de rede
 
@@ -516,27 +546,37 @@ Feito:
   assinado com HMAC-SHA256. Resposta de login igual para usuário inexistente e senha errada — inclusive
   no tempo. Limite global de tentativas de login, porque `scrypt` é caro e o mesmo processo serve a
   partida.
+- **Cadastro de conta (ADR #19):** `POST /api/accounts` cria a conta e já devolve a sessão. Aberto por
+  padrão, com teto global (`REGISTER_PER_MINUTE`) e interruptor (`REGISTRATION=closed`, que também faz
+  o lobby parar de oferecer o formulário). O que um cadastro entrega a um estranho é pouco: entrar
+  ainda exige o selo, e mestre ainda exige vínculo.
 - **A identidade chega no handshake**, pelo cookie: não existe evento de "autenticar" que alguém possa
   esquecer de chamar.
 - **Criar e apagar missão exigem conta** (ADR #18): quem cria é o dono, e apagar é do dono. Quem não é
-  dono recebe 404 e não descobre nem quais selos existem.
+  dono recebe 404 e não descobre nem quais selos existem. O papel de **mestre na mesa** vem do
+  **vínculo** (`membership.role`), não da posse (ADR #19).
 
 Ainda não feito (anotado no ROADMAP):
 
-- **RBAC de verdade:** papéis e permissão por token. Hoje existem **duas** formas de virar mestre — o
-  `GM_KEY`, que é segredo compartilhado e portanto não responde "quem é quem", e a conta dona da
-  campanha. A segunda já está ligada ao `room:join`; falta o `GM_KEY` sair (entrega 4) e o papel do
-  jogador vir do vínculo.
+- **RBAC de verdade:** papéis e permissão por token. O papel do jogador **já vem do vínculo**
+  (`membership.role`), e o `GM_KEY` virou legado explícito. Ele só sai quando existirem recuperação de
+  senha e revogação de sessão — antes disso, tirá-lo trancaria o grupo de fora se o mestre esquecesse a
+  senha. Falta: promover um agente a mestre (a linha existe, falta o botão) e ler o vínculo para além
+  de mestre/jogador.
 - **Sem revogação de sessão e sem recuperação de senha.** O cookie é stateless: sair só o apaga no
   navegador, e um cookie copiado vale até expirar. Trocar `SESSION_SECRET` derruba todas as sessões.
   Quem esquecer a senha depende do mestre (a senha de mestre é temporária e está avisada no lobby).
 - **Jogador entra sem senha.** O `GM_KEY` protege só o papel de mestre. O plano mudou de um `JOIN_KEY`
   separado para o **vínculo com a campanha** (ADR #16): quem controla a entrada é pertencer à mesa,
-  não saber uma segunda senha.
+  não saber uma segunda senha. Hoje o vínculo é **gravado na entrada**, não exigido para entrar: com o
+  selo, já se entra e já se vira membro.
+- **Apagar a própria conta não existe**, e mexeria em campanha órfã: a campanha pertence ao dono, e o
+  dono pode querer ir embora. Enquanto isso, o teste de vínculo limpa a conta de teste pelo banco (ver
+  `server/scripts/harness.mjs`) — é o único ponto da suíte que fala com o banco em vez de falar HTTP.
 - **Missão não tem renomear.** O nome é escolhido na criação e o `PATCH` ainda não existe: quem
   errou o nome cria outra missão. Barato de resolver, e não interfere em nada.
 - **Visão por jogador (`visibleNow`):** hoje `fogExplored` é compartilhado e o cliente recebe **todos**
   os atores, então um jogador vê o raio de visão dos outros tokens, não só o do dele.
 - **O selo é o convite, e convite vaza.** Quem tem o endereço e o selo entra como jogador; o selo não
-  é segredo forte, é difícil de adivinhar. Ser mestre exige a conta dona da campanha. Para mesa fechada
-  de verdade, use a Opção C (Tailscale) do Caddyfile.
+  é segredo forte, é difícil de adivinhar. Ser mestre exige **vínculo com a missão** (ou a senha de
+  mestre, que é legado). Para mesa fechada de verdade, use a Opção C (Tailscale) do Caddyfile.

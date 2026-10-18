@@ -354,6 +354,9 @@ ambos reféns disto — e por isso vêm juntos (ADR #17).
 - **Papel vem do vínculo** com a campanha (`membership.role`), não de uma senha. O `GM_KEY`
   continua aceito como caminho de bootstrap enquanto o resto migra, e depois sai — o ADR #12
   fica superado.
+  *(Emenda da entrega 4, ADR #19: o vínculo virou o caminho de verdade e o `GM_KEY` virou legado
+  assumido. Ele **não** sai antes de existir recuperação de senha — senão um mestre esquecido tranca o
+  grupo de fora. Ver também o cadastro em `POST /api/accounts`.)*
 - **Mestre exige conta.** Jogador pode entrar como **convidado** (só nome); aí a identidade é do
   socket, como hoje, e isso é dito com todas as letras em vez de parecer que não é.
 
@@ -388,51 +391,6 @@ rotas de autenticação serem `POST`.
   para o app e o resto é arquivo estático: rota nova dentro do prefixo não tem como ser esquecida, e
   rota que falta vira 404 de verdade.
 
-## #18 – Selo da Missão: campanha se cria de propósito, com código gerado e legível
-
-**Contexto.** A entrega 1 criou a campanha **de carona**: entrar com um selo qualquer criava a linha
-na hora (`ensureCampaign`). Isso mantinha o comportamento antigo e deixava o furo anotado — qualquer
-um com a URL cria campanha sem limite, e o banco encheu de `SMOKE-*` e `AUTH-*` só de rodar teste.
-Ao mesmo tempo ficou claro o que o selo **é** de verdade: convidado não tem conta, então o selo é o
-convite dele. Um código adivinhável é uma porta aberta.
-
-**Decisão.**
-
-- **Criar é um ato deliberado, e exige conta.** `POST /api/campaigns` (autenticado) cria a campanha e
-  torna a conta a **dona** (`gm_account_id`) — o que, pelo ADR #16, já dá o papel de mestre sem senha.
-  `GET /api/campaigns` lista as do dono, porque perder o selo é o mesmo que perder a mesa: ele precisa
-  poder consultar de novo. `DELETE /api/campaigns/:selo` é do dono, e é o par obrigatório do criar —
-  sem ele, cada selo abandonado é lixo permanente.
-- **Selo desconhecido não entra, e não cria nada.** Sem linha, sem sala em memória. `room:join`
-  devolve `{ok:false}` com o motivo, para o lobby explicar em vez de deixar a pessoa num socket
-  conectado que não está na mesa.
-- **O selo é gerado pelo servidor: três palavras e dois dígitos** (`CORVO-AMBAR-VEU-74`). Ditável em
-  voz alta, sem código fraco escolhido com pressa e sem dois mestres disputando o mesmo nome.
-  Palavras **sem acento** e distintas entre si; tolerância de digitação fica com `normalizeCode`, que
-  passa a **remover acentos** (quem ouvir "âmbar" e digitar `ÂMBAR` acerta do mesmo jeito). O nome
-  humano da missão ("A Maldição de Veríssimo") mora em `campaign.name`, separado do código.
-- **O nome não é segredo; o selo é.** Por isso os dois não se derivam: batizar a missão não pode
-  determinar o convite.
-- **`ROOM_CODE` deixa de ser "o código que cria a sala"** e vira o **selo sugerido** do lobby. É
-  criado no boot **apenas quando o banco está vazio** — o primeiro boot precisa de uma missão para o
-  grupo entrar, mas um selo que ressuscita a cada restart seria surpresa ruim: apagar a missão padrão
-  e vê-la voltar é o tipo de mágica que faz duvidar do que ficou salvo. Apagada com outras missões
-  existindo, ela fica apagada.
-- **Banco fora não recusa selo.** O veredito precisa de banco: sem ele não há como confirmar campanha
-  nenhuma, e recusar todo mundo transformaria "banco caiu" em "mesa não abre" — exatamente o que o
-  ADR #17 proíbe. A consulta distingue **"não existe"** de **"não deu para saber"**: no primeiro caso
-  recusa, no segundo entra em memória como antes.
-- **Errar o selo custa caro.** Cada conexão conta tentativas de selo errado e é derrubada ao passar do
-  limite. Sem isso, adivinhar vira uma conta de probabilidade contra o único evento que precisa de
-  palpite.
-
-**Consequências.** O lobby ganha a lista de missões da conta e o botão de criar — só para quem entrou;
-convidado continua digitando o nome e o selo, e o último selo fica guardado no navegador para não
-digitar de novo. Os testes param de criar lixo: passam a criar a campanha de que precisam e **apagar
-no fim** (com a degradação para selo aleatório, para continuarem rodando com o banco fora, que é um
-modo que a mesa precisa suportar). `GM_KEY` continua valendo como bootstrap até a entrega 4 — o
-caminho de mestre por conta e o legado convivem.
-
 ## #17 – Persistência: Postgres, campanha com Selo da Missão e cena em JSONB
 
 **Contexto.** As salas vivem em memória e nada é escrito em disco — decisão explícita do ADR #15,
@@ -465,9 +423,10 @@ apaga a mesa; e não existe lugar nenhum para guardar conta, campanha ou ficha. 
 - Gravação **com debounce**: alguns segundos depois da última mudança, mais um flush quando o
   último jogador sai. A cena viva continua em memória (rápida, como hoje) e o banco é a cópia
   durável. Gravar a cada evento seria amplificação de escrita por nada.
-- **`ownerId` do ator é um socket e não é persistido como está.** Ao gravar, vira
-  `ownerAccountId` — ou `null` quando o dono é convidado. Socket id não sobrevive a um restart;
-  gravá-lo seria gravar lixo.
+- **`ownerId` do ator é um socket, e não é persistido.** O token de jogador nem chega ao banco: ele
+  pertence à sessão, e volta a existir quando o jogador entra de novo. Os NPCs ficam, sem dono —
+  quem controla é o mestre até alguém assumir. Gravar socket id seria gravar lixo que não sobrevive
+  a um restart.
 - **Degradação, não queda:** se o banco estiver fora, o servidor **sobe**, registra o erro e a
   mesa funciona em memória como hoje. Derrubar a partida por causa do banco seria pior do que não
   ter banco.
@@ -478,3 +437,105 @@ motivo de ele estar publicado no loopback. Backup deixa de ser opcional e vira r
 `pg_dump` do volume entra no `DEPLOY.md`. E fica dito que isto **não** é compressão: `walls` e
 `fogExplored` continuam indo como arrays, na rede e no banco; bitset/RLE segue sendo assunto
 separado, de propósito.
+
+## #18 – Selo da Missão: campanha se cria de propósito, com código gerado e legível
+
+**Contexto.** A entrega 1 criou a campanha **de carona**: entrar com um selo qualquer criava a linha
+na hora (`ensureCampaign`). Isso mantinha o comportamento antigo e deixava o furo anotado — qualquer
+um com a URL cria campanha sem limite, e o banco encheu de `SMOKE-*` e `AUTH-*` só de rodar teste.
+Ao mesmo tempo ficou claro o que o selo **é** de verdade: convidado não tem conta, então o selo é o
+convite dele. Um código adivinhável é uma porta aberta.
+
+**Decisão.**
+
+- **Criar é um ato deliberado, e exige conta.** `POST /api/campaigns` (autenticado) cria a campanha e
+  torna a conta a **dona** (`gm_account_id`) — o que, pelo ADR #16, já dá o papel de mestre sem senha.
+  `GET /api/campaigns` lista as do dono, porque perder o selo é o mesmo que perder a mesa: ele precisa
+  poder consultar de novo. `DELETE /api/campaigns/:selo` é do dono, e é o par obrigatório do criar —
+  sem ele, cada selo abandonado é lixo permanente.
+  *(Emenda da entrega 4, ADR #19: dono e mestre se separaram — o dono administra, e quem comanda a mesa
+  é o vínculo (`membership.role`). Por isso a lista passou a ser "as que criei **e as que entrei**", com
+  o papel de cada uma.)*
+- **Selo desconhecido não entra, e não cria nada.** Sem linha, sem sala em memória. `room:join`
+  devolve `{ok:false}` com o motivo, para o lobby explicar em vez de deixar a pessoa num socket
+  conectado que não está na mesa.
+- **O selo é gerado pelo servidor: três palavras e dois dígitos** (`CORVO-AMBAR-VEU-74`). Ditável em
+  voz alta, sem código fraco escolhido com pressa e sem dois mestres disputando o mesmo nome.
+  Palavras **sem acento** e distintas entre si; tolerância de digitação fica com `normalizeCode`, que
+  passa a **remover acentos** (quem ouvir "âmbar" e digitar `ÂMBAR` acerta do mesmo jeito). O nome
+  humano da missão ("A Maldição de Veríssimo") mora em `campaign.name`, separado do código.
+- **O nome não é segredo; o selo é.** Por isso os dois não se derivam: batizar a missão não pode
+  determinar o convite.
+- **`ROOM_CODE` deixa de ser "o código que cria a sala"** e vira o **selo sugerido** do lobby. É
+  criado no boot **apenas quando o banco está vazio** — o primeiro boot precisa de uma missão para o
+  grupo entrar, mas um selo que ressuscita a cada restart seria surpresa ruim: apagar a missão padrão
+  e vê-la voltar é o tipo de mágica que faz duvidar do que ficou salvo. Apagada com outras missões
+  existindo, ela fica apagada.
+- **Banco fora não recusa selo.** O veredito precisa de banco: sem ele não há como confirmar campanha
+  nenhuma, e recusar todo mundo transformaria "banco caiu" em "mesa não abre" — exatamente o que o
+  ADR #17 proíbe. A consulta distingue **"não existe"** de **"não deu para saber"**: no primeiro caso
+  recusa, no segundo entra em memória como antes.
+- **Errar o selo custa caro.** Cada conexão conta tentativas de selo errado e é derrubada ao passar do
+  limite. Sem isso, adivinhar vira uma conta de probabilidade contra o único evento que precisa de
+  palpite.
+
+**Consequências.** O lobby ganha a lista de missões da conta e o botão de criar — só para quem entrou;
+convidado continua digitando o nome e o selo, e o último selo fica guardado no navegador para não
+digitar de novo. Os testes param de criar lixo: passam a criar a campanha de que precisam e **apagar
+no fim** (com a degradação para selo aleatório, para continuarem rodando com o banco fora, que é um
+modo que a mesa precisa suportar). `GM_KEY` continua valendo como bootstrap — o caminho de mestre por
+conta e o legado convivem (na entrega 4 o papel passou a vir do vínculo; ver ADR #19).
+
+## #19 – A conta do agente: cadastro com freio, e o papel de mestre vem do vínculo
+
+**Contexto.** A entrega 3 fechou o selo, mas deixou um buraco que só apareceu ao usar: **só existe uma
+conta possível**, a do mestre, semeada no boot. Sem jeito de criar conta, "papel pelo vínculo com a
+campanha" (a entrega 4) não significaria nada — não há segundo membro para o vínculo valer — e os
+amigos do grupo continuariam redigitando o nome toda sessão, que era exatamente o que a conta veio
+resolver.
+
+**Decisão (1): dá para criar a própria conta, e essa é uma porta que se fecha.**
+
+- **`POST /api/accounts`** cria a conta (nome de 2 a 24 caracteres, senha de 6 a 200) e **já devolve o
+  cookie de sessão**: quem se cadastra entra. Não existe tela de "agora digite o que você acabou de
+  digitar".
+- **O cadastro é aberto por padrão, com teto e interruptor.** `REGISTRATION=closed` fecha (o lobby para
+  de oferecer, o servidor responde 403) e `REGISTER_PER_MINUTE` limita a rajada. Uma tela de
+  administração para aprovar conta seria muito mais código para um problema que dura uma tarde.
+- **O que um cadastro entrega a um estranho é pouco**, e é por isso que o freio é modesto: entrar ainda
+  exige o Selo da Missão, e ser mestre ainda exige vínculo. A conta sozinha não abre mesa nenhuma. O
+  limite existe para não entupir o `scrypt`, que é caro de propósito e roda na mesma thread da partida.
+- **`GET /api/auth/me` diz se o cadastro está aberto** (`signup`), junto de "quem sou eu": o lobby
+  precisa saber antes de oferecer o formulário.
+- **Nome repetido é dito na cara aqui — no login, não.** É a única assimetria, e ela é inevitável: o
+  `unique` recusaria de qualquer jeito, e uma mensagem genérica só faria a pessoa tentar de novo à toa.
+  No login a resposta continua cega, porque ali não custa nada ser cego.
+
+**Decisão (2): o papel de mestre mora no vínculo, não em ser dono.**
+
+- **`membership.role` decide quem é mestre na mesa.** O critério antigo era "é a conta dona da
+  campanha": dava no mesmo enquanto só existia uma conta, e travava um co-mestre — que precisaria criar
+  outra campanha ou pegar a senha compartilhada emprestada.
+- **Dono e mestre deixaram de ser a mesma coisa.** `campaign.gm_account_id` é o **dono** (administra:
+  apaga a missão, aparece como dono na lista). `membership.role = 'gm'` é o **mestre** (comanda a
+  mesa). Hoje só quem cria é dono, então quem cria é as duas coisas.
+- **Quem cria vira mestre na mesma instrução.** Campanha e vínculo são duas tabelas, e se a segunda
+  falhasse o dono ficaria sem o papel de mestre na própria missão — erro silencioso e cruel. Um CTE que
+  escreve resolve: no Postgres ele roda inteiro ou não roda.
+- **`membership` ganha backfill obrigatório** (`002_vinculo_gm.sql`): sem ele, o mestre de hoje perde o
+  papel no primeiro boot. Promove quem já tinha vínculo de jogador na própria campanha — quem criou a
+  mesa é mestre dela, por definição.
+- **Estar na mesa é ser agente dela; ser mestre é outorga explícita.** Entrar grava vínculo de jogador,
+  e o conflito não rebaixa ninguém: um mestre pode querer jogar como agente numa sessão. Sem essa
+  regra, entrar com a `GM_KEY` — uma senha compartilhada — promoveria a pessoa para sempre, em
+  silêncio.
+- **A lista do lobby passa a ser "minhas mesas", não "minhas campanhas"**: as que criei e as que
+  entrei. É o caminho do agente para não redigitar o selo, com o papel de cada uma à mostra e o `×` só
+  para o dono — que o servidor confere de novo. A lista é conveniência; quem autoriza é o servidor.
+
+**Consequências.** O `GM_KEY` não foi embora, e agora está dito por quê: **sem recuperação de senha,
+tirá-lo trancaria o grupo de fora** se o mestre esquecesse a senha — ou se o `SESSION_SECRET` fosse
+trocado, o que desloga todo mundo de uma vez. Ele virou legado explícito (o boot diz, o lobby diz) e sai
+quando existir recuperação de senha, não antes. Ficam pendentes, de propósito: promover um agente a
+mestre (a linha existe, falta o botão), apagar a própria conta (mexe em campanha órfã) e renomear
+missão.

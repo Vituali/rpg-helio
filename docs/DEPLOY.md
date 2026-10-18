@@ -96,10 +96,16 @@ série (dois NATs), WAN diferente do IP fixo, ou bloqueio da operadora nas porta
 > porta fechada, o Caddy tenta o certificado a cada poucos minutos, e o Let's Encrypt bloqueia quem
 > falha 5 vezes na mesma hora — o certificado atrasaria justamente quando você está testando.
 
-**Antes de abrir a porta, defina `GM_KEY` no `deploy/.env`.** Sem ela, qualquer um que chegar na URL
+**Antes de abrir a porta, defina `GM_KEY` e `SESSION_SECRET` no `deploy/.env`.** Sem sessão, o login
+fica desligado e ninguém cria conta: só convidado entra. Sem `GM_KEY`, qualquer um que chegar na URL
 entra como mestre e assume a mesa — e o endereço não é secreto: o hostname vai para o log público de
-certificados (`crt.sh`) assim que o HTTPS sobe. O `check-publico.ps1` avisa se você esquecer, e o log
-do servidor também. É uma senha única compartilhada, não um sistema de contas: RBAC é a Fase 4.
+certificados (`crt.sh`) assim que o HTTPS sobe. O `check-publico.ps1` avisa se você esquecer, e o log do
+servidor também.
+
+Desde a entrega 4 cada pessoa **cria a própria conta** no lobby, e o papel de mestre vem do **vínculo**
+com a missão — sem senha compartilhada (ADR #19). O `GM_KEY` virou escapatória: ele continua definido e
+funcionando, e sai quando existir recuperação de senha. Enquanto isso, trate-o como a chave que abre o
+porão — e **feche o cadastro** quando o grupo todo tiver conta (ver "O cadastro de conta").
 
 ---
 
@@ -215,8 +221,8 @@ Dois detalhes que importam:
 Precisa de um domínio (o mais barato serve) apontado para a Cloudflare; aí a URL passa a ser sua e
 permanente. Com o domínio lá, ligue o **Cloudflare Access** (grátis até 50 usuários): só quem você
 convidar consegue **chegar** no servidor, com login por e-mail. Isso resolve na borda o que o
-`GM_KEY` resolve dentro do jogo, e é o mais perto de um "login com autorização" de verdade sem
-escrever RBAC ainda.
+**Selo da Missão** resolve dentro do jogo, e é o mais perto de um "login com autorização" de verdade
+sem escrever RBAC ainda.
 
 > **Não misture túnel com `SITE_ADDRESS` de domínio.** No modo rápido, deixe `SITE_ADDRESS=:80` e
 > pronto. Se você puser um domínio em `SITE_ADDRESS` enquanto o túnel aponta para `http://caddy:80`,
@@ -301,6 +307,7 @@ Três variáveis novas no `.env` (detalhe em `.env.example`):
 | `POSTGRES_PASSWORD` | senha do banco; troque por uma sua |
 | `SESSION_SECRET` | assina o cookie de sessão (ADR #16) |
 | `SEED_MASTER_USER` / `SEED_MASTER_PASS` | conta de mestre criada no primeiro boot, se não existir |
+| `REGISTRATION` / `REGISTER_PER_MINUTE` | cadastro de conta aberto ou fechado, e o teto por minuto (ADR #19) |
 
 A porta 5432 é publicada **só no loopback** (`127.0.0.1`): dá para abrir um cliente de banco nesta
 máquina, mas nada na rede alcança. É de propósito — um banco com senha não é lugar para repetir a
@@ -324,6 +331,7 @@ servidor (ADR #18). É o convite: quem tem o endereço **e** o selo entra como j
 |---|---|
 | Mestre | Entra com a conta (`SEED_MASTER_USER`/`SEED_MASTER_PASS`), cria a missão no lobby e **dita o selo** para o grupo |
 | Jogador | Abre o endereço, digita o selo uma vez (fica guardado no navegador) e escolhe o nome |
+| Com conta | Em vez de redigitar o nome toda sessão, **cria a própria conta** no lobby — e o papel de mestre passa a vir do vínculo com a missão |
 
 Três consequências práticas:
 
@@ -333,6 +341,31 @@ Três consequências práticas:
 - **`ROOM_CODE` é só o selo sugerido.** Ele é criado no boot **quando o banco está vazio** (primeiro
   boot), para o grupo não precisar criar a missão antes de entrar. Com outras missões já existindo,
   apagar a padrão funciona e ela não volta.
+
+### O cadastro de conta (entrega 4)
+
+Quem joga por aqui cria a própria conta no lobby (`POST /api/accounts`, ADR #19), e o cadastro já deixa
+a pessoa logada. Com conta, o nome não é redigitado a cada sessão e o **papel de mestre vem do vínculo
+com a missão** — sem a senha compartilhada.
+
+O cadastro nasce **aberto**, com teto de tentativas e um interruptor:
+
+| Variável | Padrão | Para que |
+|---|---|---|
+| `REGISTRATION` | `open` | `closed` fecha o cadastro: o lobby para de oferecer "criar conta" e o servidor responde 403 |
+| `REGISTER_PER_MINUTE` | `10` | teto global de cadastros por minuto (contra entupir o `scrypt`) |
+
+**Quando o grupo todo tiver conta, feche a porta** — é uma linha no `deploy/.env` e um restart:
+
+```powershell
+# em deploy/.env
+REGISTRATION=closed
+
+docker compose up -d app     # o log deve dizer: cadastro: FECHADO
+```
+
+Entrar continua funcionando; só criar conta nova é que para. Fechar o cadastro **não** protege a mesa
+(quem protege é o selo), mas corta a única porta que um estranho com a URL pode usar sem convite.
 
 ### Backup
 
@@ -383,7 +416,7 @@ docker compose down -v            # derruba e apaga o banco — a campanha vai j
 | `deploy/Caddyfile` | serve o front estático + proxy do WebSocket **e de todo `/api/*`** + TLS; o endereço vem de `SITE_ADDRESS` |
 | `deploy/install.ps1` | instala Docker (se preciso) e sobe o stack |
 | `deploy/check-publico.ps1` | testa, de fora para dentro, se a internet já alcança o servidor |
-| `deploy/.env.example` | modelo das variáveis (endereço, `GM_KEY`, banco, sessão) |
+| `deploy/.env.example` | modelo das variáveis (endereço, `GM_KEY`, banco, sessão, cadastro) |
 | `deploy/.env` | **não vai pro git** — a sua configuração real; crie a partir do exemplo |
 | `server/migrations/*.sql` | esquema do banco, em SQL numerado (ADR #17) |
 | `.dockerignore` | evita copiar `node_modules`/`dist` para a imagem |

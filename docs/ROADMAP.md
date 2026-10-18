@@ -96,8 +96,9 @@ resultado.
 
 ## Fase 4 — Polimento ⬜
 
-- ⬜ **RBAC de verdade**: contas, papéis, permissão por token e sessão assinada — substitui o `GM_KEY`
-  (senha única compartilhada, que resolve só o estranho que acha a URL). É o passo para virar
+- 🟡 **RBAC de verdade**: contas, sessão assinada e papel de mestre pelo **vínculo** com a missão já
+  existem (ADRs #16 e #19); falta a permissão por token e o `GM_KEY` sair — o que depende de
+  recuperação de senha e revogação de sessão. É o passo para virar
   projeto e não só mesa de amigos; planejado para escalar.
 - ⬜ Voz (WebRTC) — Socket.IO já é a sinalização
 - ⬜ Rolagem de dados com histórico

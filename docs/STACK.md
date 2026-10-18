@@ -83,7 +83,7 @@ e é o que evita as duas implementações divergirem.
 | Acesso a dados | 🔜 **Drizzle** ou **Kysely** (SQL tipado) — **não Prisma** |
 | Validação | 🔜 **Zod** na fronteira: socket e HTTP |
 | Migrations | 🔜 SQL numerado + runner pequeno, desde a primeira tabela |
-| Identidade | 🔜 sessão assinada (token em cookie `HttpOnly`) — hoje é `GM_KEY` |
+| Identidade | ✅ conta + sessão assinada (cookie `HttpOnly`); papel de mestre pelo **vínculo** com a missão — o `GM_KEY` é legado |
 
 Organização por recurso, não por camada técnica:
 
@@ -179,10 +179,10 @@ fronteira que permite evoluir o banco sem tocar em `client/` nem em `shared/`.
 
 | Item | Hoje | Alvo |
 |---|---|---|
-| Quem é você | id do socket | 🔜 **sessão assinada** (token em cookie `HttpOnly`, escopo `.domínio`) |
-| Entrar como mestre | `GM_KEY` (senha única) | 🔜 papel na conta — o `GM_KEY` vira legado e sai |
-| Entrar como jogador | livre | 🔜 campanha com convite |
-| Papéis | `gm` \| `player` | 🔜 **RBAC**: conta, papel, permissão por token |
+| Quem é você | id do socket | ✅ **sessão assinada** (cookie `HttpOnly`, `SameSite=Lax`, `Secure` em HTTPS); convidado continua sendo o id do socket |
+| Entrar como mestre | `GM_KEY` (senha única) | ✅ **vínculo com a missão** (`membership.role`); o `GM_KEY` é legado e sai quando houver recuperação de senha |
+| Entrar como jogador | livre | ✅ livre como convidado; com conta, o **cadastro** é aberto com freio e interruptor |
+| Papéis | `gm` \| `player` | 🔜 **RBAC**: papel do vínculo já vale na mesa; falta permissão por token e promover um agente a mestre |
 | Regras de jogo | ✅ servidor decide | mantém |
 | Limite de taxa | ✅ token bucket | mantém |
 | Origem | ✅ só mesma origem | mantém |

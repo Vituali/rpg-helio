@@ -45,11 +45,14 @@ Portado para o projeto de verdade:
 - **Atores que andam pelo mapa**, com pathfinding (BFS), interpolação de posição e dois modos de
   desenho: **token** (retrato estático que desliza) e **sprite** (caminhada com 4 direções).
 - Pipeline de arte: `tools/optimize-assets.ps1` gera os tokens e mapas da web a partir de `img/`.
-- **Multiplayer**: servidor autoritativo em `server/` (Node + Socket.IO), salas por código, papéis
-  (mestre/jogador), permissão de movimento liberada pelo mestre, fog explorado compartilhado.
+- **Multiplayer**: servidor autoritativo em `server/` (Node + Socket.IO), salas por **Selo da Missão**,
+  papéis (mestre/jogador), permissão de movimento liberada pelo mestre, fog explorado compartilhado.
+- **Conta e persistência**: Postgres guarda conta, missão e cena — o F5 e o restart do container não
+  apagam a mesa. Quem tem conta não redigita o nome toda sessão, e o papel de mestre vem do **vínculo**
+  com a missão (`GM_KEY` é legado, mantido até existir recuperação de senha).
 
-O que ainda falta está em [`docs/ROADMAP.md`](docs/ROADMAP.md) — o próximo item é o fog por jogador
-(Fase 3).
+O que ainda falta está em [`docs/ROADMAP.md`](docs/ROADMAP.md), e o quadro do momento em
+[`docs/KANBAN.md`](docs/KANBAN.md). O próximo item é o fog por jogador (Fase 3).
 
 ## Arte
 
@@ -70,7 +73,8 @@ seletores de token e de mapa no painel lateral. O manifesto do mapa guarda tamb�
 altura** da imagem: com isso o botão `⊞` ao lado do mapa ajusta a grade ao formato dele — sem isso
 a imagem aparece esticada.
 
-O servidor multiplayer já existe (Fase 2 ✅) — o próximo passo é a visão por jogador (Fase 3).
+O servidor multiplayer existe, e persistência, conta e Selo da Missão também (as quatro entregas do
+slice "a sessão que sobrevive"). O próximo passo é a visão por jogador (Fase 3).
 
 ## Rodando
 
@@ -107,17 +111,22 @@ npm run dev          # http://localhost:5173
 O cliente em dev manda `/socket.io` para `localhost:3000` pelo proxy do Vite — é o mesmo caminho
 que o Caddy usa em produção, então não há surpresa ao subir.
 
-**Como entrar:** todos abrem a mesma página, combinam um **código de sala** (ex.: `HELIO`) e entram.
-Jogador só escolhe *Jogador* e recebe um token próprio. Para ser **mestre** é preciso a senha
-(`GM_KEY`, no `deploy/.env` ou no ambiente do servidor) — sem ela definida, qualquer um vira mestre,
-o que só é aceitável em rede local; o servidor avisa no log quando sobe assim. O mestre libera o
-movimento pelo painel 👥 MESA, no painel lateral.
+**Como entrar:** todos abrem a mesma página. O mestre cria uma **missão** no lobby (nome + selo
+sorteado, ex.: `CORVO-AMBAR-VEU-74`) e **dita o selo** para o grupo: quem tem o selo entra. Cada um
+escolhe *Jogador* e recebe um token próprio. Quem **cria conta** no lobby não redigita o nome toda
+sessão — e é **mestre** nas missões em que tem vínculo de mestre (hoje: as que criou).
 
-Teste rápido das regras do servidor (sobe o servidor antes):
+A senha de mestre (`GM_KEY`, no `deploy/.env` ou no ambiente do servidor) continua valendo como
+escapatória — sem ela definida, qualquer um vira mestre, o que só é aceitável em rede local; o servidor
+avisa no log quando sobe assim. O mestre libera o movimento pelo painel 👥 MESA, no painel lateral.
+
+Testes rápidos, com o servidor no ar:
 
 ```bash
 cd server
-npm run smoke        # 12 verificações: permissão, parede, fog, saída
+npm run smoke        # 19 verificações: permissão, parede, fog, selo e saída
+npm run selo         # 25: formato do selo e normalização
+npm run auth         # 34: conta, cadastro, vínculo e sessão
 ```
 
 ### Em produção (Docker)
@@ -149,6 +158,8 @@ powershell -ExecutionPolicy Bypass -File deploy\check-publico.ps1
 | [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md) | Como o jogo é montado: camadas, estado, rede, visão, permissões |
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | Firebase vs self-hosted, Docker Compose, Caddy, CGNAT, Tailscale, o PS1 |
 | [`docs/DECISOES.md`](docs/DECISOES.md) | Registro de decisões (ADRs) e o porquê de cada uma |
+| [`docs/KANBAN.md`](docs/KANBAN.md) | O quadro: o que está em andamento, o backlog e o que já fechou |
+| [`docs/STACK.md`](docs/STACK.md) | O alvo consolidado: o que cada peça vira quando crescer |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Fases 0 a 5, com critérios de pronto |
 
 ## Estrutura
@@ -168,8 +179,10 @@ HELIO/
 │       ├── render/          # desenho no canvas (atores, sprites, imagens)
 │       └── components/      # UI React (FogWarMap, Lobby, PlayersPanel)
 ├── server/                  # servidor autoritativo Socket.IO
-│   ├── src/                 # index.ts (socket), room.ts (estado), validate.ts (regras)
-│   ├── scripts/smoke.mjs    # teste de fumaça com dois clientes
+│   ├── src/                 # index.ts (socket), room.ts (estado), validate.ts (regras),
+│   │                        #   http.ts (rotas /api), store.ts + accounts.ts (banco), auth.ts, selo.ts
+│   ├── migrations/          # SQL numerado (001_init.sql, 002_vinculo_gm.sql)
+│   ├── scripts/             # smoke, selo, auth, persist (+ harness) — rodam do host
 │   └── Dockerfile
 ├── deploy/                  # docker-compose, Dockerfile, Caddyfile, install.ps1, .env
 ├── tools/                   # optimize-assets.ps1 (arte → web)
