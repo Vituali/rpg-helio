@@ -6,7 +6,7 @@
  */
 
 import { timingSafeEqual } from "node:crypto";
-import { createServer, type IncomingMessage } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { Server } from "socket.io";
 import {
   ACTOR_COLORS,
@@ -21,7 +21,10 @@ import {
   visibleCellsFrom,
 } from "@helio/shared";
 import type { Actor, Cell, Role } from "@helio/shared";
+import { touchMembership } from "./accounts.js";
+import { SESSION_COOKIE, cookieValue, readSession, sessionEnabled } from "./auth.js";
 import { dbEnabled } from "./db.js";
+import { handleHttp } from "./http.js";
 import { migrate } from "./migrate.js";
 import { createRoom, publicState, type Player, type Room } from "./room.js";
 import {
@@ -98,12 +101,12 @@ async function getOrCreateRoom(code: unknown): Promise<Room> {
   if (inFlight) return inFlight;
 
   const task = (async () => {
-    const campaignId = await ensureCampaign(key);
-    const room = createRoom(key, campaignId);
-    const saved = await loadScene(campaignId);
+    const campaign = await ensureCampaign(key);
+    const room = createRoom(key, campaign?.id ?? null, campaign?.gmAccountId ?? null);
+    const saved = await loadScene(room.campaignId);
     if (saved) room.scene = saved;
     rooms.set(key, room);
-    console.log(`[sala] criada: ${key}${campaignId ? "" : " (sem banco)"}`);
+    console.log(`[sala] criada: ${key}${room.campaignId ? "" : " (sem banco)"}`);
     return room;
   })();
 
@@ -120,6 +123,18 @@ function roomOf(socketId: string): Room | null {
     if (room.players.has(socketId)) return room;
   }
   return null;
+}
+
+/**
+ * Descarta uma sala que ficou sem ninguém **antes** de alguém entrar.
+ *
+ * Acontece quando a entrada é recusada: a sala foi carregada para decidir o
+ * papel, e sem isto ela ficaria para sempre em memória, vazia e invisível.
+ */
+function dropIfEmpty(room: Room): void {
+  if (room.players.size > 0) return;
+  rooms.delete(room.code);
+  console.log(`[sala] vazia, descartada: ${room.code}`);
 }
 
 /**
@@ -191,14 +206,29 @@ function discoverableCells(room: Room): Set<string> {
 }
 
 // ── HTTP + Socket.IO ─────────────────────────────────────────────────────────
-const httpServer = createServer((req, res) => {
-  if (req.url === "/health") {
+async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const path = (req.url ?? "").split("?")[0];
+
+  if (path === "/health") {
     res.writeHead(200, { "content-type": "text/plain" });
     res.end("ok");
     return;
   }
+
+  // Autenticação (ADR #16). O jogo em si não passa por HTTP.
+  if (await handleHttp(req, res)) return;
+
   res.writeHead(404);
   res.end();
+}
+
+const httpServer = createServer((req, res) => {
+  handleRequest(req, res).catch((err: unknown) => {
+    // Nunca devolve o erro para fora: um 500 seco, e o detalhe fica no log.
+    console.error(`[http] erro em ${req.url}: ${(err as Error).message}`);
+    if (!res.headersSent) res.writeHead(500);
+    res.end();
+  });
 });
 
 /**
@@ -243,6 +273,18 @@ function bump(room: Room): void {
 
 // ── Conexão ──────────────────────────────────────────────────────────────────
 io.on("connection", (socket) => {
+  /**
+   * Quem está logado nesta conexão, se alguém estiver.
+   *
+   * Isto é o coração do ADR #16: o Socket.IO manda os cookies do mesmo domínio
+   * **no handshake**, então a identidade chega junto com a conexão. Não existe
+   * mensagem para "autenticar" — e por isso não há como esquecer de autenticar
+   * um evento novo.
+   */
+  const account = readSession(
+    cookieValue(socket.handshake.headers.cookie, SESSION_COOKIE),
+  );
+
   // ── Limite de taxa (token bucket por conexão) ──
   // Vale para TODOS os eventos, inclusive os futuros, porque roda no
   // middleware de pacote do Socket.IO. Pacote barrado é descartado em
@@ -293,28 +335,49 @@ io.on("connection", (socket) => {
     const m = (msg ?? {}) as { code?: unknown; role?: Role; name?: unknown; key?: unknown };
     const wantsGm = m.role === "gm";
 
-    // Ser mestre exige a senha; entrar como jogador não exige nada. Recusamos a
-    // entrada em vez de rebaixar em silêncio, senão a pessoa fica sem entender
-    // por que não consegue mexer no mapa.
-    if (wantsGm && !gmKeyMatches(String(m.key ?? ""))) {
-      console.log(`[entrada] senha de mestre incorreta (${socket.id})`);
+    const room = await getOrCreateRoom(m.code);
+
+    /*
+     * Duas formas de ser mestre, durante a migração (ADR #16):
+     *   - ser a CONTA dona da campanha — o caminho novo, sem senha nenhuma;
+     *   - saber o GM_KEY — o bootstrap, que sai quando o RBAC chegar.
+     *
+     * Recusamos a entrada em vez de rebaixar em silêncio, senão a pessoa fica
+     * sem entender por que não consegue mexer no mapa.
+     */
+    const isOwner =
+      !!account && !!room.gmAccountId && room.gmAccountId === account.accountId;
+    if (wantsGm && !isOwner && !gmKeyMatches(String(m.key ?? ""))) {
+      console.log(
+        `[entrada] mestre recusado em ${room.code}: ${account ? `conta ${account.name} nao e dona` : "sem conta"} (${socket.id})`,
+      );
+      dropIfEmpty(room);
       if (typeof ack === "function") {
-        ack({ ok: false, error: "Senha de mestre incorreta." });
+        ack({
+          ok: false,
+          // Diz qual dos dois caminhos falhou: "senha errada" para quem está
+          // logado manda procurar o problema no lugar errado.
+          error: account
+            ? "Esta conta não é a dona desta campanha. Entre com a senha de mestre, ou peça ao mestre."
+            : "Senha de mestre incorreta.",
+        });
       }
       return;
     }
 
-    const room = await getOrCreateRoom(m.code);
     const role: Role = wantsGm ? "gm" : "player";
+    // Logado, o nome vem da conta — é o "não precisar digitar nome toda hora".
     const name =
-      String(m.name ?? "")
+      account?.name ??
+      (String(m.name ?? "")
         .trim()
-        .slice(0, MAX_NAME) || "Anônimo";
+        .slice(0, MAX_NAME) || "Anônimo");
 
     const player: Player = {
       id: socket.id,
       name,
       role,
+      accountId: account?.accountId ?? null,
       actorId: null,
       canMoveGlobal: false,
     };
@@ -325,6 +388,10 @@ io.on("connection", (socket) => {
       const actor = spawnActor(room, player);
       player.actorId = actor.id;
     }
+
+    // Registra que esta conta passou por esta campanha (ADR #17). Sem await: é
+    // livro-caixa, e a partida não espera por ele.
+    if (account) void touchMembership(account.accountId, room.campaignId, role);
 
     console.log(`[${room.code}] ${name} entrou como ${role}`);
     if (typeof ack === "function") {
@@ -611,9 +678,14 @@ async function main(): Promise<void> {
   httpServer.listen(PORT, () => {
     console.log(`HELIO server ouvindo em :${PORT} (sala padrão: ${DEFAULT_ROOM})`);
     console.log(
+      sessionEnabled
+        ? "  contas: login ligado (cookie de sessão assinado)"
+        : "  contas: SEM SESSION_SECRET - login desligado, so convidado",
+    );
+    console.log(
       GM_KEY
-        ? "  entrada: jogador entra livre; MESTRE exige a senha (GM_KEY)"
-        : "  entrada: SEM senha de mestre - qualquer um vira mestre (so rede local!)",
+        ? "  entrada: jogador entra livre; MESTRE por conta (dona da campanha) ou GM_KEY"
+        : "  entrada: SEM senha de mestre - so a conta dona da campanha vira mestre",
     );
   });
 }

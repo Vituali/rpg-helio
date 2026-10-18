@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Role } from "@helio/shared";
 import { connect } from "../net/socket";
+import { login, logout, refreshAccount, type Account } from "../net/auth";
 import { useNetStore } from "../state/netStore";
 import {
   IconAlert,
@@ -33,6 +34,49 @@ export default function Lobby({ onLocal }: { onLocal: () => void }) {
   const [role, setRole] = useState<Role>("gm");
   const [gmKey, setGmKey] = useState(() => localStorage.getItem(GMKEY_STORAGE) ?? "");
   const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // ── Conta (opcional) ───────────────────────────────────────────────────────
+  // Entrar é opcional de propósito: convidado digita o nome e joga. A conta
+  // serve para o mestre (não precisa de senha se for o dono da campanha) e para
+  // não redigitar o nome a cada sessão.
+  const [account, setAccount] = useState<Account | null>(null);
+  const [user, setUser] = useState("");
+  const [password, setPassword] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState("");
+
+  useEffect(() => {
+    // O cookie pode já estar no navegador de uma visita anterior.
+    let alive = true;
+    void refreshAccount().then((a) => {
+      if (alive && a) setAccount(a);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const signIn = async () => {
+    if (authBusy) return;
+    setAuthBusy(true);
+    setAuthError("");
+    const result = await login(user.trim(), password);
+    setAuthBusy(false);
+    if (result.ok && result.account) {
+      setAccount(result.account);
+      setPassword(""); // a senha não fica na tela depois de usada
+    } else {
+      setAuthError(result.error ?? "Não foi possível entrar.");
+    }
+  };
+
+  const signOut = async () => {
+    await logout();
+    setAccount(null);
+    setUser("");
+    setPassword("");
+    setAuthError("");
+  };
 
   const connecting = status === "connecting";
 
@@ -181,6 +225,101 @@ export default function Lobby({ onLocal }: { onLocal: () => void }) {
           </div>
         </div>
 
+        {/* Conta — opcional, mas é o que dispensa redigitar o nome */}
+        <div
+          style={{
+            border: "1px solid rgba(139, 92, 246, 0.28)",
+            background: "rgba(12, 8, 24, 0.55)",
+            borderRadius: 10,
+            padding: "10px 12px",
+          }}
+        >
+          {account ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <IconEye size={16} style={{ color: "#fbbf24", flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, color: "#fde68a", fontWeight: 600 }}>
+                  {account.name}
+                </div>
+                <div style={{ fontSize: 10, color: "#7e6ea8" }}>
+                  Conta reconhecida · nome e papel vêm daqui
+                </div>
+              </div>
+              <button
+                type="button"
+                className="occult-btn"
+                style={{ padding: "4px 10px", fontSize: 11 }}
+                onClick={() => void signOut()}
+              >
+                Sair
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <IconEye size={14} style={{ color: "#a78bfa" }} />
+                <span
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    letterSpacing: "0.08em",
+                    textTransform: "uppercase",
+                    color: "#d8cef0",
+                  }}
+                >
+                  Entrar com conta
+                </span>
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input
+                  className="occult-input"
+                  style={{ padding: "8px 10px", fontSize: 12 }}
+                  value={user}
+                  placeholder="Usuário"
+                  maxLength={24}
+                  autoComplete="username"
+                  onChange={(e) => setUser(e.target.value)}
+                />
+                <input
+                  className="occult-input"
+                  style={{ padding: "8px 10px", fontSize: 12 }}
+                  type="password"
+                  value={password}
+                  placeholder="Senha"
+                  maxLength={128}
+                  autoComplete="current-password"
+                  onChange={(e) => setPassword(e.target.value)}
+                  onKeyDown={(e) => {
+                    // Enter no campo de senha entra na conta, e não envia o
+                    // formulário inteiro (que tentaria conectar na mesa).
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void signIn();
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  className="occult-btn"
+                  style={{ padding: "8px 14px", fontSize: 12, flexShrink: 0 }}
+                  disabled={authBusy || user.trim() === "" || password === ""}
+                  onClick={() => void signIn()}
+                >
+                  {authBusy ? "..." : "Entrar"}
+                </button>
+              </div>
+              {authError ? (
+                <div style={{ fontSize: 11, color: "#fca5a5" }}>{authError}</div>
+              ) : (
+                <div style={{ fontSize: 10, color: "#7e6ea8", lineHeight: 1.4 }}>
+                  Opcional — agente entra só com o nome. Senha temporária: ainda
+                  não existe recuperação de senha nem troca de senha.
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
         {/* Nome do Agente / Narrador */}
         <div>
           <label
@@ -204,6 +343,12 @@ export default function Lobby({ onLocal }: { onLocal: () => void }) {
             maxLength={24}
             onChange={(e) => setName(e.target.value)}
           />
+          {account && (
+            <div style={{ fontSize: 11, color: "#7e6ea8", marginTop: 4 }}>
+              Logado como <span style={{ color: "#fde68a" }}>{account.name}</span> —
+              o servidor usa o nome da conta e ignora este campo.
+            </div>
+          )}
         </div>
 
         {/* Código da Sala */}
@@ -366,7 +511,9 @@ export default function Lobby({ onLocal }: { onLocal: () => void }) {
               onChange={(e) => setGmKey(e.target.value)}
             />
             <div style={{ fontSize: 11, color: "#7e6ea8", marginTop: 4 }}>
-              Salva neste navegador. Agentes não precisam de chave.
+              {account
+                ? `Logado como ${account.name}. Só é preciso se essa conta não for a dona da campanha.`
+                : "Salva neste navegador. Agentes não precisam de chave."}
             </div>
           </div>
         )}
@@ -402,7 +549,12 @@ export default function Lobby({ onLocal }: { onLocal: () => void }) {
               className="occult-input"
               value={url}
               placeholder="Vazio = conectar nesta mesma página"
-              onChange={(e) => setUrl(e.target.value)}
+              onChange={(e) => {
+                setUrl(e.target.value);
+                // O mesmo endereço vale para as rotas de auth (ADR #16): quem
+                // digita aqui espera entrar NAQUELE servidor, e não em outro.
+                useNetStore.getState().setServerUrl(e.target.value);
+              }}
             />
             <div style={{ fontSize: 11, color: "#7e6ea8", marginTop: 5 }}>
               Deixe em branco para usar o servidor padrão desta URL.

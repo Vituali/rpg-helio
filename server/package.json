@@ -9,6 +9,7 @@
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
     "smoke": "node scripts/smoke.mjs",
+    "auth": "node scripts/auth.mjs",
     "persist": "node scripts/persist.mjs"
   },
   "dependencies": {

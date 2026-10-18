@@ -33,6 +33,11 @@ export interface Player {
   id: string;
   name: string;
   role: Role;
+  /**
+   * Conta por trás deste jogador, quando entrou logado (ADR #16). `null` para
+   * convidado — e aí a identidade é só do socket, como sempre foi.
+   */
+  accountId: string | null;
   /** Ator que este jogador controla, se houver. */
   actorId: string | null;
   /** Liberação geral do mestre (além do `canMove` por ator). */
@@ -46,6 +51,8 @@ export interface Room {
    * `null` quando não há banco configurado, e aí a sala vive só em memória.
    */
   campaignId: string | null;
+  /** Conta dona da campanha: vira mestre sem precisar de `GM_KEY`. */
+  gmAccountId: string | null;
   scene: ServerScene;
   players: Map<string, Player>;
   /**
@@ -72,8 +79,19 @@ export function createScene(): ServerScene {
   };
 }
 
-export function createRoom(code: string, campaignId: string | null = null): Room {
-  return { code, campaignId, scene: createScene(), players: new Map(), pcActors: new Set() };
+export function createRoom(
+  code: string,
+  campaignId: string | null = null,
+  gmAccountId: string | null = null,
+): Room {
+  return {
+    code,
+    campaignId,
+    gmAccountId,
+    scene: createScene(),
+    players: new Map(),
+    pcActors: new Set(),
+  };
 }
 
 /** Payload enviado ao cliente: a cena + a lista de jogadores + quem é você. */

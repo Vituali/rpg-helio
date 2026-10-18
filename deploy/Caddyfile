@@ -13,9 +13,14 @@
 # para conferir que tudo funciona; troque para o domínio quando for jogar de fora.
 
 {$SITE_ADDRESS} {
-	# O WebSocket do jogo tem que vir ANTES do handle geral.
+	# O servidor do jogo fica com o WebSocket E com a autenticação. Os dois têm
+	# que vir ANTES do handle geral, que serve arquivos estáticos.
+	#
 	# Sem compressão aqui: comprimir um WebSocket quebra a conexão.
-	handle /socket.io/* {
+	@srv {
+		path /socket.io/* /auth/*
+	}
+	handle @srv {
 		reverse_proxy app:3000
 	}
 

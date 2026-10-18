@@ -33,29 +33,40 @@ export function setDefaultGmAccount(id: string | null): void {
 
 // ── Campanha ─────────────────────────────────────────────────────────────────
 
+export interface CampaignRef {
+  id: string;
+  /**
+   * Conta dona da campanha. É o que dá o papel de mestre **sem senha**: quem é
+   * dono não precisa saber segredo nenhum (ADR #16).
+   */
+  gmAccountId: string | null;
+}
+
 /**
- * Garante que existe uma campanha para este código e devolve o id dela.
+ * Garante que existe uma campanha para este código e devolve a referência dela.
  *
- * Enquanto não existe tela de criar campanha (passo 3), entrar com um selo novo
- * cria a campanha na hora. É o caminho que mantém o comportamento atual.
+ * Enquanto não existe tela de criar campanha (entrega 3), entrar com um selo
+ * novo cria a campanha na hora. É o caminho que mantém o comportamento atual —
+ * e é o furo anotado no KANBAN: sem limite, qualquer código novo cria uma linha.
  */
-export async function ensureCampaign(code: string): Promise<string | null> {
+export async function ensureCampaign(code: string): Promise<CampaignRef | null> {
   if (!dbEnabled) return null;
-  const rows = await tryQuery<{ id: string }>(
+  const rows = await tryQuery<{ id: string; gm_account_id: string | null }>(
     `with ins as (
        insert into campaign (id, code, name, gm_account_id)
        values ($1, $2, $3, $4)
        on conflict (code) do nothing
-       returning id
+       returning id, gm_account_id
      )
-     select id from ins
+     select id, gm_account_id from ins
      union all
-     select id from campaign where code = $2
+     select id, gm_account_id from campaign where code = $2
      limit 1`,
     [uid("camp"), code, code, defaultGmAccountId],
     `criar campanha ${code}`,
   );
-  return rows?.[0]?.id ?? null;
+  const row = rows?.[0];
+  return row ? { id: row.id, gmAccountId: row.gm_account_id } : null;
 }
 
 // ── Serialização ─────────────────────────────────────────────────────────────

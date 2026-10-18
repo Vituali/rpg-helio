@@ -151,6 +151,23 @@ export function readSession(token: string | undefined | null): Session | null {
 /** Nome do cookie. Um lugar só, para o cliente e o servidor não divergirem. */
 export const SESSION_COOKIE = "helio_session";
 
+/**
+ * Tira um valor do cabeçalho `Cookie`. Serve tanto para as rotas HTTP quanto
+ * para o handshake do Socket.IO — as duas leem a mesma coisa.
+ */
+export function cookieValue(
+  rawHeader: string | undefined,
+  name: string,
+): string | undefined {
+  if (typeof rawHeader !== "string") return undefined;
+  for (const part of rawHeader.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq < 0) continue;
+    if (part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim();
+  }
+  return undefined;
+}
+
 /** `Secure` só quando há HTTPS — em `:80` local não haveria como mandar o cookie. */
 export function sessionCookie(token: string, secure: boolean): string {
   const bits = [

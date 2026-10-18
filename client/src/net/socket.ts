@@ -55,6 +55,9 @@ export function connect(opts: JoinOptions): void {
 
   const s = io(opts.url.trim() || undefined, {
     transports: ["websocket", "polling"],
+    // O cookie de sessão vai no handshake (ADR #16): é assim que o servidor já
+    // sabe com quem está falando, sem mensagem de login no meio do jogo.
+    withCredentials: true,
   });
   socket = s;
 
