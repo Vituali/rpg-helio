@@ -20,18 +20,19 @@ O contrato entre as duas é o pacote `@helio/shared` + a tabela de mensagens de 
 **Mudar qualquer um dos dois exige um ADR** em `DECISOES.md`. Não é burocracia: é o que impede as
 duas frentes divergirem sem ninguém perceber.
 
-**WIP = 1** para mudança grande em `client/`. Não abrir a Fase 3 enquanto a refatoração de UI não
-terminar — as duas mexem no `gameStore`, e a segunda a mexer vai perder.
+**WIP = 1** para mudança grande em `client/`. A refatoração de UI terminou (commit `d701ac3`), então a
+Fase 3 está liberada — mas continue um item por vez: as duas frentes mexem no `gameStore`, e a segunda
+a mexer vai perder.
 
 ---
 
 ## Em andamento (WIP = 1)
 
-- 🔵 **Refatoração da UI** *(outra IA)* — `client/`
+— nada. A refatoração de UI terminou e a próxima frente ainda não foi escolhida.
 
 ---
 
-## Pronto para começar — sem conflito com a UI
+## Pronto para começar (núcleo)
 
 | # | Item | Onde | Pronto quando |
 |---|---|---|---|
@@ -44,7 +45,7 @@ terminar — as duas mexem no `gameStore`, e a segunda a mexer vai perder.
 
 ## Backlog
 
-**Travado pela refatoração de UI** (é onde está a graça, mas não agora):
+**Liberado pela refatoração de UI** (é onde está a graça):
 
 - Fog por jogador (`visibleNow`) — definição de pronto da Fase 3
 - Vincular um jogador a um token que já existe
@@ -67,17 +68,22 @@ terminar — as duas mexem no `gameStore`, e a segunda a mexer vai perder.
 
 ---
 
-## Decisões de arquitetura em aberto
+## Decisões de arquitetura
 
 Nada aqui bloqueia jogar. Bloqueia **escalar sem retrabalho**.
 
 | Assunto | Situação | Observação |
 |---|---|---|
-| Framework do cliente | Em discussão | **Precisa ser decidido antes da refatoração de UI terminar**, senão a refatoração pode fixar premissas erradas |
-| Banco de dados | Em discussão | Sequência proposta: arquivo JSON (agora) → SQLite (contas/campanhas) → Postgres (escala) |
+| Framework do cliente | **Decidido** | SPA Vite + React 19. A refatoração de UI terminou (commit `d701ac3`) sem fixar premissa contrária |
+| Banco de dados | **Decidido** | **Postgres**, com JSONB para cena e ficha. SQLite descartado: mais de um serviço vai escrever |
+| Framework de servidor | **Decidido** | Nada de NestJS — o servidor é máquina de estado quente, não CRUD |
+| Site público e wiki | **Alvo** | Next estático + MDX no repo. Entra **depois** da mesa |
 | Identidade | Pendente | Hoje é o id do socket. Sessão assinada é pré-requisito de RBAC **e** de reconexão (S4) |
 | Arquivos (mapas/tokens) | Pendente | Volume + Caddy vs. objeto (S3/MinIO) |
 | Publicar o repositório | Pendente | Afeta CI e o Project board |
+
+O alvo consolidado está em **`STACK.md`**. Este quadro diz *o que fazer agora*; aquele diz *para onde
+isso aponta*.
 
 ---
 
@@ -91,6 +97,8 @@ Nada aqui bloqueia jogar. Bloqueia **escalar sem retrabalho**.
 
 ## Feito (últimos)
 
+- ✅ Refatoração de UI — tema ocultista, ícones SVG e suporte mobile (commit `d701ac3`, outra IA)
+- ✅ Stack alvo consolidada em `STACK.md`
 - ✅ Fase 2 — multiplayer com servidor autoritativo (ADR #1, #8, #9)
 - ✅ `GM_KEY` — senha de mestre até o RBAC (ADR #12)
 - ✅ IPv6 global fechado — a máquina respondia na internet sem port forwarding (ADR #13)
