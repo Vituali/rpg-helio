@@ -57,6 +57,38 @@ docker compose ps                 # app = healthy, caddy = Up
 
 Depois de mexer no `.env`, basta `docker compose up -d`: o Caddy é recriado com o endereço novo.
 
+Os endereços podem ser **combinados** (todos valem ao mesmo tempo), separados por vírgula — é o
+melhor arranjo para jogar de fora e de casa com a mesma configuração:
+
+```
+SITE_ADDRESS=201-158-22-220.sslip.io, http://localhost, http://192.168.1.69
+```
+
+### IP público fixo: o caminho mais curto
+
+Se o IP da sua conexão é fixo (e **seu**, não CGNAT — confira em "Pegadinha 2"), você não precisa de
+DuckDNS, conta em lugar nenhum nem comprar domínio: `sslip.io` embute o IP no próprio hostname.
+
+1. Descubra o IP: `(Invoke-RestMethod https://api.ipify.org)`.
+2. Troque os pontos por hífens → `201-158-22-220.sslip.io` e ponha no `SITE_ADDRESS`.
+3. Encaminhe no roteador **TCP 80** e **TCP 443** para o IP desta máquina.
+4. Confirme que o mundo já enxerga:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File deploy\check-publico.ps1
+```
+
+O script testa de verdade, **de fora para dentro** (usa nós públicos), e imprime a tabela de
+encaminhamento pronta. Se ainda estiver fechado, ele lista as causas prováveis — modem + roteador em
+série (dois NATs), WAN diferente do IP fixo, ou bloqueio da operadora nas portas 80/443.
+
+> Encaminhamento de porta não se confere olhando o computador: de dentro da LAN tudo responde, mesmo
+> com o mundo inteiro bloqueado. Por isso o teste tem que vir de fora.
+>
+> **Só troque o `SITE_ADDRESS` para o domínio depois que o script disser que está aberto.** Com a
+> porta fechada, o Caddy tenta o certificado a cada poucos minutos, e o Let's Encrypt bloqueia quem
+> falha 5 vezes na mesma hora — o certificado atrasaria justamente quando você está testando.
+
 ---
 
 ## As 3 pegadinhas (leia antes de configurar)
@@ -87,8 +119,8 @@ Teste obrigatório, antes de perder tempo:
 
 ```powershell
 # 1. veja o IP WAN no painel do roteador (Status / WAN)
-# 2. compare com o IP que o mundo vê:
-(Invoke-RestMethod https://ifconfig.me/ip)
+# 2. compare com o IP que o mundo vê (IPv4! — `ifconfig.me` pode devolver IPv6)
+(Invoke-RestMethod https://api.ipify.org)
 ```
 
 - **Iguais** → você tem IP público. Port forward funciona. 🎉
@@ -180,6 +212,7 @@ docker compose down -v            # derruba e apaga os dados salvos
 | `deploy/Dockerfile` | build multi-stage: compila o front e serve com Caddy |
 | `deploy/Caddyfile` | serve o front estático + proxy do WebSocket + TLS; o endereço vem de `SITE_ADDRESS` |
 | `deploy/install.ps1` | instala Docker (se preciso) e sobe o stack |
+| `deploy/check-publico.ps1` | testa, de fora para dentro, se a internet já alcança o servidor |
 | `deploy/.env.example` | modelo das variáveis (`SITE_ADDRESS`, `ROOM_CODE`, `ORIGIN`) |
 | `deploy/.env` | **não vai pro git** — a sua configuração real; crie a partir do exemplo |
 | `.dockerignore` | evita copiar `node_modules`/`dist` para a imagem |

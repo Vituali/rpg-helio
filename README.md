@@ -131,7 +131,14 @@ docker compose up -d --build
 O Caddy serve o front e faz o proxy do WebSocket; só 80/443 saem para fora. O endereço público é
 **uma variável só**, `SITE_ADDRESS`, no `deploy/.env`: o padrão `:80` já funciona em
 `http://localhost` **e** na rede local (`http://192.168.1.69`); troque por um domínio
-(`helio.duckdns.org`, `189-40-12-7.sslip.io`) para ter HTTPS automático.
+(`helio.duckdns.org`, `201-158-22-220.sslip.io`) para ter HTTPS automático.
+
+Para servir a internet (IP público fixo + `sslip.io`) é preciso encaminhar as portas 80/443 no
+roteador — e como isso **não se confere de dentro da rede**, existe um teste que vem de fora:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File deploy\check-publico.ps1
+```
 
 ## Documentação
 
