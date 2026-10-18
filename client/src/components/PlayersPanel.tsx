@@ -1,6 +1,14 @@
 import { send } from "../net/bridge";
 import { useGameStore } from "../state/gameStore";
 import { useNetStore } from "../state/netStore";
+import {
+  IconEye,
+  IconLock,
+  IconSwords,
+  IconUnlock,
+  IconUsers,
+  IconWalk,
+} from "./icons";
 
 /**
  * Painel da mesa: quem está na sala e quem pode andar.
@@ -16,75 +24,30 @@ export default function PlayersPanel() {
   const players = useNetStore((s) => s.players);
   const actors = useGameStore((s) => s.actors);
 
-  const st = {
-    head: {
-      color: "#a78bfa",
-      fontSize: 11,
-      fontWeight: "bold" as const,
-      letterSpacing: 0.5,
-      display: "flex",
-      justifyContent: "space-between",
-      alignItems: "center",
-      borderBottom: "1px solid #2d2040",
-      paddingBottom: 3,
-      marginBottom: 6,
-    },
-    body: { display: "flex", flexDirection: "column" as const, gap: 6 },
-    empty: { color: "#5a4d7a", fontSize: 10, lineHeight: 1.5 },
-    row: {
-      display: "flex",
-      justifyContent: "space-between",
-      alignItems: "center",
-      gap: 6,
-      background: "#130f22",
-      border: "1px solid #2d2040",
-      borderRadius: 6,
-      padding: "5px 7px",
-    },
-    name: { fontSize: 12, color: "#e5e0f5", display: "flex", alignItems: "center", gap: 5 },
-    tag: (on: boolean) => ({
-      fontSize: 9,
-      padding: "1px 5px",
-      borderRadius: 999,
-      border: `1px solid ${on ? "#7c3aed" : "#3d2b60"}`,
-      background: on ? "#2d1f4e" : "transparent",
-      color: on ? "#c4b5fd" : "#7c6aaa",
-    }),
-    perm: (on: boolean) => ({
-      fontSize: 10,
-      padding: "3px 7px",
-      borderRadius: 5,
-      cursor: "pointer",
-      border: `1px solid ${on ? "#16a34a" : "#7f1d1d"}`,
-      background: on ? "#052e16" : "#2a0f0f",
-      color: on ? "#86efac" : "#fca5a5",
-      whiteSpace: "nowrap" as const,
-    }),
-    bulk: {
-      fontSize: 10,
-      padding: "3px 8px",
-      borderRadius: 5,
-      cursor: "pointer",
-      border: "1px solid #3d2b60",
-      background: "#0d0b14",
-      color: "#9d8fc4",
-    },
-    dot: (on: boolean) => ({
-      width: 7,
-      height: 7,
-      borderRadius: "50%",
-      background: on ? "#22c55e" : "#6b7280",
-      display: "inline-block",
-    }),
-  };
-
   if (status !== "online") {
     return (
-      <div>
-        <div style={st.head}>👥 MESA</div>
-        <div style={st.body}>
-          <div style={st.empty}>
-            Modo local — sem servidor. O mapa fica só neste computador.
+      <div className="vtt-section">
+        <div className="vtt-section-head" style={{ cursor: "default" }}>
+          <span className="vtt-section-title">
+            <IconUsers size={14} style={{ color: "#c084fc" }} />
+            <span>MESA</span>
+          </span>
+          <span
+            style={{
+              fontSize: 9,
+              padding: "2px 7px",
+              borderRadius: 999,
+              border: "1px solid rgba(139, 92, 246, 0.3)",
+              color: "#9d8ec4",
+              fontFamily: "var(--font-body)",
+            }}
+          >
+            SOLO
+          </span>
+        </div>
+        <div className="vtt-section-body">
+          <div style={{ color: "#8474a8", fontSize: 11, lineHeight: 1.5 }}>
+            Modo de preparação local — sem servidor ativo. As alterações ficam neste dispositivo.
           </div>
         </div>
       </div>
@@ -101,43 +64,174 @@ export default function PlayersPanel() {
     send("perm:set", { playerId, canMoveGlobal });
 
   return (
-    <div>
-      <div style={st.head}>
-        <span>
-          👥 MESA <span style={{ color: "#7c6aaa", fontWeight: "normal" }}>· {code}</span>
+    <div className="vtt-section">
+      <div className="vtt-section-head" style={{ cursor: "default" }}>
+        <span className="vtt-section-title">
+          <IconUsers size={14} style={{ color: "#fbbf24" }} />
+          <span>
+            MESA{" "}
+            <span
+              style={{
+                color: "#fde68a",
+                fontFamily: "var(--font-mono)",
+                fontWeight: 600,
+                fontSize: 11,
+              }}
+            >
+              · {code}
+            </span>
+          </span>
         </span>
-        <span style={st.tag(isGm)}>{isGm ? "MESTRE" : "JOGADOR"}</span>
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+            fontSize: 9,
+            fontFamily: "var(--font-body)",
+            fontWeight: 700,
+            letterSpacing: "0.08em",
+            padding: "2px 7px",
+            borderRadius: 999,
+            border: `1px solid ${isGm ? "#f59e0b" : "#a855f7"}`,
+            background: isGm ? "rgba(180, 83, 9, 0.25)" : "rgba(126, 34, 206, 0.25)",
+            color: isGm ? "#fef3c7" : "#e9d5ff",
+          }}
+        >
+          {isGm ? <IconEye size={11} /> : <IconSwords size={11} />}
+          {isGm ? "MESTRE" : "AGENTE"}
+        </span>
       </div>
 
-      <div style={st.body}>
+      <div
+        className="vtt-section-body"
+        style={{ display: "flex", flexDirection: "column", gap: 7 }}
+      >
         {list.map((p) => {
           const actor = p.actorId ? actors.find((a) => a.id === p.actorId) : undefined;
           const isMe = p.id === you;
           return (
-            <div key={p.id} style={st.row}>
-              <span style={st.name}>
-                <span style={st.dot(isMe)} title={isMe ? "você" : "conectado"} />
-                <span>
+            <div
+              key={p.id}
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 6,
+                background: "rgba(20, 12, 36, 0.82)",
+                border: `1px solid ${
+                  isMe ? "rgba(168, 85, 247, 0.45)" : "rgba(139, 92, 246, 0.18)"
+                }`,
+                borderRadius: 8,
+                padding: "6px 8px",
+              }}
+            >
+              <span
+                style={{
+                  fontSize: 12,
+                  color: "#f3effb",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  minWidth: 0,
+                }}
+              >
+                <span
+                  title={isMe ? "Você" : "Conectado"}
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: "50%",
+                    background: isMe ? "#22c55e" : "#a855f7",
+                    boxShadow: isMe
+                      ? "0 0 8px rgba(34, 197, 94, 0.8)"
+                      : "0 0 6px rgba(168, 85, 247, 0.6)",
+                    flexShrink: 0,
+                  }}
+                />
+                <span
+                  style={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    fontWeight: isMe ? 600 : 500,
+                  }}
+                >
                   {p.name}
                   {actor ? (
-                    <span style={{ color: "#7c6aaa", fontSize: 10 }}> · {actor.name}</span>
+                    <span style={{ color: "#9d8ec4", fontSize: 11, fontWeight: 400 }}>
+                      {" "}
+                      · {actor.name}
+                    </span>
                   ) : null}
                 </span>
-                {p.role === "gm" && <span style={st.tag(true)}>mestre</span>}
+                {p.role === "gm" && (
+                  <span
+                    style={{
+                      fontSize: 9,
+                      padding: "1px 6px",
+                      borderRadius: 999,
+                      border: "1px solid rgba(245, 158, 11, 0.5)",
+                      background: "rgba(180, 83, 9, 0.2)",
+                      color: "#fde68a",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.06em",
+                    }}
+                  >
+                    mestre
+                  </span>
+                )}
               </span>
 
               {isGm && p.role === "player" ? (
                 <button
-                  style={st.perm(p.canMoveGlobal)}
-                  title="Liberar ou travar o movimento deste jogador"
+                  type="button"
+                  title="Liberar ou travar o movimento deste agente"
                   onClick={() => setPerm(p.id, !p.canMoveGlobal)}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 4,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    padding: "4px 8px",
+                    borderRadius: 6,
+                    cursor: "pointer",
+                    border: `1px solid ${
+                      p.canMoveGlobal ? "rgba(34, 197, 94, 0.55)" : "rgba(220, 38, 38, 0.55)"
+                    }`,
+                    background: p.canMoveGlobal
+                      ? "rgba(5, 46, 22, 0.85)"
+                      : "rgba(69, 10, 10, 0.85)",
+                    color: p.canMoveGlobal ? "#86efac" : "#fca5a5",
+                    whiteSpace: "nowrap",
+                    transition: "all 0.15s ease",
+                  }}
                 >
-                  {p.canMoveGlobal ? "🚶 pode andar" : "🔒 travado"}
+                  {p.canMoveGlobal ? <IconWalk size={13} /> : <IconLock size={12} />}
+                  {p.canMoveGlobal ? "Livre" : "Travado"}
                 </button>
               ) : (
                 p.role === "player" && (
-                  <span style={st.tag(p.canMoveGlobal)}>
-                    {p.canMoveGlobal ? "pode andar" : "travado"}
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
+                      fontSize: 10,
+                      padding: "2px 7px",
+                      borderRadius: 999,
+                      border: `1px solid ${
+                        p.canMoveGlobal ? "rgba(34, 197, 94, 0.45)" : "rgba(220, 38, 38, 0.45)"
+                      }`,
+                      background: p.canMoveGlobal
+                        ? "rgba(5, 46, 22, 0.5)"
+                        : "rgba(69, 10, 10, 0.5)",
+                      color: p.canMoveGlobal ? "#86efac" : "#fca5a5",
+                    }}
+                  >
+                    {p.canMoveGlobal ? <IconWalk size={11} /> : <IconLock size={11} />}
+                    {p.canMoveGlobal ? "livre" : "travado"}
                   </span>
                 )
               )}
@@ -146,20 +240,33 @@ export default function PlayersPanel() {
         })}
 
         {isGm && others.length > 0 && (
-          <div style={{ display: "flex", gap: 6 }}>
-            <button style={st.bulk} onClick={() => others.forEach((p) => setPerm(p.id, true))}>
-              🔓 Liberar todos
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginTop: 2 }}>
+            <button
+              type="button"
+              className="occult-btn"
+              style={{ fontSize: 11, padding: "5px 8px" }}
+              onClick={() => others.forEach((p) => setPerm(p.id, true))}
+            >
+              <IconUnlock size={13} style={{ color: "#4ade80" }} />
+              Liberar todos
             </button>
-            <button style={st.bulk} onClick={() => others.forEach((p) => setPerm(p.id, false))}>
-              🔒 Travar todos
+            <button
+              type="button"
+              className="occult-btn occult-btn--danger"
+              style={{ fontSize: 11, padding: "5px 8px" }}
+              onClick={() => others.forEach((p) => setPerm(p.id, false))}
+            >
+              <IconLock size={13} style={{ color: "#f87171" }} />
+              Travar todos
             </button>
           </div>
         )}
 
         {isGm && others.length === 0 && (
-          <div style={st.empty}>
-            Ninguém entrou ainda. Mande o código <b>{code}</b> e o endereço desta página
-            para o grupo.
+          <div style={{ color: "#8474a8", fontSize: 11, lineHeight: 1.5 }}>
+            Nenhum agente conectado. Envie o selo{" "}
+            <b style={{ color: "#fde68a", fontFamily: "var(--font-mono)" }}>{code}</b> para o
+            grupo entrar.
           </div>
         )}
       </div>

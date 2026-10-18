@@ -2,16 +2,25 @@ import { useState } from "react";
 import type { Role } from "@helio/shared";
 import { connect } from "../net/socket";
 import { useNetStore } from "../state/netStore";
+import {
+  IconAlert,
+  IconChevron,
+  IconEye,
+  IconMap,
+  IconServer,
+  IconSigil,
+  IconSwords,
+  OccultMandala,
+} from "./icons";
 
 /** Onde a senha de mestre fica guardada neste navegador (para não digitar sempre). */
 const GMKEY_STORAGE = "helio.gmkey";
 
 /**
- * Tela de entrada. Só aparece enquanto ninguém entrou numa sala.
+ * Tela de entrada — Grimório / Portal de Convocação inspirado em Ordem Paranormal.
  *
- * Jogador entra com o código e recebe um token próprio. Mestre só entra com a
- * senha do servidor (`GM_KEY`), que é o que impede um estranho que achou a URL
- * pública de assumir a mesa.
+ * Jogador entra com o código da missão e recebe um token próprio.
+ * Mestre só entra com a chave da Ordem (`GM_KEY`).
  */
 export default function Lobby({ onLocal }: { onLocal: () => void }) {
   const status = useNetStore((s) => s.status);
@@ -23,6 +32,7 @@ export default function Lobby({ onLocal }: { onLocal: () => void }) {
   const [name, setName] = useState("");
   const [role, setRole] = useState<Role>("gm");
   const [gmKey, setGmKey] = useState(() => localStorage.getItem(GMKEY_STORAGE) ?? "");
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const connecting = status === "connecting";
 
@@ -38,186 +48,442 @@ export default function Lobby({ onLocal }: { onLocal: () => void }) {
     });
   };
 
-  const styles = {
-    wrap: {
-      position: "fixed" as const,
-      inset: 0,
-      background: "rgba(6,4,12,0.88)",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      zIndex: 10000,
-    },
-    box: {
-      background: "#150f28",
-      border: "1px solid #7c3aed",
-      borderRadius: 12,
-      padding: 26,
-      width: 340,
-      display: "flex",
-      flexDirection: "column" as const,
-      gap: 12,
-      fontFamily: "system-ui, sans-serif",
-      color: "#e5e0f5",
-      boxShadow: "0 20px 60px rgba(0,0,0,0.6)",
-    },
-    title: { fontSize: 20, fontWeight: "bold" as const, color: "#a78bfa" },
-    sub: { fontSize: 11, color: "#8b7cb5", lineHeight: 1.5 },
-    label: { fontSize: 11, color: "#a99bc9", marginBottom: 2, display: "block" },
-    input: {
-      width: "100%",
-      background: "#0d0b14",
-      border: "1px solid #3d2b60",
-      borderRadius: 6,
-      color: "#e5e0f5",
-      padding: "7px 9px",
-      fontSize: 13,
-      boxSizing: "border-box" as const,
-    },
-    row: { display: "flex", gap: 8 },
-    roleBtn: (on: boolean) => ({
-      flex: 1,
-      padding: "8px 6px",
-      borderRadius: 6,
-      cursor: "pointer",
-      fontSize: 12,
-      border: `1px solid ${on ? "#7c3aed" : "#3d2b60"}`,
-      background: on ? "#3b2a63" : "#0d0b14",
-      color: on ? "#fff" : "#9d8fc4",
-    }),
-    primary: {
-      width: "100%",
-      padding: "10px",
-      borderRadius: 6,
-      border: "1px solid #7c3aed",
-      background: "#7c3aed",
-      color: "#fff",
-      fontWeight: "bold" as const,
-      fontSize: 13,
-      cursor: "pointer",
-    },
-    ghost: {
-      width: "100%",
-      padding: "8px",
-      borderRadius: 6,
-      border: "1px solid #3d2b60",
-      background: "transparent",
-      color: "#9d8fc4",
-      fontSize: 12,
-      cursor: "pointer",
-    },
-    err: {
-      fontSize: 11,
-      color: "#fca5a5",
-      background: "#3b1111",
-      border: "1px solid #7f1d1d",
-      borderRadius: 6,
-      padding: "6px 8px",
-    },
-    ok: { fontSize: 11, color: "#86efac" },
-  };
-
-  const [showAdvanced, setShowAdvanced] = useState(false);
-
   return (
-    <div style={styles.wrap}>
-      <form style={styles.box} onSubmit={submit}>
-        <div>
-          <div style={styles.title}>☽ HELIO</div>
-          <div style={styles.sub}>
-            Mesa virtual. Quem cria a sala narra; os outros entram com o código.
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background:
+          "radial-gradient(circle at 50% 35%, rgba(46, 16, 101, 0.48) 0%, rgba(10, 5, 22, 0.94) 55%, rgba(4, 2, 9, 0.98) 100%)",
+        backdropFilter: "blur(10px)",
+        WebkitBackdropFilter: "blur(10px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "16px",
+        zIndex: 10000,
+        overflowY: "auto",
+      }}
+    >
+      {/* Mandala Esotérica Giratória no Fundo */}
+      <OccultMandala
+        style={{
+          position: "fixed",
+          top: "50%",
+          left: "50%",
+          width: "min(680px, 130vw)",
+          height: "min(680px, 130vw)",
+          color: "#a855f7",
+          pointerEvents: "none",
+          animation: "sigilRotate 95s linear infinite, sigilPulse 6s ease-in-out infinite",
+        }}
+      />
+
+      <form
+        onSubmit={submit}
+        style={{
+          position: "relative",
+          width: "100%",
+          maxWidth: 410,
+          background:
+            "linear-gradient(165deg, rgba(22, 13, 42, 0.95) 0%, rgba(11, 7, 23, 0.98) 100%)",
+          border: "1px solid rgba(217, 119, 6, 0.45)",
+          borderRadius: 16,
+          padding: "28px 24px 24px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 15,
+          color: "#f3effb",
+          boxShadow:
+            "0 24px 80px rgba(0, 0, 0, 0.85), 0 0 40px rgba(147, 51, 234, 0.22), inset 0 1px 0 rgba(253, 230, 138, 0.18)",
+        }}
+      >
+        {/* Cantos Ornamentais Dourados */}
+        <svg
+          width="22"
+          height="22"
+          viewBox="0 0 22 22"
+          style={{ position: "absolute", top: 7, left: 7, color: "#f59e0b", opacity: 0.7 }}
+        >
+          <path d="M1 15V3a2 2 0 0 1 2-2h12" stroke="currentColor" strokeWidth="1.5" fill="none" />
+          <circle cx="4" cy="4" r="1.5" fill="currentColor" />
+        </svg>
+        <svg
+          width="22"
+          height="22"
+          viewBox="0 0 22 22"
+          style={{
+            position: "absolute",
+            top: 7,
+            right: 7,
+            color: "#f59e0b",
+            opacity: 0.7,
+            transform: "scaleX(-1)",
+          }}
+        >
+          <path d="M1 15V3a2 2 0 0 1 2-2h12" stroke="currentColor" strokeWidth="1.5" fill="none" />
+          <circle cx="4" cy="4" r="1.5" fill="currentColor" />
+        </svg>
+
+        {/* Cabeçalho Ritualístico */}
+        <div style={{ textAlign: "center", marginBottom: 2 }}>
+          <div
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 54,
+              height: 54,
+              borderRadius: "50%",
+              background:
+                "radial-gradient(circle, rgba(147, 51, 234, 0.32) 0%, rgba(15, 9, 30, 0.9) 75%)",
+              border: "1px solid rgba(245, 158, 11, 0.55)",
+              color: "#fbbf24",
+              marginBottom: 10,
+              boxShadow: "0 0 24px rgba(168, 85, 247, 0.4)",
+              animation: "floatSlow 4s ease-in-out infinite",
+            }}
+          >
+            <IconSigil size={32} />
+          </div>
+
+          <div
+            style={{
+              fontFamily: "var(--font-display)",
+              fontSize: 26,
+              fontWeight: 800,
+              letterSpacing: "0.22em",
+              background: "linear-gradient(135deg, #fef3c7 0%, #f59e0b 45%, #c084fc 100%)",
+              WebkitBackgroundClip: "text",
+              WebkitTextFillColor: "transparent",
+              lineHeight: 1.15,
+            }}
+          >
+            HELIO
+          </div>
+
+          <div
+            style={{
+              fontSize: 10,
+              fontFamily: "var(--font-display)",
+              letterSpacing: "0.26em",
+              textTransform: "uppercase",
+              color: "#c084fc",
+              marginTop: 2,
+              marginBottom: 8,
+            }}
+          >
+            Membrana · Mesa Paranormal
+          </div>
+
+          <div style={{ fontSize: 12, color: "#9d8ec4", lineHeight: 1.45 }}>
+            Quem convoca a sessão controla a realidade; os agentes ingressam pelo selo da sala.
           </div>
         </div>
 
+        {/* Nome do Agente / Narrador */}
         <div>
-          <label style={styles.label}>Seu nome</label>
+          <label
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              color: "#d8cef0",
+              marginBottom: 5,
+              display: "block",
+            }}
+          >
+            Identificação na Ordem
+          </label>
           <input
-            style={styles.input}
+            className="occult-input"
+            style={{ padding: "10px 12px", fontSize: 13 }}
             value={name}
-            placeholder="Como o grupo te chama"
+            placeholder="Ex.: Arthur Cervero, Dante, Kaiser..."
             maxLength={24}
             onChange={(e) => setName(e.target.value)}
           />
         </div>
 
+        {/* Código da Sala */}
         <div>
-          <label style={styles.label}>Código da sala</label>
+          <label
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              color: "#d8cef0",
+              marginBottom: 5,
+              display: "block",
+            }}
+          >
+            Selo da Missão (Código da Sala)
+          </label>
           <input
-            style={styles.input}
+            className="occult-input"
+            style={{
+              padding: "10px 12px",
+              fontSize: 14,
+              fontFamily: "var(--font-mono)",
+              fontWeight: 600,
+              letterSpacing: "0.14em",
+              color: "#fde68a",
+            }}
             value={code}
             maxLength={24}
             onChange={(e) => setCode(e.target.value.toUpperCase())}
           />
-          <div style={{ ...styles.sub, marginTop: 4 }}>
-            Combine um código com o grupo. É ele que junta todo mundo no mesmo mapa.
+          <div style={{ fontSize: 11, color: "#7e6ea8", marginTop: 4 }}>
+            Compartilhe este selo com os investigadores para sincronizar o mapa.
           </div>
         </div>
 
+        {/* Papel: Mestre vs Jogador */}
         <div>
-          <label style={styles.label}>Você é</label>
-          <div style={styles.row}>
+          <label
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              color: "#d8cef0",
+              marginBottom: 6,
+              display: "block",
+            }}
+          >
+            Papel no Ritual
+          </label>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <button
               type="button"
-              style={styles.roleBtn(role === "gm")}
               onClick={() => setRole("gm")}
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: 6,
+                padding: "12px 10px",
+                borderRadius: 10,
+                cursor: "pointer",
+                border:
+                  role === "gm"
+                    ? "1px solid #f59e0b"
+                    : "1px solid rgba(139, 92, 246, 0.25)",
+                background:
+                  role === "gm"
+                    ? "linear-gradient(145deg, rgba(109, 40, 217, 0.45) 0%, rgba(180, 83, 9, 0.25) 100%)"
+                    : "rgba(10, 6, 20, 0.75)",
+                color: role === "gm" ? "#fef3c7" : "#9d8ec4",
+                boxShadow:
+                  role === "gm"
+                    ? "0 0 20px rgba(168, 85, 247, 0.3), inset 0 0 12px rgba(245, 158, 11, 0.15)"
+                    : "none",
+                transition: "all 0.18s ease",
+              }}
             >
-              👁 Mestre
+              <IconEye size={20} style={{ color: role === "gm" ? "#fbbf24" : "#8b7cb5" }} />
+              <span
+                style={{
+                  fontFamily: "var(--font-display)",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  letterSpacing: "0.1em",
+                }}
+              >
+                MESTRE
+              </span>
+              <span style={{ fontSize: 10, opacity: 0.75 }}>Onisciente · Narra</span>
             </button>
+
             <button
               type="button"
-              style={styles.roleBtn(role === "player")}
               onClick={() => setRole("player")}
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: 6,
+                padding: "12px 10px",
+                borderRadius: 10,
+                cursor: "pointer",
+                border:
+                  role === "player"
+                    ? "1px solid #a855f7"
+                    : "1px solid rgba(139, 92, 246, 0.25)",
+                background:
+                  role === "player"
+                    ? "linear-gradient(145deg, rgba(126, 34, 206, 0.45) 0%, rgba(59, 7, 100, 0.5) 100%)"
+                    : "rgba(10, 6, 20, 0.75)",
+                color: role === "player" ? "#f3e8ff" : "#9d8ec4",
+                boxShadow:
+                  role === "player"
+                    ? "0 0 20px rgba(168, 85, 247, 0.35), inset 0 0 12px rgba(168, 85, 247, 0.2)"
+                    : "none",
+                transition: "all 0.18s ease",
+              }}
             >
-              ⚔ Jogador
+              <IconSwords size={20} style={{ color: role === "player" ? "#c084fc" : "#8b7cb5" }} />
+              <span
+                style={{
+                  fontFamily: "var(--font-display)",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  letterSpacing: "0.1em",
+                }}
+              >
+                AGENTE
+              </span>
+              <span style={{ fontSize: 10, opacity: 0.75 }}>Jogador · Token</span>
             </button>
           </div>
         </div>
 
+        {/* Senha de Mestre */}
         {role === "gm" && (
           <div>
-            <label style={styles.label}>Senha de mestre</label>
+            <label
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
+                color: "#fde68a",
+                marginBottom: 5,
+                display: "block",
+              }}
+            >
+              Chave Veríssimo (Senha de Mestre)
+            </label>
             <input
-              style={styles.input}
+              className="occult-input"
+              style={{ padding: "10px 12px", fontSize: 13 }}
               type="password"
               value={gmKey}
               maxLength={64}
-              placeholder="a que foi definida no servidor"
+              placeholder="Definida em GM_KEY no servidor"
               onChange={(e) => setGmKey(e.target.value)}
             />
-            <div style={{ ...styles.sub, marginTop: 4 }}>
-              Fica guardada neste navegador. Jogador não precisa de senha.
+            <div style={{ fontSize: 11, color: "#7e6ea8", marginTop: 4 }}>
+              Salva neste navegador. Agentes não precisam de chave.
             </div>
           </div>
         )}
 
-        <button type="button" style={styles.ghost} onClick={() => setShowAdvanced((p) => !p)}>
-          {showAdvanced ? "▲" : "▼"} Servidor
+        {/* Configuração Avançada de Servidor */}
+        <button
+          type="button"
+          className="occult-btn"
+          style={{
+            width: "100%",
+            justifyContent: "space-between",
+            background: "rgba(12, 8, 24, 0.6)",
+            color: "#9d8ec4",
+          }}
+          onClick={() => setShowAdvanced((p) => !p)}
+        >
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <IconServer size={14} /> Endereço do Servidor
+          </span>
+          <IconChevron size={14} dir={showAdvanced ? "up" : "down"} />
         </button>
 
         {showAdvanced && (
-          <div>
-            <label style={styles.label}>Endereço do servidor</label>
+          <div
+            style={{
+              padding: "10px 12px",
+              background: "rgba(8, 5, 16, 0.75)",
+              border: "1px solid rgba(139, 92, 246, 0.2)",
+              borderRadius: 8,
+            }}
+          >
             <input
-              style={styles.input}
+              className="occult-input"
               value={url}
-              placeholder="vazio = esta mesma página"
+              placeholder="Vazio = conectar nesta mesma página"
               onChange={(e) => setUrl(e.target.value)}
             />
-            <div style={{ ...styles.sub, marginTop: 4 }}>
-              Deixe vazio para jogar no mesmo endereço que abriu esta página.
+            <div style={{ fontSize: 11, color: "#7e6ea8", marginTop: 5 }}>
+              Deixe em branco para usar o servidor padrão desta URL.
             </div>
           </div>
         )}
 
-        {notice && <div style={styles.err}>{notice}</div>}
-        {connecting && <div style={styles.ok}>Conectando…</div>}
+        {/* Avisos de Erro ou Conexão */}
+        {notice && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              fontSize: 12,
+              color: "#fecaca",
+              background: "rgba(69, 10, 10, 0.85)",
+              border: "1px solid rgba(220, 38, 38, 0.6)",
+              borderRadius: 8,
+              padding: "8px 12px",
+            }}
+          >
+            <IconAlert size={16} style={{ color: "#f87171", flexShrink: 0 }} />
+            <span>{notice}</span>
+          </div>
+        )}
 
-        <button type="submit" style={styles.primary} disabled={connecting}>
-          {connecting ? "Entrando…" : "Entrar na sala"}
+        {connecting && (
+          <div
+            style={{
+              fontSize: 12,
+              color: "#fde68a",
+              textAlign: "center",
+              letterSpacing: "0.08em",
+            }}
+          >
+            Sintonizando a Membrana…
+          </div>
+        )}
+
+        {/* Botão Principal */}
+        <button
+          type="submit"
+          disabled={connecting}
+          style={{
+            width: "100%",
+            padding: "12px 16px",
+            borderRadius: 9,
+            border: "1px solid #f59e0b",
+            background:
+              "linear-gradient(135deg, #7e22ce 0%, #581c87 55%, #9a3412 100%)",
+            color: "#ffffff",
+            fontFamily: "var(--font-display)",
+            fontWeight: 700,
+            fontSize: 13,
+            letterSpacing: "0.14em",
+            textTransform: "uppercase",
+            cursor: connecting ? "wait" : "pointer",
+            boxShadow:
+              "0 6px 24px rgba(147, 51, 234, 0.45), inset 0 1px 0 rgba(254, 243, 199, 0.35)",
+            transition: "all 0.2s ease",
+          }}
+        >
+          {connecting ? "Atravessando…" : "Ingressar na Sessão"}
         </button>
 
-        <button type="button" style={styles.ghost} onClick={onLocal}>
-          Preparar o mapa sozinho (sem servidor)
+        {/* Modo Solo / Preparação */}
+        <button
+          type="button"
+          className="occult-btn"
+          style={{
+            width: "100%",
+            padding: "9px 12px",
+            background: "transparent",
+            borderColor: "rgba(139, 92, 246, 0.25)",
+            color: "#b4a5d9",
+          }}
+          onClick={onLocal}
+        >
+          <IconMap size={15} />
+          Preparar o Mapa Sozinho (Modo Local)
         </button>
       </form>
     </div>

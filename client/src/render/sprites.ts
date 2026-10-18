@@ -144,21 +144,52 @@ export function drawActor(
     drawProcedural(ctx, p, proceduralR);
   }
 
-  // Anel do ator selecionado
+  // Anel ritualístico do ator selecionado
   if (p.active) {
+    ctx.save();
     ctx.beginPath();
-    ctx.arc(p.cx, p.cy, bodyR * 1.18, 0, Math.PI * 2);
-    ctx.strokeStyle = "#ffffff";
+    ctx.arc(p.cx, p.cy, bodyR * 1.24, 0, Math.PI * 2);
+    ctx.strokeStyle = "#fbbf24";
     ctx.lineWidth = 2;
+    ctx.setLineDash([5, 3]);
     ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(p.cx, p.cy, bodyR * 1.12, 0, Math.PI * 2);
+    ctx.strokeStyle = "rgba(192, 132, 252, 0.85)";
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([]);
+    ctx.stroke();
+    ctx.restore();
   }
 
-  // Nome
-  ctx.font = `bold ${Math.max(9, p.cell * 0.2)}px 'Courier New', monospace`;
-  ctx.fillStyle = "#ede9fe";
+  // Placa de nome estilizada
+  ctx.save();
+  const fontSize = Math.max(9, Math.round(p.cell * 0.21));
+  ctx.font = `600 ${fontSize}px 'Chakra Petch', sans-serif`;
+  const textW = ctx.measureText(p.label).width;
+  const padX = 5;
+  const padY = 2;
+  const boxY = p.cy + bodyR * 1.1;
+  roundRect(
+    ctx,
+    p.cx - textW / 2 - padX,
+    boxY,
+    textW + padX * 2,
+    fontSize + padY * 2,
+    4,
+  );
+  ctx.fillStyle = "rgba(8, 5, 16, 0.82)";
+  ctx.fill();
+  ctx.strokeStyle = p.active ? "rgba(251, 191, 36, 0.65)" : "rgba(168, 85, 247, 0.35)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  ctx.fillStyle = p.active ? "#fef3c7" : "#f3effb";
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
-  ctx.fillText(p.label, p.cx, p.cy + bodyR * 1.12);
+  ctx.fillText(p.label, p.cx, boxY + padY);
+  ctx.restore();
 }
 
 /**

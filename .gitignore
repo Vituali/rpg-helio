@@ -33,3 +33,8 @@ Thumbs.db
 
 # Docker
 deploy/data/
+
+# Agentes locais / Skills
+.agent/
+__pycache__/
+

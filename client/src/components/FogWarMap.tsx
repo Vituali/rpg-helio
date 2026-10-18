@@ -1,16 +1,16 @@
 /**
  * FogWarMap.tsx — mesa de RPG com fog of war e atores que andam.
  *
- * O que mudou em relação ao protótipo (`RPG GRID/FogWarMap.jsx`):
- *  - o estado de JOGO vive no store (`state/gameStore`), não em useState;
- *  - estado de UI (ferramenta, pan, zoom, modais) continua local;
- *  - atores são sprites animados que CAMINHAM (pathfinding + interpolação);
- *  - clique no mapa enfileira um caminho em vez de teleportar.
+ * UI/UX Dark Fantasy / Ocultismo (inspirado em Ordem Paranormal):
+ *  - Ícones SVG vetoriais customizados em toda a interface;
+ *  - Suporte completo a mobile (pinch-to-zoom, pan com 2 dedos ou ferramenta Mão,
+ *    dock inferior de ferramentas, grimório lateral em drawer deslizante e D-pad opcional);
+ *  - Tipografia Cinzel + Chakra Petch + JetBrains Mono.
  *
  * Ver docs/ARQUITETURA.md e docs/DECISOES.md.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   FOG_NONE,
   FOG_REVEAL,
@@ -26,17 +26,48 @@ import { loadAssets, type AssetManifests, type MapEntry } from "../render/assets
 import { useGameStore } from "../state/gameStore";
 import { useNetStore } from "../state/netStore";
 import PlayersPanel from "./PlayersPanel";
+import {
+  IconChevron,
+  IconClose,
+  IconDownload,
+  IconErase,
+  IconEye,
+  IconEyeOff,
+  IconFit,
+  IconGrid,
+  IconGrimoire,
+  IconHide,
+  IconImage,
+  IconKeyboard,
+  IconMap,
+  IconMinus,
+  IconMist,
+  IconMove,
+  IconPan,
+  IconPlus,
+  IconReset,
+  IconReveal,
+  IconSector,
+  IconSigil,
+  IconSwords,
+  IconTrash,
+  IconUpload,
+  IconWall,
+} from "./icons";
 import { stepAnimations, type AnimMap } from "../render/animation";
 import { getImage } from "../render/images";
 import { drawActor, getSheet } from "../render/sprites";
 
-const TOOL_LIST: { id: Tool; label: string; key: string }[] = [
-  { id: TOOLS.MOVE, label: "⚔ Mover", key: "M" },
-  { id: TOOLS.WALL, label: "🧱 Parede", key: "W" },
-  { id: TOOLS.ERASE, label: "✏ Apagar", key: "E" },
-  { id: TOOLS.REVEAL, label: "💡 Revelar", key: "R" },
-  { id: TOOLS.HIDE, label: "🌑 Fog", key: "H" },
-  { id: TOOLS.SECTOR, label: "📐 Setor", key: "S" },
+type UiTool = Tool | "pan";
+
+const TOOL_LIST: { id: UiTool; label: string; short: string; key: string; icon: ReactNode }[] = [
+  { id: TOOLS.MOVE, label: "Mover", short: "Mover", key: "M", icon: <IconMove size={15} /> },
+  { id: "pan", label: "Câmera", short: "Câmera", key: "Espaço", icon: <IconPan size={15} /> },
+  { id: TOOLS.WALL, label: "Parede", short: "Parede", key: "W", icon: <IconWall size={15} /> },
+  { id: TOOLS.ERASE, label: "Apagar", short: "Apagar", key: "E", icon: <IconErase size={15} /> },
+  { id: TOOLS.REVEAL, label: "Revelar", short: "Luz", key: "R", icon: <IconReveal size={15} /> },
+  { id: TOOLS.HIDE, label: "Ocultar", short: "Névoa", key: "H", icon: <IconHide size={15} /> },
+  { id: TOOLS.SECTOR, label: "Setor", short: "Setor", key: "S", icon: <IconSector size={15} /> },
 ];
 
 export default function FogWarMap() {
@@ -72,7 +103,7 @@ export default function FogWarMap() {
   const loadSnapshot = useGameStore((s) => s.loadSnapshot);
 
   // ── Estado de UI (local) ──────────────────────────────────────────────────
-  const [tool, setTool] = useState<Tool>(TOOLS.MOVE);
+  const [tool, setTool] = useState<UiTool>(TOOLS.MOVE);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [sectorDraft, setSectorDraft] = useState<
@@ -83,6 +114,13 @@ export default function FogWarMap() {
   const [showSectors, setShowSectors] = useState(true);
   const [showTokens, setShowTokens] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
+  const [showMaps, setShowMaps] = useState(true);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+
+  // Mobile / HUD extra
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [showMinimap, setShowMinimap] = useState(true);
+  const [showDpad, setShowDpad] = useState(false);
 
   // Arte gerada por tools/optimize-assets.ps1 (tokens e mapas)
   const [assets, setAssets] = useState<AssetManifests>({ tokens: [], maps: [] });
@@ -103,11 +141,22 @@ export default function FogWarMap() {
   const fogCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const panStart = useRef<{ x: number; y: number } | null>(null);
-  const dragTool = useRef<Tool | "pan" | null>(null);
+  const dragTool = useRef<UiTool | null>(null);
   const isDragging = useRef(false);
   const lastPaint = useRef<Cell | null>(null);
   const sectorStart = useRef<Cell | null>(null);
   const anims = useRef<AnimMap>(new Map());
+
+  // Multitouch (Pinch-to-zoom & pan com 2 dedos no celular)
+  const activePointers = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchState = useRef<{
+    dist: number;
+    zoom: number;
+    panX: number;
+    panY: number;
+    midX: number;
+    midY: number;
+  } | null>(null);
 
   // UI lida pelo loop de render (sem re-assinar callbacks)
   const ui = useRef({ pan, zoom, tool, sectorDraft });
@@ -125,8 +174,17 @@ export default function FogWarMap() {
     const st = useGameStore.getState();
     const { pan: p, zoom: z, sectorDraft: sd } = ui.current;
     const {
-      fog: f, walls: w, actors: t, sectors: sec, fogMode: fm, gmMode: gm,
-      cell: cs, cols: nc, rows: nr, bgImage: bg, activeActorId: activeId,
+      fog: f,
+      walls: w,
+      actors: t,
+      sectors: sec,
+      fogMode: fm,
+      gmMode: gm,
+      cell: cs,
+      cols: nc,
+      rows: nr,
+      bgImage: bg,
+      activeActorId: activeId,
     } = st;
 
     const W = canvas.width;
@@ -139,6 +197,11 @@ export default function FogWarMap() {
     const TW = nc * cs;
     const TH = nr * cs;
 
+    // Moldura externa ritualística do tabuleiro
+    ctx.strokeStyle = "rgba(217, 119, 6, 0.35)";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(-2, -2, TW + 4, TH + 4);
+
     // ── Fundo ──
     if (bg) {
       const img = getImage(bg);
@@ -148,7 +211,7 @@ export default function FogWarMap() {
         for (let c = 0; c < nc; c++) {
           ctx.fillStyle = (r + c) % 2 === 0 ? PALETTE.tile1 : PALETTE.tile2;
           ctx.fillRect(c * cs, r * cs, cs, cs);
-          ctx.strokeStyle = "rgba(100,80,160,0.08)";
+          ctx.strokeStyle = "rgba(139, 92, 246, 0.06)";
           ctx.lineWidth = 0.5;
           ctx.strokeRect(c * cs + 2, r * cs + 2, cs - 4, cs - 4);
         }
@@ -167,7 +230,7 @@ export default function FogWarMap() {
         ctx.fillRect(x + 2, y + 2, cs - 4, cs / 2 - 2);
         ctx.fillRect(x + cs / 2, y + cs / 2 + 1, cs / 2 - 3, cs / 2 - 4);
         ctx.fillRect(x + 2, y + cs / 2 + 1, cs / 2 - 3, cs / 2 - 4);
-        ctx.strokeStyle = "rgba(80,60,120,0.4)";
+        ctx.strokeStyle = "rgba(168, 85, 247, 0.35)";
         ctx.lineWidth = 1;
         ctx.strokeRect(x, y, cs, cs);
       }
@@ -179,7 +242,7 @@ export default function FogWarMap() {
       const y1 = s.r1 * cs;
       const sw = (s.c2 - s.c1 + 1) * cs;
       const sh = (s.r2 - s.r1 + 1) * cs;
-      ctx.globalAlpha = 0.07;
+      ctx.globalAlpha = 0.09;
       ctx.fillStyle = s.color;
       ctx.fillRect(x1, y1, sw, sh);
       ctx.globalAlpha = 1;
@@ -188,11 +251,11 @@ export default function FogWarMap() {
       ctx.setLineDash([6, 3]);
       ctx.strokeRect(x1 + 1, y1 + 1, sw - 2, sh - 2);
       ctx.setLineDash([]);
-      ctx.font = `bold ${Math.max(10, cs * 0.28)}px 'Courier New', monospace`;
+      ctx.font = `700 ${Math.max(10, cs * 0.26)}px 'Cinzel', Georgia, serif`;
       ctx.fillStyle = s.color;
       ctx.textAlign = "left";
       ctx.textBaseline = "top";
-      ctx.fillText(s.name, x1 + 6, y1 + 5);
+      ctx.fillText(s.name.toUpperCase(), x1 + 6, y1 + 5);
     }
 
     // ── Setor em rascunho ──
@@ -201,19 +264,19 @@ export default function FogWarMap() {
       const c2 = Math.max(sd.c1, sd.c2);
       const r1 = Math.min(sd.r1, sd.r2);
       const r2 = Math.max(sd.r1, sd.r2);
-      ctx.strokeStyle = "#22d3ee";
+      ctx.strokeStyle = "#f59e0b";
       ctx.lineWidth = 2;
       ctx.setLineDash([4, 4]);
       ctx.strokeRect(c1 * cs, r1 * cs, (c2 - c1 + 1) * cs, (r2 - r1 + 1) * cs);
       ctx.setLineDash([]);
-      ctx.globalAlpha = 0.1;
-      ctx.fillStyle = "#22d3ee";
+      ctx.globalAlpha = 0.12;
+      ctx.fillStyle = "#f59e0b";
       ctx.fillRect(c1 * cs, r1 * cs, (c2 - c1 + 1) * cs, (r2 - r1 + 1) * cs);
       ctx.globalAlpha = 1;
     }
 
     // ── Linhas da grade ──
-    ctx.strokeStyle = "rgba(100,80,160,0.18)";
+    ctx.strokeStyle = "rgba(139, 92, 246, 0.16)";
     ctx.lineWidth = 0.5;
     for (let c = 0; c <= nc; c++) {
       ctx.beginPath();
@@ -241,7 +304,7 @@ export default function FogWarMap() {
       // Anel do raio de visão
       ctx.beginPath();
       ctx.arc(cx, cy, actor.vision * cs, 0, Math.PI * 2);
-      ctx.strokeStyle = `${actor.color}22`;
+      ctx.strokeStyle = `${actor.color}28`;
       ctx.lineWidth = 1;
       ctx.stroke();
 
@@ -252,9 +315,9 @@ export default function FogWarMap() {
         for (const step of actor.path) {
           ctx.lineTo(step.col * cs + cs / 2, step.row * cs + cs / 2);
         }
-        ctx.strokeStyle = `${actor.color}66`;
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([3, 3]);
+        ctx.strokeStyle = `${actor.color}88`;
+        ctx.lineWidth = 1.8;
+        ctx.setLineDash([4, 3]);
         ctx.stroke();
         ctx.setLineDash([]);
       }
@@ -274,7 +337,6 @@ export default function FogWarMap() {
     }
 
     // Confirma os passos concluídos (avança a posição lógica).
-    // Fase 2: aqui entra o `actor:intent-move` e a espera pela confirmação.
     if (arrived.length > 0) {
       const store = useGameStore.getState();
       for (const id of arrived) store.advanceActor(id);
@@ -341,8 +403,14 @@ export default function FogWarMap() {
 
           // Borda suave entre visível e escondido
           const neighbors = [
-            [-1, 0], [1, 0], [0, -1], [0, 1],
-            [-1, -1], [-1, 1], [1, -1], [1, 1],
+            [-1, 0],
+            [1, 0],
+            [0, -1],
+            [0, 1],
+            [-1, -1],
+            [-1, 1],
+            [1, -1],
+            [1, 1],
           ];
           for (let r = 0; r < nr; r++) {
             for (let c = 0; c < nc; c++) {
@@ -353,8 +421,10 @@ export default function FogWarMap() {
                 if (nr2 < 0 || nr2 >= nr || nc2 < 0 || nc2 >= nc) continue;
                 if ((f[nr2]?.[nc2] ?? 0) !== FOG_NONE) continue;
                 const grd = ox.createLinearGradient(
-                  c * cs + cs / 2, r * cs + cs / 2,
-                  nc2 * cs + cs / 2, nr2 * cs + cs / 2,
+                  c * cs + cs / 2,
+                  r * cs + cs / 2,
+                  nc2 * cs + cs / 2,
+                  nr2 * cs + cs / 2,
                 );
                 grd.addColorStop(0, "rgba(4,2,10,0)");
                 grd.addColorStop(1, "rgba(4,2,10,0.9)");
@@ -422,33 +492,71 @@ export default function FogWarMap() {
   );
 
   // ── Aplicar ferramenta numa célula ────────────────────────────────────────
-  const applyToolAt = useCallback(
-    (g: Cell, t: Tool) => {
-      const store = useGameStore.getState();
-      if (t === TOOLS.MOVE) {
-        const id = store.activeActorId;
-        if (id) store.moveActorTo(id, g);
-      } else if (t === TOOLS.WALL) {
-        store.paintWalls([g], true);
-      } else if (t === TOOLS.ERASE) {
-        store.paintWalls([g], false);
-      } else if (t === TOOLS.REVEAL) {
-        store.paintFog([g], FOG_REVEAL);
-      } else if (t === TOOLS.HIDE) {
-        store.paintFog([g], FOG_NONE);
-      }
-    },
-    [],
-  );
+  const applyToolAt = useCallback((g: Cell, t: UiTool) => {
+    const store = useGameStore.getState();
+    if (t === TOOLS.MOVE) {
+      const id = store.activeActorId;
+      if (id) store.moveActorTo(id, g);
+    } else if (t === TOOLS.WALL) {
+      store.paintWalls([g], true);
+    } else if (t === TOOLS.ERASE) {
+      store.paintWalls([g], false);
+    } else if (t === TOOLS.REVEAL) {
+      store.paintFog([g], FOG_REVEAL);
+    } else if (t === TOOLS.HIDE) {
+      store.paintFog([g], FOG_NONE);
+    }
+  }, []);
 
-  // ── Ponteiro ──────────────────────────────────────────────────────────────
+  // ── Passo de 1 casa (Teclado e D-Pad Mobile) ──────────────────────────────
+  const stepActiveActor = useCallback((dr: number, dc: number) => {
+    const st = useGameStore.getState();
+    const active = st.actors.find((a) => a.id === st.activeActorId);
+    if (!active) return;
+    const base =
+      active.path.length > 0
+        ? active.path[active.path.length - 1]
+        : { row: active.row, col: active.col };
+    st.moveActorTo(active.id, { row: base.row + dr, col: base.col + dc });
+  }, []);
+
+  // ── Ponteiro (Mouse + Multitouch Pinch-to-Zoom / Pan) ─────────────────────
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
-      if (e.button === 1 || e.button === 2 || (e.button === 0 && e.altKey)) {
+      e.currentTarget.setPointerCapture(e.pointerId);
+      activePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      // 2 dedos na tela -> inicia Pinch-to-Zoom + Pan
+      if (activePointers.current.size === 2) {
+        const pts = Array.from(activePointers.current.values());
+        const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+        const rect = canvasRef.current?.getBoundingClientRect();
+        const midX = (pts[0].x + pts[1].x) / 2 - (rect?.left ?? 0);
+        const midY = (pts[0].y + pts[1].y) / 2 - (rect?.top ?? 0);
+        pinchState.current = {
+          dist: Math.max(10, dist),
+          zoom,
+          panX: pan.x,
+          panY: pan.y,
+          midX,
+          midY,
+        };
+        isDragging.current = false;
+        dragTool.current = null;
+        return;
+      }
+
+      if (
+        tool === "pan" ||
+        e.button === 1 ||
+        e.button === 2 ||
+        (e.button === 0 && e.altKey)
+      ) {
         panStart.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
         dragTool.current = "pan";
         return;
       }
+
       const g = canvasToGrid(e.clientX, e.clientY);
       if (!g) return;
 
@@ -463,11 +571,35 @@ export default function FogWarMap() {
       }
       applyToolAt(g, tool);
     },
-    [pan.x, pan.y, tool, canvasToGrid, applyToolAt],
+    [pan.x, pan.y, zoom, tool, canvasToGrid, applyToolAt],
   );
 
   const onPointerMove = useCallback(
     (e: React.PointerEvent) => {
+      if (activePointers.current.has(e.pointerId)) {
+        activePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      }
+
+      // Atualiza Pinch-to-Zoom + Pan com 2 dedos
+      if (activePointers.current.size === 2 && pinchState.current) {
+        const pts = Array.from(activePointers.current.values());
+        const dist = Math.max(10, Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y));
+        const rect = canvasRef.current?.getBoundingClientRect();
+        const midX = (pts[0].x + pts[1].x) / 2 - (rect?.left ?? 0);
+        const midY = (pts[0].y + pts[1].y) / 2 - (rect?.top ?? 0);
+
+        const ps = pinchState.current;
+        const nextZoom = clamp(ps.zoom * (dist / ps.dist), 0.2, 4);
+        const ratio = nextZoom / ps.zoom;
+
+        setZoom(nextZoom);
+        setPan({
+          x: midX - (ps.midX - ps.panX) * ratio,
+          y: midY - (ps.midY - ps.panY) * ratio,
+        });
+        return;
+      }
+
       if (dragTool.current === "pan" && panStart.current) {
         setPan({
           x: e.clientX - panStart.current.x,
@@ -488,7 +620,7 @@ export default function FogWarMap() {
         });
         return;
       }
-      if (tool === TOOLS.MOVE) return;
+      if (tool === TOOLS.MOVE || tool === "pan") return;
 
       // Evita repintar a mesma célula enquanto arrasta
       const lp = lastPaint.current;
@@ -501,6 +633,11 @@ export default function FogWarMap() {
 
   const onPointerUp = useCallback(
     (e: React.PointerEvent) => {
+      activePointers.current.delete(e.pointerId);
+      if (activePointers.current.size < 2) {
+        pinchState.current = null;
+      }
+
       if (dragTool.current === TOOLS.SECTOR && sectorStart.current) {
         const g = canvasToGrid(e.clientX, e.clientY);
         if (g) {
@@ -519,7 +656,22 @@ export default function FogWarMap() {
     [canvasToGrid],
   );
 
-  // ── Zoom ──────────────────────────────────────────────────────────────────
+  // ── Zoom (Scroll e Botões HUD) ────────────────────────────────────────────
+  const stepZoom = useCallback((factor: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const mx = canvas.width / 2;
+    const my = canvas.height / 2;
+    setZoom((prev) => {
+      const next = clamp(prev * factor, 0.2, 4);
+      setPan((p) => ({
+        x: mx - (mx - p.x) * (next / prev),
+        y: my - (my - p.y) * (next / prev),
+      }));
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -563,6 +715,10 @@ export default function FogWarMap() {
       const k = e.key.toLowerCase();
 
       if (k === "m") setTool(TOOLS.MOVE);
+      if (k === " ") {
+        e.preventDefault();
+        setTool((prev) => (prev === "pan" ? TOOLS.MOVE : "pan"));
+      }
       if (k === "w") setTool(TOOLS.WALL);
       if (k === "e") setTool(TOOLS.ERASE);
       if (k === "r") setTool(TOOLS.REVEAL);
@@ -584,20 +740,12 @@ export default function FogWarMap() {
       const d = dirs[k];
       if (d) {
         e.preventDefault();
-        const st = useGameStore.getState();
-        const active = st.actors.find((a) => a.id === st.activeActorId);
-        if (!active) return;
-        // Enfileira a partir do fim do caminho atual
-        const base =
-          active.path.length > 0
-            ? active.path[active.path.length - 1]
-            : { row: active.row, col: active.col };
-        st.moveActorTo(active.id, { row: base.row + d[0], col: base.col + d[1] });
+        stepActiveActor(d[0], d[1]);
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [toggleGm, fitView]);
+  }, [toggleGm, fitView, stepActiveActor]);
 
   // Ajusta a vista ao montar e quando a grade muda de tamanho
   useEffect(() => {
@@ -621,6 +769,7 @@ export default function FogWarMap() {
       const cy = (sec.r1 + (sec.r2 - sec.r1 + 1) / 2) * cs;
       setZoom(z);
       setPan({ x: W / 2 - cx * z, y: H / 2 - cy * z });
+      setDrawerOpen(false);
     },
     [],
   );
@@ -657,11 +806,6 @@ export default function FogWarMap() {
     reader.readAsDataURL(file);
   };
 
-  /**
-   * Deixa as células quadradas: a grade passa a ter o MESMO formato do mapa.
-   * Sem isso a imagem é esticada para caber na grade (30×22) e o mapa sai
-   * achatado ou alongado. Mantém o número de linhas e recalcula as colunas.
-   */
   const fitGridToMap = (m: MapEntry) => {
     if (!m.w || !m.h) return;
     const rows = useGameStore.getState().rows;
@@ -675,7 +819,6 @@ export default function FogWarMap() {
     const data = JSON.stringify(
       {
         ...snap,
-        // `path` é predição local — não faz sentido salvar
         actors: snap.actors.map(({ path: _path, ...a }) => a),
       },
       null,
@@ -685,7 +828,7 @@ export default function FogWarMap() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "fogwarmap.json";
+    a.download = "helio-mesa.json";
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -715,13 +858,13 @@ export default function FogWarMap() {
     const scY = MINIMAP_H / (rows * cell);
 
     mx.clearRect(0, 0, MINIMAP_W, MINIMAP_H);
-    mx.fillStyle = "#0d0b14";
+    mx.fillStyle = "#080510";
     mx.fillRect(0, 0, MINIMAP_W, MINIMAP_H);
 
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (walls[r]?.[c]) {
-          mx.fillStyle = "#3a2850";
+          mx.fillStyle = "#4c2882";
           mx.fillRect(c * cell * scX, r * cell * scY, cell * scX, cell * scY);
         }
       }
@@ -753,7 +896,7 @@ export default function FogWarMap() {
       mx.arc(
         (actor.col + 0.5) * cell * scX,
         (actor.row + 0.5) * cell * scY,
-        Math.max(2, cell * scX * 0.4),
+        Math.max(2.5, cell * scX * 0.42),
         0,
         Math.PI * 2,
       );
@@ -763,8 +906,8 @@ export default function FogWarMap() {
 
     const canvas = canvasRef.current;
     if (canvas) {
-      mx.strokeStyle = "rgba(255,255,255,0.4)";
-      mx.lineWidth = 1;
+      mx.strokeStyle = "rgba(251, 191, 36, 0.7)";
+      mx.lineWidth = 1.2;
       mx.strokeRect(
         (-pan.x / zoom) * scX,
         (-pan.y / zoom) * scY,
@@ -772,7 +915,7 @@ export default function FogWarMap() {
         (canvas.height / zoom) * scY,
       );
     }
-  }, [fog, walls, actors, sectors, pan, zoom, cell, cols, rows]);
+  }, [fog, walls, actors, sectors, pan, zoom, cell, cols, rows, showMinimap]);
 
   const onMinimapClick = (e: React.MouseEvent) => {
     const mm = minimapRef.current;
@@ -788,248 +931,431 @@ export default function FogWarMap() {
     }
   };
 
-  // ── Estilos ───────────────────────────────────────────────────────────────
-  const s = {
-    root: {
-      display: "flex",
-      flexDirection: "column" as const,
-      height: "100vh",
-      background: "#0a0810",
-      color: "#c4b5fd",
-      fontFamily: "'Courier New', monospace",
-      fontSize: 12,
-    },
-    topbar: {
-      display: "flex",
-      alignItems: "center",
-      gap: 6,
-      padding: "6px 10px",
-      background: "#110e1e",
-      borderBottom: "1px solid #2d2040",
-      flexWrap: "wrap" as const,
-    },
-    btn: (active: boolean) => ({
-      padding: "4px 9px",
-      background: active ? "#4c1d95" : "#1a1430",
-      border: `1px solid ${active ? "#7c3aed" : "#3d2b60"}`,
-      borderRadius: 5,
-      color: active ? "#ede9fe" : "#a78bfa",
-      cursor: "pointer",
-      fontSize: 11,
-      fontFamily: "'Courier New', monospace",
-      transition: "all .12s",
-    }),
-    sep: { width: 1, height: 20, background: "#2d2040", margin: "0 2px" },
-    label: { color: "#7c6aaa", fontSize: 10, whiteSpace: "nowrap" as const },
-    canvasArea: {
-      flex: 1,
-      position: "relative" as const,
-      overflow: "hidden",
-      cursor:
-        tool === TOOLS.WALL || tool === TOOLS.ERASE
-          ? "crosshair"
-          : tool === TOOLS.SECTOR
-            ? "cell"
-            : tool === TOOLS.REVEAL || tool === TOOLS.HIDE
-              ? "pointer"
-              : "default",
-    },
-    mainCanvas: { position: "absolute" as const, top: 0, left: 0, display: "block" },
-    sidebar: {
-      position: "absolute" as const,
-      right: 0, top: 0, bottom: 0,
-      width: 220,
-      background: "rgba(10,8,20,0.92)",
-      borderLeft: "1px solid #2d2040",
-      backdropFilter: "blur(8px)",
-      display: "flex",
-      flexDirection: "column" as const,
-      overflowY: "auto" as const,
-    },
-    sectionHead: {
-      padding: "7px 10px",
-      borderBottom: "1px solid #2d2040",
-      color: "#a78bfa",
-      fontSize: 10,
-      fontWeight: "bold" as const,
-      letterSpacing: 1,
-      display: "flex",
-      justifyContent: "space-between",
-      alignItems: "center",
-      cursor: "pointer",
-      userSelect: "none" as const,
-    },
-    sectionBody: { padding: "6px 10px" },
-    input: {
-      background: "#1a1430",
-      border: "1px solid #3d2b60",
-      borderRadius: 4,
-      color: "#ede9fe",
-      padding: "3px 7px",
-      fontFamily: "'Courier New', monospace",
-      fontSize: 11,
-      width: "100%",
-      boxSizing: "border-box" as const,
-    },
-    minimap: {
-      position: "absolute" as const,
-      left: 8, bottom: 8,
-      border: "1px solid #3d2b60",
-      borderRadius: 6,
-      cursor: "pointer",
-      background: "#0d0b14",
-    },
-    modal: {
-      position: "fixed" as const,
-      inset: 0,
-      background: "rgba(0,0,0,0.7)",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      zIndex: 9999,
-    },
-    modalBox: {
-      background: "#1a1430",
-      border: "1px solid #7c3aed",
-      borderRadius: 10,
-      padding: 24,
-      minWidth: 300,
-      display: "flex",
-      flexDirection: "column" as const,
-      gap: 12,
-    },
-  };
+  const cursorStyle =
+    tool === "pan"
+      ? "grab"
+      : tool === TOOLS.WALL || tool === TOOLS.ERASE
+        ? "crosshair"
+        : tool === TOOLS.SECTOR
+          ? "cell"
+          : tool === TOOLS.REVEAL || tool === TOOLS.HIDE
+            ? "pointer"
+            : "default";
 
   return (
-    <div style={s.root}>
-      {/* ── Barra superior ── */}
-      <div style={s.topbar}>
-        <span style={{ color: "#a78bfa", fontWeight: "bold", fontSize: 13, marginRight: 4 }}>
-          ☽ HELIO
-        </span>
-        <div style={s.sep} />
+    <div className="vtt-root">
+      {/* ── Barra Superior (Ordo Realitas Command Bar) ── */}
+      <header className="vtt-topbar">
+        <div className="vtt-brand">
+          <IconSigil size={24} style={{ color: "#fbbf24" }} />
+          <div>
+            <div className="vtt-brand-title">HELIO</div>
+            <span className="vtt-brand-sub">Ordo Realitas</span>
+          </div>
+        </div>
 
-        {TOOL_LIST.map((tl) => (
-          <button
-            key={tl.id}
-            style={s.btn(tool === tl.id)}
-            onClick={() => setTool(tl.id)}
-            title={`[${tl.key}] ${tl.id}`}
-          >
-            {tl.label}
-          </button>
-        ))}
+        {/* Ferramentas no Desktop */}
+        <div
+          className="vtt-desktop-tools"
+          style={{ display: "flex", alignItems: "center", gap: 5 }}
+        >
+          {TOOL_LIST.map((tl) => (
+            <button
+              key={tl.id}
+              type="button"
+              className="occult-btn"
+              data-active={tool === tl.id}
+              onClick={() => setTool(tl.id)}
+              title={`[${tl.key}] ${tl.label}`}
+            >
+              {tl.icon}
+              <span>{tl.label}</span>
+            </button>
+          ))}
+          <div className="vtt-sep" />
+        </div>
 
-        <div style={s.sep} />
-
+        {/* Controles de Visão e Membrana */}
         <button
-          style={s.btn(gmMode)}
+          type="button"
+          className="occult-btn occult-btn--gold"
+          data-active={gmMode}
           onClick={toggleGm}
           disabled={online}
           title={
             online
               ? "Definido pelo servidor: quem criou a sala é o mestre"
-              : "[G] Modo mestre — tudo visível"
+              : "[G] Visão do Mestre — tudo visível"
           }
         >
-          {gmMode ? "👁 MESTRE ON" : "👁 MESTRE OFF"}
+          {gmMode ? <IconEye size={15} /> : <IconEyeOff size={15} />}
+          <span>{gmMode ? "Mestre ON" : "Mestre OFF"}</span>
         </button>
+
         <button
-          style={s.btn(fogMode === "soft")}
+          type="button"
+          className="occult-btn"
+          data-active={fogMode === "soft"}
           onClick={() => setFogMode(fogMode === "soft" ? "hard" : "soft")}
+          title="[F] Alternar névoa suave ou rígida"
         >
-          {fogMode === "soft" ? "🌫 Suave" : "⬛ Dura"}
+          <IconMist size={15} />
+          <span>{fogMode === "soft" ? "Bruma Suave" : "Bruma Densa"}</span>
         </button>
 
-        <div style={s.sep} />
+        <div className="vtt-sep" />
 
-        <button style={s.btn(false)} onClick={resetFog}>🔄 Reset Fog</button>
-        <button style={s.btn(false)} onClick={clearWalls}>🗑 Limpar Paredes</button>
-        <button style={s.btn(false)} onClick={fitView} title="[0] Fit view">⊡ Fit</button>
+        <button
+          type="button"
+          className="occult-btn"
+          onClick={resetFog}
+          title="Cobrir todo o mapa com névoa novamente"
+        >
+          <IconReset size={14} />
+          <span>Reset Fog</span>
+        </button>
 
-        <div style={s.sep} />
+        <button
+          type="button"
+          className="occult-btn occult-btn--danger"
+          onClick={clearWalls}
+          title="Remover todas as paredes do mapa"
+        >
+          <IconTrash size={14} />
+          <span>Limpar Paredes</span>
+        </button>
 
-        <label style={{ ...s.btn(false), display: "inline-block", cursor: "pointer" }}>
-          🖼 BG
-          <input type="file" accept="image/*" style={{ display: "none" }} onChange={handleBgUpload} />
+        <button
+          type="button"
+          className="occult-btn"
+          onClick={fitView}
+          title="[0] Centralizar e enquadrar mapa"
+        >
+          <IconFit size={15} />
+          <span>Enquadrar</span>
+        </button>
+
+        <div className="vtt-sep" />
+
+        <label className="occult-btn" title="Carregar imagem de fundo personalizada">
+          <IconImage size={15} />
+          <span>Mapa BG</span>
+          <input
+            type="file"
+            accept="image/*"
+            style={{ display: "none" }}
+            onChange={handleBgUpload}
+          />
         </label>
         {bgImage && (
-          <button style={s.btn(false)} onClick={() => setBgImage(null)}>✕ BG</button>
+          <button
+            type="button"
+            className="occult-btn occult-btn--danger"
+            onClick={() => setBgImage(null)}
+            title="Remover imagem de fundo"
+          >
+            <IconClose size={14} />
+          </button>
         )}
 
-        <div style={s.sep} />
+        <div className="vtt-sep" />
 
-        <button style={s.btn(false)} onClick={exportState}>💾 Export</button>
-        <label style={{ ...s.btn(false), cursor: "pointer" }}>
-          📂 Import
-          <input type="file" accept=".json" style={{ display: "none" }} onChange={importState} />
+        <button
+          type="button"
+          className="occult-btn"
+          onClick={exportState}
+          title="Salvar estado da mesa em JSON"
+        >
+          <IconDownload size={14} />
+          <span>Exportar</span>
+        </button>
+
+        <label className="occult-btn" title="Carregar estado da mesa de um JSON">
+          <IconUpload size={14} />
+          <span>Importar</span>
+          <input
+            type="file"
+            accept=".json"
+            style={{ display: "none" }}
+            onChange={importState}
+          />
         </label>
-      </div>
 
-      {/* ── Área principal ── */}
-      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+        {/* Botão para abrir Grimório (Sidebar) no Mobile */}
+        <button
+          type="button"
+          className="occult-btn occult-btn--gold vtt-mobile-drawer-btn"
+          data-active={drawerOpen}
+          onClick={() => setDrawerOpen((p) => !p)}
+          title="Abrir Grimório da Mesa"
+        >
+          <IconGrimoire size={16} />
+          <span>Grimório</span>
+        </button>
+      </header>
+
+      {/* ── Área Principal (Mapa + Grimório Lateral) ── */}
+      <div className="vtt-workspace">
         <div
           ref={containerRef}
-          style={s.canvasArea}
+          className="vtt-canvas-area"
+          style={{ cursor: cursorStyle }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
-          onPointerLeave={onPointerUp}
+          onPointerCancel={onPointerUp}
           onContextMenu={(e) => e.preventDefault()}
         >
-          <canvas ref={canvasRef} style={s.mainCanvas} />
-
           <canvas
-            ref={minimapRef}
-            width={MINIMAP_W}
-            height={MINIMAP_H}
-            style={s.minimap}
-            onClick={onMinimapClick}
-            title="Clique para navegar"
+            ref={canvasRef}
+            style={{ position: "absolute", top: 0, left: 0, display: "block" }}
           />
 
-          <div style={{ position: "absolute", left: 8, bottom: MINIMAP_H + 14, color: "#7c6aaa", fontSize: 10 }}>
-            {Math.round(zoom * 100)}%
+          {/* Vinheta escura nas bordas do canvas */}
+          <div className="vtt-vignette" />
+
+          {/* HUD Inferior Esquerdo: Controles de Zoom + Minimapa */}
+          <div className="vtt-hud-bottom-left">
+            <div className="vtt-zoom-pill">
+              <button
+                type="button"
+                className="vtt-zoom-btn"
+                onClick={() => stepZoom(0.85)}
+                title="Diminuir Zoom"
+              >
+                <IconMinus size={14} />
+              </button>
+              <button
+                type="button"
+                onClick={fitView}
+                title="Clique para redefinir enquadramento"
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "#fde68a",
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  padding: "0 6px",
+                  cursor: "pointer",
+                  minWidth: 46,
+                }}
+              >
+                {Math.round(zoom * 100)}%
+              </button>
+              <button
+                type="button"
+                className="vtt-zoom-btn"
+                onClick={() => stepZoom(1.18)}
+                title="Aumentar Zoom"
+              >
+                <IconPlus size={14} />
+              </button>
+              <button
+                type="button"
+                className="vtt-zoom-btn"
+                onClick={() => setShowMinimap((p) => !p)}
+                title={showMinimap ? "Ocultar Minimapa" : "Mostrar Minimapa"}
+                style={{
+                  marginLeft: 2,
+                  color: showMinimap ? "#fbbf24" : "#8474a8",
+                }}
+              >
+                <IconMap size={13} />
+              </button>
+              <button
+                type="button"
+                className="vtt-zoom-btn"
+                onClick={() => setShowDpad((p) => !p)}
+                title="Alternar controle direcional de passos (D-Pad)"
+                style={{
+                  color: showDpad ? "#c084fc" : "#8474a8",
+                }}
+              >
+                <IconMove size={13} />
+              </button>
+            </div>
+
+            {showMinimap && (
+              <div className="vtt-minimap-wrap" title="Clique no minimapa para mover a câmera">
+                <canvas
+                  ref={minimapRef}
+                  width={MINIMAP_W}
+                  height={MINIMAP_H}
+                  onClick={onMinimapClick}
+                  style={{ display: "block" }}
+                />
+              </div>
+            )}
           </div>
+
+          {/* D-Pad Tático para caminhar 1 casa (ótimo para Mobile) */}
+          {showDpad && (
+            <div className="vtt-dpad">
+              <div />
+              <button
+                type="button"
+                className="vtt-dpad-btn"
+                onClick={() => stepActiveActor(-1, 0)}
+                title="Norte (↑)"
+              >
+                <IconChevron dir="up" size={16} />
+              </button>
+              <div />
+              <button
+                type="button"
+                className="vtt-dpad-btn"
+                onClick={() => stepActiveActor(0, -1)}
+                title="Oeste (←)"
+              >
+                <IconChevron dir="left" size={16} />
+              </button>
+              <button
+                type="button"
+                className="vtt-dpad-btn"
+                onClick={fitView}
+                title="Centralizar"
+                style={{ color: "#fbbf24" }}
+              >
+                <IconFit size={14} />
+              </button>
+              <button
+                type="button"
+                className="vtt-dpad-btn"
+                onClick={() => stepActiveActor(0, 1)}
+                title="Leste (→)"
+              >
+                <IconChevron dir="right" size={16} />
+              </button>
+              <div />
+              <button
+                type="button"
+                className="vtt-dpad-btn"
+                onClick={() => stepActiveActor(1, 0)}
+                title="Sul (↓)"
+              >
+                <IconChevron dir="down" size={16} />
+              </button>
+              <div />
+            </div>
+          )}
         </div>
 
-        {/* ── Sidebar ── */}
-        <div style={s.sidebar}>
+        {/* Backdrop do Drawer no Mobile */}
+        <div
+          className="vtt-sidebar-backdrop"
+          data-open={drawerOpen}
+          onClick={() => setDrawerOpen(false)}
+        />
+
+        {/* ── Grimório Lateral (Sidebar / Mobile Drawer) ── */}
+        <aside className="vtt-sidebar" data-open={drawerOpen}>
+          {/* Cabeçalho exclusivo do Drawer no Mobile */}
+          <div
+            className="vtt-mobile-drawer-btn"
+            style={{
+              padding: "12px 14px",
+              borderBottom: "1px solid rgba(217, 119, 6, 0.3)",
+              justifyContent: "space-between",
+              alignItems: "center",
+              background: "rgba(22, 13, 42, 0.95)",
+              width: "100%",
+            }}
+          >
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                fontFamily: "var(--font-display)",
+                fontSize: 13,
+                fontWeight: 700,
+                color: "#fde68a",
+                letterSpacing: "0.12em",
+              }}
+            >
+              <IconSigil size={18} /> GRIMÓRIO DA MESA
+            </span>
+            <button
+              type="button"
+              className="occult-btn"
+              style={{ padding: "4px 8px", minHeight: 30 }}
+              onClick={() => setDrawerOpen(false)}
+            >
+              <IconClose size={15} />
+            </button>
+          </div>
+
           <PlayersPanel />
 
-          <div>
-            <div style={s.sectionHead} onClick={() => setShowSettings((p) => !p)}>
-              ⚙ GRADE {showSettings ? "▲" : "▼"}
+          {/* Seção: Geometria da Grade */}
+          <div className="vtt-section">
+            <div
+              className="vtt-section-head"
+              onClick={() => setShowSettings((p) => !p)}
+            >
+              <span className="vtt-section-title">
+                <IconGrid size={14} style={{ color: "#c084fc" }} />
+                <span>GEOMETRIA DA GRADE</span>
+              </span>
+              <IconChevron size={14} dir={showSettings ? "up" : "down"} />
             </div>
             {showSettings && (
-              <div style={{ ...s.sectionBody, display: "flex", flexDirection: "column", gap: 6 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
-                  <span style={s.label}>Colunas</span>
+              <div
+                className="vtt-section-body"
+                style={{ display: "flex", flexDirection: "column", gap: 8 }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  <span style={{ color: "#9d8ec4", fontSize: 11 }}>Colunas</span>
                   <input
                     type="number"
-                    style={{ ...s.input, width: 60 }}
+                    className="occult-input"
+                    style={{ width: 72, textAlign: "center", fontFamily: "var(--font-mono)" }}
                     value={cols}
                     min={5}
                     max={80}
                     onChange={(e) => setDims(rows, +e.target.value)}
                   />
                 </div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
-                  <span style={s.label}>Linhas</span>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  <span style={{ color: "#9d8ec4", fontSize: 11 }}>Linhas</span>
                   <input
                     type="number"
-                    style={{ ...s.input, width: 60 }}
+                    className="occult-input"
+                    style={{ width: 72, textAlign: "center", fontFamily: "var(--font-mono)" }}
                     value={rows}
                     min={5}
                     max={60}
                     onChange={(e) => setDims(+e.target.value, cols)}
                   />
                 </div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
-                  <span style={s.label}>Célula px</span>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  <span style={{ color: "#9d8ec4", fontSize: 11 }}>Célula (px)</span>
                   <input
                     type="number"
-                    style={{ ...s.input, width: 60 }}
+                    className="occult-input"
+                    style={{ width: 72, textAlign: "center", fontFamily: "var(--font-mono)" }}
                     value={cell}
                     min={16}
                     max={96}
@@ -1040,189 +1366,404 @@ export default function FogWarMap() {
             )}
           </div>
 
-          <div>
-            <div style={s.sectionHead}>🗺 MAPA</div>
-            <div style={{ ...s.sectionBody, display: "flex", flexDirection: "column", gap: 5 }}>
-              {assets.maps.length === 0 && (
-                <div style={{ color: "#5a4d7a", fontSize: 10 }}>
-                  Rode <b>tools/optimize-assets.ps1</b> para gerar os mapas.
-                </div>
-              )}
-              {assets.maps.map((m) => (
-                <div key={m.id} style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  <img
-                    src={m.src}
-                    alt=""
-                    style={{
-                      width: 40, height: 30, objectFit: "cover", borderRadius: 3,
-                      border: `1px solid ${bgImage === m.src ? "#7c3aed" : "#3d2b60"}`,
-                    }}
-                  />
-                  <button
-                    style={{ ...s.btn(bgImage === m.src), flex: 1, textAlign: "left" }}
-                    onClick={() => setBgImage(bgImage === m.src ? null : m.src)}
-                    title={bgImage === m.src ? "Remover fundo" : "Usar como fundo"}
-                  >
-                    {m.name}
-                  </button>
-                  {m.w && m.h ? (
-                    <button
-                      style={{ ...s.btn(false), padding: "3px 6px" }}
-                      onClick={() => fitGridToMap(m)}
-                      title={`Ajustar a grade ao formato deste mapa (${m.w}×${m.h}) — evita a imagem esticada`}
-                    >
-                      ⊞
-                    </button>
-                  ) : null}
-                </div>
-              ))}
+          {/* Seção: Mapas */}
+          <div className="vtt-section">
+            <div className="vtt-section-head" onClick={() => setShowMaps((p) => !p)}>
+              <span className="vtt-section-title">
+                <IconMap size={14} style={{ color: "#fbbf24" }} />
+                <span>CENÁRIOS & MAPAS</span>
+              </span>
+              <IconChevron size={14} dir={showMaps ? "up" : "down"} />
             </div>
-          </div>
-
-          <div>
-            <div style={s.sectionHead} onClick={() => setShowTokens((p) => !p)}>
-              ⚔ ATORES {showTokens ? "▲" : "▼"}
-              <button
-                style={{ ...s.btn(false), padding: "1px 6px", marginLeft: 4 }}
-                onClick={(e) => { e.stopPropagation(); addActor(); }}
+            {showMaps && (
+              <div
+                className="vtt-section-body"
+                style={{ display: "flex", flexDirection: "column", gap: 6 }}
               >
-                + Add
-              </button>
-            </div>
-            {showTokens && (
-              <div style={{ ...s.sectionBody, display: "flex", flexDirection: "column", gap: 8 }}>
-                {actors.map((actor) => (
-                  <div
-                    key={actor.id}
-                    style={{
-                      padding: "6px 8px",
-                      background: actor.id === activeActorId ? "#2d1f4e" : "#130f22",
-                      border: `1px solid ${actor.id === activeActorId ? "#7c3aed" : "#2d2040"}`,
-                      borderRadius: 6,
-                      cursor: "pointer",
-                    }}
-                    onClick={() => setActiveActor(actor.id)}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <input
-                        style={{ ...s.input, width: 70 }}
-                        value={actor.name}
-                        onChange={(e) => updateActor(actor.id, { name: e.target.value })}
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                      <input
-                        type="color"
-                        value={actor.color}
-                        style={{ width: 24, height: 24, border: "none", borderRadius: 4, cursor: "pointer", background: "none" }}
-                        onChange={(e) => updateActor(actor.id, { color: e.target.value })}
-                        onClick={(e) => e.stopPropagation()}
+                {assets.maps.length === 0 && (
+                  <div style={{ color: "#8474a8", fontSize: 11 }}>
+                    Execute <b>tools/optimize-assets.ps1</b> para gerar os mapas otimizados.
+                  </div>
+                )}
+                {assets.maps.map((m) => {
+                  const isCurrent = bgImage === m.src;
+                  return (
+                    <div
+                      key={m.id}
+                      style={{
+                        display: "flex",
+                        gap: 7,
+                        alignItems: "center",
+                        padding: 4,
+                        borderRadius: 8,
+                        background: isCurrent
+                          ? "rgba(109, 40, 217, 0.22)"
+                          : "rgba(18, 11, 32, 0.65)",
+                        border: `1px solid ${
+                          isCurrent ? "rgba(245, 158, 11, 0.55)" : "rgba(139, 92, 246, 0.16)"
+                        }`,
+                      }}
+                    >
+                      <img
+                        src={m.src}
+                        alt={m.name}
+                        style={{
+                          width: 44,
+                          height: 32,
+                          objectFit: "cover",
+                          borderRadius: 5,
+                          border: "1px solid rgba(168, 85, 247, 0.35)",
+                          flexShrink: 0,
+                        }}
                       />
                       <button
-                        style={{ ...s.btn(false), padding: "1px 5px" }}
-                        onClick={(e) => { e.stopPropagation(); removeActor(actor.id); }}
-                      >
-                        ✕
-                      </button>
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 5 }}>
-                      <span style={s.label}>Visão</span>
-                      <input
-                        type="range"
-                        min={1}
-                        max={15}
-                        value={actor.vision}
-                        style={{ flex: 1, accentColor: actor.color }}
-                        onChange={(e) => {
-                          updateActor(actor.id, { vision: +e.target.value });
-                          useGameStore.getState().recomputeVision();
+                        type="button"
+                        className="occult-btn"
+                        data-active={isCurrent}
+                        style={{
+                          flex: 1,
+                          justifyContent: "flex-start",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          padding: "5px 8px",
+                          minHeight: 32,
                         }}
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                      <span style={s.label}>{actor.vision}</span>
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
-                      <span style={s.label}>Token</span>
-                      <select
-                        style={{ ...s.input, flex: 1, minWidth: 0 }}
-                        value={actor.portrait ?? ""}
-                        onChange={(e) => updateActor(actor.id, { portrait: e.target.value || null })}
-                        onClick={(e) => e.stopPropagation()}
+                        onClick={() => setBgImage(isCurrent ? null : m.src)}
+                        title={isCurrent ? "Remover fundo" : "Ativar este mapa"}
                       >
-                        <option value="">— bonequinho —</option>
-                        {assets.tokens.map((t) => (
-                          <option key={t.id} value={t.src}>{t.name}</option>
-                        ))}
-                      </select>
-                      {actor.portrait && (
-                        <img
-                          src={actor.portrait}
-                          alt=""
-                          style={{
-                            width: 24, height: 24, borderRadius: "50%",
-                            objectFit: "cover", border: `1px solid ${actor.color}`,
-                          }}
-                        />
-                      )}
+                        {m.name}
+                      </button>
+                      {m.w && m.h ? (
+                        <button
+                          type="button"
+                          className="occult-btn"
+                          style={{ padding: "5px 7px", minHeight: 32 }}
+                          onClick={() => fitGridToMap(m)}
+                          title={`Ajustar proporção da grade a este mapa (${m.w}×${m.h})`}
+                        >
+                          <IconGrid size={13} />
+                        </button>
+                      ) : null}
                     </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
-                      <span style={s.label}>Sprite</span>
-                      <input
-                        style={{ ...s.input, width: 80 }}
-                        value={actor.sprite}
-                        onChange={(e) => updateActor(actor.id, { sprite: e.target.value })}
-                        onClick={(e) => e.stopPropagation()}
-                        title="Chave do spritesheet de caminhada em /sprites/<chave>.png (usado quando não há token)"
-                      />
-                      <span style={{ color: "#5a4d7a", fontSize: 10 }}>
-                        ({actor.col}, {actor.row})
-                      </span>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
 
-          <div>
-            <div style={s.sectionHead} onClick={() => setShowSectors((p) => !p)}>
-              📐 SETORES {showSectors ? "▲" : "▼"}
+          {/* Seção: Atores / Entidades */}
+          <div className="vtt-section">
+            <div
+              className="vtt-section-head"
+              onClick={() => setShowTokens((p) => !p)}
+            >
+              <span className="vtt-section-title">
+                <IconSwords size={14} style={{ color: "#c084fc" }} />
+                <span>AGENTES & ENTIDADES</span>
+              </span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <button
+                  type="button"
+                  className="occult-btn occult-btn--gold"
+                  style={{ padding: "2px 8px", minHeight: 24, fontSize: 10 }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    addActor();
+                  }}
+                >
+                  <IconPlus size={12} /> Invocar
+                </button>
+                <IconChevron size={14} dir={showTokens ? "up" : "down"} />
+              </span>
+            </div>
+
+            {showTokens && (
+              <div
+                className="vtt-section-body"
+                style={{ display: "flex", flexDirection: "column", gap: 9 }}
+              >
+                {actors.map((actor) => {
+                  const isActive = actor.id === activeActorId;
+                  return (
+                    <div
+                      key={actor.id}
+                      onClick={() => setActiveActor(actor.id)}
+                      style={{
+                        padding: "9px 10px",
+                        background: isActive
+                          ? "linear-gradient(145deg, rgba(88, 28, 135, 0.42) 0%, rgba(30, 16, 56, 0.9) 100%)"
+                          : "rgba(18, 11, 34, 0.82)",
+                        border: `1px solid ${
+                          isActive ? "#f59e0b" : "rgba(139, 92, 246, 0.22)"
+                        }`,
+                        borderRadius: 10,
+                        cursor: "pointer",
+                        boxShadow: isActive
+                          ? "0 0 18px rgba(168, 85, 247, 0.25)"
+                          : "none",
+                        transition: "all 0.16s ease",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          gap: 6,
+                        }}
+                      >
+                        {actor.portrait ? (
+                          <img
+                            src={actor.portrait}
+                            alt={actor.name}
+                            style={{
+                              width: 28,
+                              height: 28,
+                              borderRadius: "50%",
+                              objectFit: "cover",
+                              border: `2px solid ${actor.color}`,
+                              flexShrink: 0,
+                            }}
+                          />
+                        ) : (
+                          <span
+                            style={{
+                              width: 26,
+                              height: 26,
+                              borderRadius: "50%",
+                              background: actor.color,
+                              display: "inline-flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              fontSize: 10,
+                              fontWeight: 700,
+                              color: "#fff",
+                              flexShrink: 0,
+                            }}
+                          >
+                            {actor.name.slice(0, 2).toUpperCase()}
+                          </span>
+                        )}
+
+                        <input
+                          className="occult-input"
+                          style={{ flex: 1, minWidth: 0, padding: "4px 7px", fontWeight: 600 }}
+                          value={actor.name}
+                          onChange={(e) => updateActor(actor.id, { name: e.target.value })}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+
+                        <input
+                          type="color"
+                          value={actor.color}
+                          title="Cor da aura / token"
+                          style={{
+                            width: 26,
+                            height: 26,
+                            border: "none",
+                            borderRadius: 6,
+                            cursor: "pointer",
+                            background: "none",
+                            flexShrink: 0,
+                          }}
+                          onChange={(e) => updateActor(actor.id, { color: e.target.value })}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+
+                        <button
+                          type="button"
+                          className="occult-btn occult-btn--danger"
+                          style={{ padding: "4px 6px", minHeight: 26 }}
+                          title="Remover ator"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeActor(actor.id);
+                          }}
+                        >
+                          <IconClose size={12} />
+                        </button>
+                      </div>
+
+                      {/* Alcance de Visão */}
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          marginTop: 7,
+                        }}
+                      >
+                        <span style={{ color: "#9d8ec4", fontSize: 11, minWidth: 38 }}>
+                          Visão
+                        </span>
+                        <input
+                          type="range"
+                          min={1}
+                          max={15}
+                          value={actor.vision}
+                          style={{ flex: 1, accentColor: actor.color, cursor: "pointer" }}
+                          onChange={(e) => {
+                            updateActor(actor.id, { vision: +e.target.value });
+                            useGameStore.getState().recomputeVision();
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                        <span
+                          style={{
+                            color: "#fde68a",
+                            fontFamily: "var(--font-mono)",
+                            fontSize: 11,
+                            minWidth: 18,
+                            textAlign: "right",
+                          }}
+                        >
+                          {actor.vision}
+                        </span>
+                      </div>
+
+                      {/* Seletor de Retrato / Token */}
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          marginTop: 6,
+                        }}
+                      >
+                        <span style={{ color: "#9d8ec4", fontSize: 11, minWidth: 38 }}>
+                          Token
+                        </span>
+                        <select
+                          className="occult-input"
+                          style={{ flex: 1, minWidth: 0, padding: "4px 6px" }}
+                          value={actor.portrait ?? ""}
+                          onChange={(e) =>
+                            updateActor(actor.id, { portrait: e.target.value || null })
+                          }
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <option value="">— Miniatura Procedural —</option>
+                          {assets.tokens.map((t) => (
+                            <option key={t.id} value={t.src}>
+                              {t.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Sprite & Coordenada */}
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: 8,
+                          marginTop: 6,
+                        }}
+                      >
+                        <span style={{ color: "#9d8ec4", fontSize: 11, minWidth: 38 }}>
+                          Sprite
+                        </span>
+                        <input
+                          className="occult-input"
+                          style={{ width: 90, padding: "3px 6px", fontSize: 11 }}
+                          value={actor.sprite}
+                          onChange={(e) => updateActor(actor.id, { sprite: e.target.value })}
+                          onClick={(e) => e.stopPropagation()}
+                          title="Chave do spritesheet em /sprites/<chave>.png"
+                        />
+                        <span
+                          style={{
+                            color: "#8474a8",
+                            fontFamily: "var(--font-mono)",
+                            fontSize: 10,
+                            marginLeft: "auto",
+                          }}
+                        >
+                          [{actor.col}, {actor.row}]
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Seção: Setores */}
+          <div className="vtt-section">
+            <div
+              className="vtt-section-head"
+              onClick={() => setShowSectors((p) => !p)}
+            >
+              <span className="vtt-section-title">
+                <IconSector size={14} style={{ color: "#22d3ee" }} />
+                <span>SETORES RITUAIS</span>
+              </span>
+              <IconChevron size={14} dir={showSectors ? "up" : "down"} />
             </div>
             {showSectors && (
-              <div style={{ ...s.sectionBody, display: "flex", flexDirection: "column", gap: 5 }}>
+              <div
+                className="vtt-section-body"
+                style={{ display: "flex", flexDirection: "column", gap: 6 }}
+              >
                 {sectors.length === 0 && (
-                  <div style={{ color: "#5a4d7a", fontSize: 10 }}>
-                    Use a ferramenta 📐 Setor para marcar regiões no mapa.
+                  <div style={{ color: "#8474a8", fontSize: 11, lineHeight: 1.45 }}>
+                    Selecione a ferramenta <b>Setor</b> e arraste no mapa para demarcar salas ou
+                    zonas.
                   </div>
                 )}
                 {sectors.map((sec) => (
                   <div
                     key={sec.id}
+                    onClick={() => jumpToSector(sec)}
+                    title={`Focar câmera em: ${sec.name}`}
                     style={{
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "space-between",
-                      padding: "5px 7px",
-                      background: "#130f22",
+                      padding: "6px 9px",
+                      background: "rgba(18, 11, 34, 0.8)",
                       border: `1px solid ${sec.color}44`,
                       borderLeft: `3px solid ${sec.color}`,
-                      borderRadius: 5,
+                      borderRadius: 7,
                       cursor: "pointer",
-                      gap: 5,
+                      gap: 6,
                     }}
-                    onClick={() => jumpToSector(sec)}
-                    title={`Ir para: ${sec.name}`}
                   >
-                    <span style={{ color: sec.color, fontSize: 11, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    <span
+                      style={{
+                        color: sec.color,
+                        fontFamily: "var(--font-display)",
+                        fontWeight: 600,
+                        fontSize: 11,
+                        flex: 1,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
                       {sec.name}
                     </span>
-                    <span style={{ color: "#5a4d7a", fontSize: 9 }}>
+                    <span
+                      style={{
+                        color: "#8474a8",
+                        fontFamily: "var(--font-mono)",
+                        fontSize: 10,
+                      }}
+                    >
                       {sec.c2 - sec.c1 + 1}×{sec.r2 - sec.r1 + 1}
                     </span>
                     <button
-                      style={{ ...s.btn(false), padding: "0px 4px", fontSize: 10 }}
-                      onClick={(e) => { e.stopPropagation(); removeSector(sec.id); }}
+                      type="button"
+                      className="occult-btn occult-btn--danger"
+                      style={{ padding: "2px 5px", minHeight: 22 }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeSector(sec.id);
+                      }}
                     >
-                      ✕
+                      <IconClose size={11} />
                     </button>
                   </div>
                 ))}
@@ -1230,63 +1771,146 @@ export default function FogWarMap() {
             )}
           </div>
 
-          <div style={{ marginTop: "auto" }}>
-            <div style={s.sectionHead}>⌨ ATALHOS</div>
-            <div style={{ ...s.sectionBody, display: "flex", flexDirection: "column", gap: 3 }}>
-              {[
-                ["M", "Mover ator"],
-                ["W", "Parede"],
-                ["E", "Apagar parede"],
-                ["R", "Revelar fog"],
-                ["H", "Esconder fog"],
-                ["S", "Novo setor"],
-                ["G", "Alternar mestre"],
-                ["F", "Fog soft/hard"],
-                ["0", "Fit view"],
-                ["←↑↓→", "Andar 1 casa"],
-                ["Clique", "Andar até o ponto"],
-                ["Dir./Alt", "Pan"],
-                ["Scroll", "Zoom"],
-              ].map(([k, d]) => (
-                <div key={k} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <span
+          {/* Seção: Atalhos de Teclado */}
+          <div className="vtt-section" style={{ marginTop: "auto" }}>
+            <div
+              className="vtt-section-head"
+              onClick={() => setShowShortcuts((p) => !p)}
+            >
+              <span className="vtt-section-title">
+                <IconKeyboard size={14} style={{ color: "#9d8ec4" }} />
+                <span>COMANDOS & ATALHOS</span>
+              </span>
+              <IconChevron size={14} dir={showShortcuts ? "up" : "down"} />
+            </div>
+            {showShortcuts && (
+              <div
+                className="vtt-section-body"
+                style={{ display: "flex", flexDirection: "column", gap: 5 }}
+              >
+                {[
+                  ["M", "Mover agente"],
+                  ["Espaço", "Arrastar câmera (Pan)"],
+                  ["W / E", "Criar / Apagar parede"],
+                  ["R / H", "Revelar / Ocultar névoa"],
+                  ["S", "Demarcar setor"],
+                  ["G", "Visão do Mestre"],
+                  ["F", "Bruma suave / densa"],
+                  ["0", "Enquadrar mapa"],
+                  ["←↑↓→", "Caminhar 1 casa"],
+                  ["Pinça / Scroll", "Zoom no mapa"],
+                ].map(([k, d]) => (
+                  <div
+                    key={k}
                     style={{
-                      background: "#2d1f4e",
-                      border: "1px solid #3d2b60",
-                      borderRadius: 3,
-                      padding: "1px 5px",
-                      fontSize: 10,
-                      color: "#a78bfa",
-                      minWidth: 28,
-                      textAlign: "center",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 8,
                     }}
                   >
-                    {k}
-                  </span>
-                  <span style={{ color: "#7c6aaa", fontSize: 10 }}>{d}</span>
-                </div>
-              ))}
-            </div>
+                    <span
+                      style={{
+                        background: "rgba(45, 26, 78, 0.75)",
+                        border: "1px solid rgba(168, 85, 247, 0.35)",
+                        borderRadius: 5,
+                        padding: "2px 6px",
+                        fontSize: 10,
+                        fontFamily: "var(--font-mono)",
+                        color: "#fde68a",
+                      }}
+                    >
+                      {k}
+                    </span>
+                    <span style={{ color: "#9d8ec4", fontSize: 11 }}>{d}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        </div>
+        </aside>
       </div>
 
-      {/* ── Modal de nome do setor ── */}
+      {/* ── Dock Inferior de Ferramentas (Mobile) ── */}
+      <nav className="vtt-mobile-dock" aria-label="Ferramentas do Mapa">
+        {TOOL_LIST.map((tl) => (
+          <button
+            key={tl.id}
+            type="button"
+            className="vtt-dock-item"
+            data-active={tool === tl.id}
+            onClick={() => setTool(tl.id)}
+          >
+            {tl.icon}
+            <span>{tl.short}</span>
+          </button>
+        ))}
+      </nav>
+
+      {/* ── Modal de Nomeação de Setor ── */}
       {showNameModal && (
-        <div style={s.modal} onClick={cancelSector}>
-          <div style={s.modalBox} onClick={(e) => e.stopPropagation()}>
-            <div style={{ color: "#a78bfa", fontWeight: "bold", fontSize: 13 }}>
-              📐 Nomear Setor
+        <div
+          onClick={cancelSector}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(4, 2, 10, 0.82)",
+            backdropFilter: "blur(6px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+            zIndex: 9999,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background:
+                "linear-gradient(165deg, rgba(24, 14, 46, 0.98) 0%, rgba(12, 7, 24, 0.99) 100%)",
+              border: "1px solid #f59e0b",
+              borderRadius: 14,
+              padding: 24,
+              width: "100%",
+              maxWidth: 340,
+              display: "flex",
+              flexDirection: "column",
+              gap: 14,
+              boxShadow: "0 20px 60px rgba(0,0,0,0.85), 0 0 30px rgba(147, 51, 234, 0.3)",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                color: "#fde68a",
+                fontFamily: "var(--font-display)",
+                fontWeight: 700,
+                fontSize: 15,
+                letterSpacing: "0.1em",
+              }}
+            >
+              <IconSector size={18} /> CONSAGRAR SETOR
             </div>
             {sectorDraft && (
-              <div style={{ color: "#7c6aaa", fontSize: 10 }}>
-                Região: col {Math.min(sectorDraft.c1, sectorDraft.c2)}–{Math.max(sectorDraft.c1, sectorDraft.c2)},
-                linha {Math.min(sectorDraft.r1, sectorDraft.r2)}–{Math.max(sectorDraft.r1, sectorDraft.r2)}
+              <div
+                style={{
+                  color: "#9d8ec4",
+                  fontSize: 11,
+                  fontFamily: "var(--font-mono)",
+                }}
+              >
+                Coordenadas: col {Math.min(sectorDraft.c1, sectorDraft.c2)}–
+                {Math.max(sectorDraft.c1, sectorDraft.c2)}, lin{" "}
+                {Math.min(sectorDraft.r1, sectorDraft.r2)}–
+                {Math.max(sectorDraft.r1, sectorDraft.r2)}
               </div>
             )}
             <input
-              style={{ ...s.input, fontSize: 14, padding: "6px 10px" }}
-              placeholder="Ex: Catedral, Floresta Norte..."
+              className="occult-input"
+              style={{ fontSize: 14, padding: "9px 12px" }}
+              placeholder="Ex.: Salão do Ritual, Subsolo..."
               value={sectorName}
               onChange={(e) => setSectorName(e.target.value)}
               onKeyDown={(e) => {
@@ -1296,8 +1920,17 @@ export default function FogWarMap() {
               autoFocus
             />
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button style={s.btn(false)} onClick={cancelSector}>Cancelar</button>
-              <button style={s.btn(true)} onClick={confirmSector}>Confirmar ↵</button>
+              <button type="button" className="occult-btn" onClick={cancelSector}>
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="occult-btn occult-btn--gold"
+                data-active="true"
+                onClick={confirmSector}
+              >
+                Confirmar
+              </button>
             </div>
           </div>
         </div>
