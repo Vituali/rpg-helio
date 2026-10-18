@@ -11,7 +11,7 @@ Isto é um **VTT**, não um RPG eletrônico.
 O computador **não joga**: ele apresenta o mapa e as ferramentas. Quem narra é o mestre; quem decide
 é o grupo. O que o software faz:
 
-- mapa com grade e **fog of war**, com visão calculada por jogador;
+- mapa com grade e **fog of war** (explorado compartilhado; visão por jogador chega na Fase 3);
 - **tokens** que o mestre e os jogadores movem pelo mapa;
 - **permissão**: o mestre libera quem pode andar;
 - ferramentas de apoio: paredes, setores nomeados, medição, dados, fichas, handouts.
@@ -36,15 +36,20 @@ Se algo assim aparecer, é acessório digitado pelo mestre na mesa — nunca o m
 
 ## Estado atual
 
-Já portado para o projeto de verdade em `client/`:
+Portado para o projeto de verdade:
 
-- Estrutura Vite + React + TypeScript.
-- Lógica de jogo isolada e testável em `client/src/game/` (grade, visão, pathfinding).
-- Estado do jogo centralizado em `client/src/state/gameStore.ts` (Zustand) — pronto para virar
-  estado vindo do servidor na Fase 2.
+- Estrutura Vite + React + TypeScript em `client/`.
+- Lógica de jogo isolada e testável em `shared/` (grade, visão, pathfinding) — usada pelo cliente
+  **e** pelo servidor.
+- Estado do jogo centralizado em `client/src/state/gameStore.ts` (Zustand), alimentado pelo servidor.
 - **Atores que andam pelo mapa**, com pathfinding (BFS), interpolação de posição e dois modos de
   desenho: **token** (retrato estático que desliza) e **sprite** (caminhada com 4 direções).
 - Pipeline de arte: `tools/optimize-assets.ps1` gera os tokens e mapas da web a partir de `img/`.
+- **Multiplayer**: servidor autoritativo em `server/` (Node + Socket.IO), salas por código, papéis
+  (mestre/jogador), permissão de movimento liberada pelo mestre, fog explorado compartilhado.
+
+O que ainda falta está em [`docs/ROADMAP.md`](docs/ROADMAP.md) — o próximo item é o fog por jogador
+(Fase 3).
 
 ## Arte
 
@@ -65,7 +70,12 @@ seletores de token e de mapa no painel lateral.
 
 Ainda **não** existe o servidor multiplayer nem o deploy — isso é Fase 2 e Fase 3 (ver `docs/ROADMAP.md`).
 
-## Rodando o cliente
+## Rodando
+
+### Só o cliente (modo local)
+
+Serve para o mestre preparar o mapa sozinho, sem servidor. Na tela de entrada, escolha
+**"Preparar o mapa sozinho"**.
 
 ```bash
 cd client
@@ -75,6 +85,42 @@ npm run dev
 
 Abre em `http://localhost:5173`.
 
+### Juntos (cliente + servidor)
+
+Dois terminais:
+
+```bash
+# terminal 1 — servidor de jogo
+cd server
+npm install
+npm run dev          # http://localhost:3000
+```
+
+```bash
+# terminal 2 — cliente
+cd client
+npm run dev          # http://localhost:5173
+```
+
+O cliente em dev manda `/socket.io` para `localhost:3000` pelo proxy do Vite — é o mesmo caminho
+que o Caddy usa em produção, então não há surpresa ao subir.
+
+**Como entrar:** todos abrem a mesma página, combinam um **código de sala** (ex.: `HELIO`) e entram.
+Quem abre a sala primeiro vira o **mestre**; os outros escolhem *Jogador* e recebem um token próprio.
+O mestre libera o movimento pelo painel 👥 MESA, no painel lateral.
+
+Teste rápido das regras do servidor (sobe o servidor antes):
+
+```bash
+cd server
+npm run smoke        # 12 verificações: permissão, parede, fog, saída
+```
+
+### Em produção (Docker)
+
+Ver [`docs/DEPLOY.md`](docs/DEPLOY.md). Resumo: `cd deploy && docker compose up -d --build` — o Caddy
+serve o front e faz o proxy do WebSocket; só 80/443 saem para fora.
+
 ## Documentação
 
 | Documento | Conteúdo |
@@ -82,24 +128,28 @@ Abre em `http://localhost:5173`.
 | [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md) | Como o jogo é montado: camadas, estado, rede, visão, permissões |
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | Firebase vs self-hosted, Docker Compose, Caddy, CGNAT, Tailscale, o PS1 |
 | [`docs/DECISOES.md`](docs/DECISOES.md) | Registro de decisões (ADRs) e o porquê de cada uma |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Fases 0 a 4, com critérios de pronto |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Fases 0 a 5, com critérios de pronto |
 
 ## Estrutura
 
 ```
 HELIO/
+├── shared/                  # lógica pura (grade, visão, pathfinding) — cliente E servidor
+│   └── src/
 ├── client/                  # front (Vite + React + TS)
 │   ├── public/
 │   │   ├── tokens/          # tokens otimizados + manifest.json
 │   │   ├── maps/            # mapas otimizados + manifest.json
 │   │   └── sprites/         # spritesheets de caminhada (opcional)
 │   └── src/
-│       ├── game/            # lógica pura, sem React e sem rede
-│       ├── state/           # store do jogo (fonte da verdade no cliente)
+│       ├── state/           # stores: jogo (gameStore) e conexão (netStore)
+│       ├── net/             # adapter Socket.IO (bridge.ts + socket.ts)
 │       ├── render/          # desenho no canvas (atores, sprites, imagens)
-│       ├── net/             # cliente de rede (Fase 2)
-│       └── components/      # UI React
-├── server/                  # servidor autoritativo Socket.IO (Fase 2)
+│       └── components/      # UI React (FogWarMap, Lobby, PlayersPanel)
+├── server/                  # servidor autoritativo Socket.IO
+│   ├── src/                 # index.ts (socket), room.ts (estado), validate.ts (regras)
+│   ├── scripts/smoke.mjs    # teste de fumaça com dois clientes
+│   └── Dockerfile
 ├── deploy/                  # docker-compose, Dockerfile, Caddyfile, install.ps1
 ├── tools/                   # optimize-assets.ps1 (arte → web)
 ├── docs/                    # documentação

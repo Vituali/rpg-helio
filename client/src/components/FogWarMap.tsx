@@ -13,15 +13,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   FOG_NONE,
+  FOG_REVEAL,
+  FOG_VIS,
   MINIMAP_H,
   MINIMAP_W,
   PALETTE,
   TOOLS,
-} from "../game/constants";
-import { clamp } from "../game/grid";
-import type { Cell, Tool } from "../game/types";
-import { loadAssets, type AssetManifests } from "../game/assets";
+  clamp,
+} from "@helio/shared";
+import type { Cell, Tool } from "@helio/shared";
+import { loadAssets, type AssetManifests } from "../render/assets";
 import { useGameStore } from "../state/gameStore";
+import { useNetStore } from "../state/netStore";
+import PlayersPanel from "./PlayersPanel";
 import { stepAnimations, type AnimMap } from "../render/animation";
 import { getImage } from "../render/images";
 import { drawActor, getSheet } from "../render/sprites";
@@ -48,6 +52,8 @@ export default function FogWarMap() {
   const actors = useGameStore((s) => s.actors);
   const sectors = useGameStore((s) => s.sectors);
   const activeActorId = useGameStore((s) => s.activeActorId);
+
+  const online = useNetStore((s) => s.status === "online");
 
   const setDims = useGameStore((s) => s.setDims);
   const setCell = useGameStore((s) => s.setCell);
@@ -313,7 +319,7 @@ export default function FogWarMap() {
           ox.globalCompositeOperation = "destination-out";
           for (let r = 0; r < nr; r++) {
             for (let c = 0; c < nc; c++) {
-              if ((f[r]?.[c] ?? FOG_NONE) === 2) {
+              if ((f[r]?.[c] ?? FOG_NONE) >= FOG_VIS) {
                 ox.globalAlpha = 1;
                 ox.fillRect(c * cs, r * cs, cs, cs);
               }
@@ -340,7 +346,7 @@ export default function FogWarMap() {
           ];
           for (let r = 0; r < nr; r++) {
             for (let c = 0; c < nc; c++) {
-              if ((f[r]?.[c] ?? 0) !== 2) continue;
+              if ((f[r]?.[c] ?? 0) < FOG_VIS) continue;
               for (const [dr, dc] of neighbors) {
                 const nr2 = r + dr;
                 const nc2 = c + dc;
@@ -427,9 +433,9 @@ export default function FogWarMap() {
       } else if (t === TOOLS.ERASE) {
         store.paintWalls([g], false);
       } else if (t === TOOLS.REVEAL) {
-        store.paintFog([g], 2);
+        store.paintFog([g], FOG_REVEAL);
       } else if (t === TOOLS.HIDE) {
-        store.paintFog([g], 0);
+        store.paintFog([g], FOG_NONE);
       }
     },
     [],
@@ -904,7 +910,16 @@ export default function FogWarMap() {
 
         <div style={s.sep} />
 
-        <button style={s.btn(gmMode)} onClick={toggleGm} title="[G] Modo mestre — tudo visível">
+        <button
+          style={s.btn(gmMode)}
+          onClick={toggleGm}
+          disabled={online}
+          title={
+            online
+              ? "Definido pelo servidor: quem criou a sala é o mestre"
+              : "[G] Modo mestre — tudo visível"
+          }
+        >
           {gmMode ? "👁 MESTRE ON" : "👁 MESTRE OFF"}
         </button>
         <button
@@ -968,6 +983,8 @@ export default function FogWarMap() {
 
         {/* ── Sidebar ── */}
         <div style={s.sidebar}>
+          <PlayersPanel />
+
           <div>
             <div style={s.sectionHead} onClick={() => setShowSettings((p) => !p)}>
               ⚙ GRADE {showSettings ? "▲" : "▼"}

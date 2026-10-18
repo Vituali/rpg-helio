@@ -11,7 +11,8 @@ export const MINIMAP_H = 150;
 // ── Fog of War ───────────────────────────────────────────────────────────────
 export const FOG_NONE: FogValue = 0; // nunca visto
 export const FOG_SEEN: FogValue = 1; // visto antes, escuro
-export const FOG_VIS: FogValue = 2; // visível agora
+export const FOG_VIS: FogValue = 2; // visível agora (transitório)
+export const FOG_REVEAL: FogValue = 3; // revelado pelo mestre (permanente)
 
 // ── Movimento ────────────────────────────────────────────────────────────────
 /** Velocidade de caminhada em células por segundo. */

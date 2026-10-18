@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "types": ["node"],
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+
+    /* Lógica de jogo compartilhada com o cliente */
+    "paths": {
+      "@helio/shared": ["../shared/src/index.ts"]
+    }
+  },
+  "include": ["src", "../shared/src"]
+}

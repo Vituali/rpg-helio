@@ -16,11 +16,16 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
+    /* Lógica de jogo compartilhada com o servidor */
+    "paths": {
+      "@helio/shared": ["../shared/src/index.ts"]
+    },
+
     /* Linting */
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"]
+  "include": ["src", "../shared/src"]
 }

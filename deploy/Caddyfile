@@ -1,8 +1,8 @@
-# Caddyfile — front estático + (Fase 2) proxy do WebSocket
+# Caddyfile — front estático + proxy do WebSocket do jogo.
 #
-# Hoje: só serve o front buildado (client/dist) em /srv.
-# Fase 2: quando existir o `app` (Node + Socket.IO), descomente o bloco
-#         `handle /socket.io/*` abaixo. Nada mais muda.
+# O Caddy é a única porta para o mundo: serve o front em /srv e repassa
+# /socket.io/* para o serviço `app` (Node + Socket.IO). O app não é publicado
+# no host — ver docker-compose.yml.
 
 # ── Opção A: acesso público com DuckDNS (HTTPS automático) ──────────────────
 # Troque helio.duckdns.org pelo seu subdomínio. Precisa das portas 80 e 443
@@ -10,10 +10,10 @@
 helio.duckdns.org {
 	encode zstd gzip
 
-	# Fase 2 — WebSocket do jogo:
-	# handle /socket.io/* {
-	# 	reverse_proxy app:3000
-	# }
+	# WebSocket do jogo: precisa vir ANTES do handle geral.
+	handle /socket.io/* {
+		reverse_proxy app:3000
+	}
 
 	handle {
 		root * /srv
@@ -39,6 +39,9 @@ helio.duckdns.org {
 # dinâmico. Troque pelos SEUS octetos (pontos viram hífens).
 # 189-40-12-7.sslip.io {
 # 	encode zstd gzip
+# 	handle /socket.io/* {
+# 		reverse_proxy app:3000
+# 	}
 # 	handle {
 # 		root * /srv
 # 		try_files {path} /index.html
@@ -46,10 +49,14 @@ helio.duckdns.org {
 # 	}
 # }
 
-# ── Opção C: Tailscale (rede privada, sem abrir porta) ──────────────────────# Comente o bloco acima e use este. O hostname é o nome da máquina na tailnet,
+# ── Opção C: Tailscale (rede privada, sem abrir porta) ──────────────────────
+# Comente o bloco acima e use este. O hostname é o nome da máquina na tailnet,
 # ex.: helio-pc.tailXXXX.ts.net . O TLS sai via `tailscale cert`.
 # helio-pc.tailXXXX.ts.net {
 # 	encode zstd gzip
+# 	handle /socket.io/* {
+# 		reverse_proxy app:3000
+# 	}
 # 	handle {
 # 		root * /srv
 # 		try_files {path} /index.html
@@ -60,9 +67,14 @@ helio.duckdns.org {
 # ── Opção D: HTTP puro no IP (sem HTTPS, sem domínio) ───────────────────────
 # Funciona pro jogo, mas quebra voz/WebRTC depois (getUserMedia exige HTTPS).
 # :80 {
-# 	root * /srv
-# 	try_files {path} /index.html
-# 	file_server
+# 	handle /socket.io/* {
+# 		reverse_proxy app:3000
+# 	}
+# 	handle {
+# 		root * /srv
+# 		try_files {path} /index.html
+# 		file_server
+# 	}
 # }
 
 # ── Desafio ACME (Let's Encrypt) num IP pelado: não é possível ──────────────

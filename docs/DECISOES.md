@@ -18,8 +18,8 @@ com delta binário automático, reconexão, matchmaking). Socket.IO é genérico
 - Socket.IO serve também como **canal de sinalização WebRTC** quando virar voz.
 - Frames em JSON são legíveis no DevTools do browser.
 
-**Decisão.** Socket.IO, com a lógica de jogo isolada em `game/` e a rede atrás de uma interface
-`NetAdapter`.
+**Decisão.** Socket.IO, com a lógica de jogo isolada em `shared/` e a rede atrás de um adapter
+(`client/src/net/`).
 
 **Consequências.** Implementamos reconciliação/reconexão na mão (trivial nesta escala). Analogia
 com Colyseus fica documentada como plano B — se o estado crescer (muitos mapas, muitas entidades),
@@ -68,11 +68,14 @@ Alternativa descartada: Context + useReducer (re-renderiza demais com grid grand
 **Contexto.** Regras (colisão, LOS, pathfinding, validação de movimento) precisam rodar no cliente
 (predição/desenho) **e** no servidor (autoridade).
 
-**Decisão.** `game/` é função pura, sem React, sem canvas, sem socket. O servidor importa o mesmo
-módulo.
+**Decisão.** `shared/` é função pura, sem React, sem canvas, sem socket. Cliente e servidor importam
+o mesmo pacote (`@helio/shared`), cada um pela sua resolução (alias do Vite / `paths` do tsconfig).
 
 **Consequências.** Zero divergência de regra entre cliente e servidor (o bug clássico de VTT).
-Testável sem browser. Custo: disciplina para não vazar dependência de UI pra dentro de `game/`.
+Testável sem browser. Custo: disciplina para não vazar dependência de UI pra dentro de `shared/` —
+e um detalhe que já mordeu: o `shared/package.json` precisa de `"type": "module"`, senão o `tsx`
+carrega os arquivos como CommonJS e os `export *` somem em runtime (o cliente continua funcionando,
+o servidor quebra). Ver `ARQUITETURA.md`.
 
 ---
 
@@ -83,11 +86,14 @@ teleporte quando o pacote chega?
 
 **Decisão.** Cliente manda **intenção**; servidor valida e confirma. O ator tem **duas posições**:
 lógica (autoritativa, inteira) e renderizada (local, float), aproximadas a cada frame. Pathfinding
-BFS alimenta uma fila de células; cada célula alcançada avança a posição lógica e (Fase 2) dispara
-um `intent-move`.
+BFS alimenta uma fila de células; cada célula alcançada avança a posição lógica e dispara um
+`intent-move`. O cliente anda antes de pedir licença (predição) e o servidor corrige quando nega.
 
-**Consequências.** Sprite anda suavemente mesmo com latência; mapa não é forjável. Custo: o cliente
-precisa lidar com movimento rejeitado pelo servidor (corrigir a fila) — previsto na Fase 3.
+**Consequências.** Sprite anda suavemente mesmo com latência; mapa não é forjável. O cliente lida
+com movimento rejeitado: guarda a última posição confirmada e cancela a fila quando o servidor
+recusa. Duas armadilhas resolvidas no caminho: (a) `path` é só do cliente — ao aplicar o snapshot,
+o `path` local é preservado, senão o token pararia a cada pacote; (b) a validação do servidor exige
+passos de 1 casa, o que dispensa refazer pathfinding no servidor.
 
 ---
 
@@ -114,4 +120,58 @@ frames). Se o arquivo não existir, usa um **desenhador procedural** (corpo + pe
 por frame). `facing` e `walkFrame` são iguais nos dois modos.
 
 **Consequências.** Zero asset necessário para rodar; soltar o PNG é o único passo para trocar por
-arte real. O código de animação não muda.
+arte real. O código de animação não muda. Quando a arte do grupo é **retrato** (é o caso), o modo
+token (`Actor.portrait`) desenha um retrato recortado em círculo que desliza — o que combina com o
+material que já existe em `img/tokens/`.
+
+---
+
+## #8 — `shared/` como pacote real, servidor rodando TypeScript direto
+
+**Contexto.** O ADR #4 dizia "uma implementação só". Cumprir isso exigia decidir *onde* o código
+compartilhado mora e como os dois lados o resolvem.
+
+**Decisão.** `shared/` é um pacote (`@helio/shared`) com os fontes em TypeScript, resolvido pelo
+alias do Vite + `paths` do tsconfig no cliente, e por `paths` + `tsx` no servidor. O servidor não
+tem passo de compilação: `tsx` executa `.ts` direto (está em `dependencies`, não em dev).
+
+**Alternativas descartadas.**
+- **npm workspaces**: mais cerimônia (raiz com `package.json`, hoisting de `node_modules`) e o
+  ganho seria só não repetir dois `paths`. Não pagava.
+- **Duplicar as ~15 linhas de validação no servidor**: seria rápido hoje e é exatamente o bug que o
+  ADR #4 existe para evitar. Duas cópias de uma regra divergem em silêncio.
+- **Compilar `shared/` para `.js` antes de subir**: mais um passo de build para produção, com
+  risco de servir artefato velho.
+
+**Consequências.** Uma regra, um arquivo, dois processos. O `tsx` em produção custa um transpile
+em memória (~1 s no boot) — irrelevante. E ficou registrado o tropeço do `"type": "module"`.
+
+---
+
+## #9 — Rede: snapshot completo, não delta
+
+**Contexto.** O ARQUITETURA previa `room:patch` com deltas sobre `version`. Na prática o snapshot
+inteiro da cena cabe em poucos KB.
+
+**Decisão.** Servidor manda `room:state` completo a cada mudança autoritativa. Nada de delta nesta
+fase. Sem compressão de walls/fog — JSON puro.
+
+**Consequências.** Muito menos código, nenhum estado divergente possível, e depuração trivial (todo
+pacote é o mundo inteiro). Numa mesa de 4–6 pessoas a uma ação por segundo, é ruído de rede. Se um
+dia incomodar — muitos mapas, muitas entidades — o delta entra **atrás do adapter**, e o resto do
+sistema não muda. Otimizar antes de medir seria o erro aqui.
+
+---
+
+## #10 — Fog com quatro estados: revelado pelo mestre ≠ explorado
+
+**Contexto.** O protótipo tinha três estados (nunca visto / já visto / visível agora). Ao levar a
+ferramenta de "revelar" do mestre para o servidor, apareceu o problema: `computeVision` rebaixa
+"visível agora" para "já visto" a cada passo. Uma sala revelada **de propósito** pelo mestre
+escurecia sozinha no passo seguinte de qualquer token.
+
+**Decisão.** Quarto estado, `FOG_REVEAL = 3`: revelado pelo mestre, permanente e imune ao recálculo
+de visão. Fica só no servidor (`map:fog { op: "reveal" }`); o cliente desenha 2 e 3 como visível.
+
+**Consequências.** "Revelar" e "explorar" viram coisas distintas, que é o que eles são na mesa. A
+regra de visão ficou com uma linha de exceção em vez de uma condição especial espalhada pelo render.

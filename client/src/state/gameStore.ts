@@ -6,31 +6,57 @@ import {
   DEFAULT_ROWS,
   FOG_NONE,
   SECTOR_COLORS,
-} from "../game/constants";
-import { makeFog, makeWalls, resizeGrid, clamp } from "../game/grid";
-import { uid } from "../game/id";
-import { facingBetween, findPath } from "../game/pathfinding";
-import { computeVision } from "../game/vision";
-import type {
-  Actor,
-  Cell,
-  FogMode,
-  FogValue,
-  GameSnapshot,
-  Sector,
-} from "../game/types";
+  clamp,
+  computeVision,
+  facingBetween,
+  findPath,
+  makeFog,
+  makeWalls,
+  resizeGrid,
+  uid,
+} from "@helio/shared";
+import type { Actor, Cell, FogMode, FogValue, GameSnapshot, Sector } from "@helio/shared";
+import { isOnline, send } from "../net/bridge";
 
 /**
  * Store do jogo — a fonte da verdade NO CLIENTE.
  *
  * Na Fase 2, o estado deixa de nascer aqui e passa a vir do servidor
- * (`room:state` / `room:patch`); as ações viram intenções enviadas por
- * `net/`. A forma do estado é intencionalmente igual à do servidor
- * (docs/ARQUITETURA.md) para essa troca ser só um adapter.
+ * (`room:state`); as ações viram intenções enviadas por `net/`. A forma do
+ * estado é intencionalmente igual à do servidor (docs/ARQUITETURA.md) para
+ * essa troca ser só um adapter.
+ *
+ * Modo local: sem conexão (`isOnline()` falso) tudo funciona como nas Fases
+ * 0/1, com o próprio cliente mandando no estado — útil para o mestre preparar
+ * o mapa sozinho.
  *
  * Estado de UI (ferramenta ativa, pan, zoom, modais) NÃO mora aqui —
  * fica no componente. Ver docs/DECISOES.md #3.
  */
+
+/** Cena como o servidor manda: sem `fog` (visão atual) — só `fogExplored`. */
+export interface ServerScene {
+  cols: number;
+  rows: number;
+  cell: number;
+  bgImage: string | null;
+  fogMode: FogMode;
+  walls: boolean[][];
+  fogExplored: FogValue[][];
+  actors: Actor[];
+  sectors: Sector[];
+  version: number;
+}
+
+/** Todas as células do mapa — para "limpar paredes" / "esconder fog". */
+function allCells(rows: number, cols: number): Cell[] {
+  const cells: Cell[] = [];
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) cells.push({ row, col });
+  }
+  return cells;
+}
+
 
 // ── Estado inicial ───────────────────────────────────────────────────────────
 const INITIAL_WALLS = makeWalls(DEFAULT_ROWS, DEFAULT_COLS);
@@ -109,6 +135,12 @@ export interface GameState {
   // ── serialização ──
   snapshot: () => GameSnapshot;
   loadSnapshot: (s: Partial<GameSnapshot>) => void;
+
+  // ── rede ──
+  /** Aplica o estado autoritativo do servidor, preservando a predição local. */
+  applyServerScene: (scene: ServerScene) => void;
+  /** Desfaz a predição: cancela o caminho e volta para a posição confirmada. */
+  snapActorTo: (id: string, at: Cell | null) => void;
 }
 
 export const useGameStore = create<GameState>()((set, get) => ({
@@ -127,9 +159,11 @@ export const useGameStore = create<GameState>()((set, get) => ({
   activeActorId: INITIAL_ACTORS[0].id,
 
   // ── configuração ──
+  // Em rede, quem manda é o servidor: manda a intenção e espera o `room:state`.
   setDims: (rows, cols) => {
     const r = clamp(rows, 5, 60);
     const c = clamp(cols, 5, 80);
+    if (isOnline()) return send("map:config", { rows: r, cols: c });
     set((s) => ({
       rows: r,
       cols: c,
@@ -139,21 +173,47 @@ export const useGameStore = create<GameState>()((set, get) => ({
     get().recomputeVision();
   },
 
-  setCell: (cell) => set({ cell: clamp(cell, 16, 96) }),
-  setBgImage: (bg) => set({ bgImage: bg }),
-  setFogMode: (mode) => set({ fogMode: mode }),
+  setCell: (cell) => {
+    const value = clamp(cell, 16, 96);
+    if (isOnline()) return send("map:config", { cell: value });
+    set({ cell: value });
+  },
+
+  setBgImage: (bg) => {
+    if (isOnline()) return send("map:config", { bgImage: bg });
+    set({ bgImage: bg });
+  },
+
+  setFogMode: (mode) => {
+    if (isOnline()) return send("map:config", { fogMode: mode });
+    set({ fogMode: mode });
+  },
+
   setGmMode: (v) => set({ gmMode: v }),
   toggleGm: () => set((s) => ({ gmMode: !s.gmMode })),
 
   // ── mapa ──
-  resetFog: () => set((s) => ({ fog: makeFog(s.rows, s.cols) })),
+  resetFog: () => {
+    if (isOnline()) {
+      const { rows, cols } = get();
+      return send("map:fog", { op: "hide", cells: allCells(rows, cols) });
+    }
+    set((s) => ({ fog: makeFog(s.rows, s.cols) }));
+  },
 
   clearWalls: () => {
+    if (isOnline()) {
+      const { rows, cols } = get();
+      return send("map:walls", { op: "clear", cells: allCells(rows, cols) });
+    }
     set((s) => ({ walls: makeWalls(s.rows, s.cols) }));
     get().recomputeVision();
   },
 
   paintWalls: (cells, value) => {
+    if (isOnline()) {
+      return send("map:walls", { op: value ? "set" : "clear", cells });
+    }
     set((s) => {
       const walls = s.walls.map((row) => row.slice());
       for (const { row, col } of cells) {
@@ -165,6 +225,12 @@ export const useGameStore = create<GameState>()((set, get) => ({
   },
 
   paintFog: (cells, value) => {
+    if (isOnline()) {
+      return send("map:fog", {
+        op: value === FOG_NONE ? "hide" : "reveal",
+        cells,
+      });
+    }
     set((s) => {
       const fog = s.fog.map((row) => row.slice());
       for (const { row, col } of cells) {
@@ -181,6 +247,7 @@ export const useGameStore = create<GameState>()((set, get) => ({
 
   // ── atores ──
   addActor: (partial) => {
+    if (isOnline()) return send("actor:add", { actor: partial ?? {} });
     set((s) => {
       const actor: Actor = {
         id: uid("tok"),
@@ -203,6 +270,7 @@ export const useGameStore = create<GameState>()((set, get) => ({
   },
 
   removeActor: (id) => {
+    if (isOnline()) return send("actor:remove", { id });
     set((s) => {
       const actors = s.actors.filter((a) => a.id !== id);
       return {
@@ -215,6 +283,7 @@ export const useGameStore = create<GameState>()((set, get) => ({
   },
 
   updateActor: (id, patch) => {
+    if (isOnline()) return send("actor:update", { id, patch });
     set((s) => ({
       actors: s.actors.map((a) => (a.id === id ? { ...a, ...patch } : a)),
     }));
@@ -244,8 +313,12 @@ export const useGameStore = create<GameState>()((set, get) => ({
   },
 
   advanceActor: (id) => {
-    set((s) => {
-      const actors = s.actors.map((a) => {
+    const current = get().actors.find((a) => a.id === id);
+    const step = current?.path[0] ?? null;
+    if (!step) return;
+
+    set((s) => ({
+      actors: s.actors.map((a) => {
         if (a.id !== id || a.path.length === 0) return a;
         const next = a.path[0];
         return {
@@ -255,9 +328,11 @@ export const useGameStore = create<GameState>()((set, get) => ({
           facing: facingBetween({ row: a.row, col: a.col }, next),
           path: a.path.slice(1),
         };
-      });
-      return { actors };
-    });
+      }),
+    }));
+
+    // Andar é predição local; o servidor valida e desfaz se negar.
+    send("actor:intent-move", { actorId: id, row: step.row, col: step.col });
     get().recomputeVision();
   },
 
@@ -269,6 +344,7 @@ export const useGameStore = create<GameState>()((set, get) => ({
 
   // ── setores ──
   addSector: (sector) => {
+    if (isOnline()) return send("sector:add", sector);
     set((s) => ({
       sectors: [
         ...s.sectors,
@@ -281,8 +357,10 @@ export const useGameStore = create<GameState>()((set, get) => ({
     }));
   },
 
-  removeSector: (id) =>
-    set((s) => ({ sectors: s.sectors.filter((x) => x.id !== id) })),
+  removeSector: (id) => {
+    if (isOnline()) return send("sector:remove", { id });
+    set((s) => ({ sectors: s.sectors.filter((x) => x.id !== id) }));
+  },
 
   // ── serialização ──
   snapshot: () => {
@@ -316,6 +394,43 @@ export const useGameStore = create<GameState>()((set, get) => ({
         sectors: data.sectors ?? s.sectors,
       };
     });
+    get().recomputeVision();
+  },
+
+  // ── rede ──
+  applyServerScene: (scene) => {
+    set((s) => {
+      const locals = new Map(s.actors.map((a) => [a.id, a]));
+      return {
+        cols: scene.cols,
+        rows: scene.rows,
+        cell: scene.cell,
+        bgImage: scene.bgImage,
+        fogMode: scene.fogMode,
+        walls: scene.walls,
+        sectors: scene.sectors,
+        // O servidor guarda o fog no mesmo formato do cliente (0/1/3);
+        // a visão atual (2) é recalculada logo abaixo.
+        fog: scene.fogExplored,
+        actors: scene.actors.map((a) => {
+          const local = locals.get(a.id);
+          // Preserva o caminho que está sendo previsto localmente — o servidor
+          // não conhece `path`, e apagá-lo faria o token parar no meio do passo.
+          return local && local.path.length > 0 ? { ...a, path: local.path } : a;
+        }),
+      };
+    });
+    get().recomputeVision();
+  },
+
+  snapActorTo: (id, at) => {
+    set((s) => ({
+      actors: s.actors.map((a) =>
+        a.id === id
+          ? { ...a, path: [], ...(at ? { row: at.row, col: at.col } : {}) }
+          : a,
+      ),
+    }));
     get().recomputeVision();
   },
 }));

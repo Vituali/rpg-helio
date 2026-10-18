@@ -16,8 +16,12 @@ export interface Cell {
   col: number;
 }
 
-/** 0 = nunca visto · 1 = já visto (escuro) · 2 = visível agora */
-export type FogValue = 0 | 1 | 2;
+/**
+ * Estado de uma célula no fog.
+ *  0 = nunca visto · 1 = já explorado (escuro) · 2 = visível agora
+ *  3 = revelado pelo mestre (permanente, nunca volta a escurecer)
+ */
+export type FogValue = 0 | 1 | 2 | 3;
 
 export interface Actor {
   id: string;

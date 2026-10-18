@@ -1,5 +1,5 @@
-import { WALK_FPS } from "../game/constants";
-import type { Facing } from "../game/types";
+import { WALK_FPS } from "@helio/shared";
+import type { Facing } from "@helio/shared";
 
 /**
  * Sprites dos atores.

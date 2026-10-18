@@ -1,20 +1,36 @@
 # docker-compose.yml — HELIO
 #
-# HOJE: sobe o Caddy servindo o front buildado (client/dist).
-# FASE 2: adicione o serviço `app` (Node + Socket.IO) e descomente o proxy
-#         /socket.io no Caddyfile.
+# Dois serviços:
+#   caddy → serve o front buildado e faz o proxy do WebSocket (única porta pública)
+#   app   → servidor autoritativo do jogo (Node + Socket.IO), interno
 #
 # Uso:  docker compose up -d --build
 #       docker compose logs -f
 #       docker compose down
 
 services:
+  app:
+    build:
+      context: ..                        # raiz do repo (usa server/ e shared/)
+      dockerfile: server/Dockerfile
+    container_name: helio-app
+    environment:
+      - PORT=3000
+      - ROOM_CODE=${ROOM_CODE:-HELIO}    # sala padrão
+      - ORIGIN=${ORIGIN:-*}              # CORS; "*" basta pois tudo passa pelo Caddy
+    expose:
+      - "3000"                           # interno: NÃO publicar no host
+    restart: unless-stopped
+    # NÃO adicione `ports:` aqui. Só o Caddy fala com o mundo.
+
   caddy:
     build:
       context: ..                        # raiz do repo
       dockerfile: deploy/Dockerfile      # builda o front e serve com Caddy
     image: helio:latest
     container_name: helio-caddy
+    depends_on:
+      - app
     ports:
       - "80:80"          # desafio ACME (Let's Encrypt)
       - "443:443"        # HTTPS
@@ -23,30 +39,6 @@ services:
       - caddy_data:/data                # certificados TLS (persistir!)
       - caddy_config:/config
     restart: unless-stopped
-    # healthcheck:
-    #   test: ["CMD", "wget", "--spider", "-q", "http://localhost/"]
-    #   interval: 15s
-    #   timeout: 3s
-    #   retries: 5
-
-  # ───────────────────────────────────────────────────────────────────────────
-  # FASE 2 — servidor autoritativo. Descomente quando existir `server/`.
-  # ───────────────────────────────────────────────────────────────────────────
-  # app:
-  #   build:
-  #     context: ../server
-  #     dockerfile: Dockerfile
-  #   container_name: helio-app
-  #   environment:
-  #     - PORT=3000
-  #     - ROOM_CODE=${ROOM_CODE:-HELIO}
-  #     - ORIGIN=${ORIGIN:-https://helio.duckdns.org}
-  #   volumes:
-  #     - app_data:/data                  # persistência das salas/campanhas
-  #   expose:
-  #     - "3000"                          # interno: NÃO publicar no host
-  #   restart: unless-stopped
-  #   # NÃO adicione `ports:` aqui. Só o Caddy fala com o mundo.
 
   # ───────────────────────────────────────────────────────────────────────────
   # OPCIONAL — atualizador de DDNS (só para a Opção A: DuckDNS + port forward).
@@ -63,4 +55,3 @@ services:
 volumes:
   caddy_data:
   caddy_config:
-  # app_data:            # Fase 2

@@ -1,6 +1,5 @@
-import { WALK_SPEED } from "../game/constants";
-import { facingBetween } from "../game/pathfinding";
-import type { Actor, Cell, Facing } from "../game/types";
+import { WALK_SPEED, facingBetween } from "@helio/shared";
+import type { Actor, Cell, Facing } from "@helio/shared";
 
 /**
  * Animação dos atores.

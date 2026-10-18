@@ -1,0 +1,11 @@
+{
+  "name": "@helio/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Regras puras do HELIO — sem React, sem canvas, sem socket. Cliente e servidor usam a mesma implementação.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts"
+}

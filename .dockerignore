@@ -1,5 +1,5 @@
 # Tudo que NÃO precisa entrar na imagem Docker.
-# Sem isto, `node_modules` (centenas de MB) é copiado no build.
+# Cada serviço copia só o que usa; o resto é transferência de contexto à toa.
 
 **/node_modules
 **/dist
@@ -7,9 +7,15 @@
 .git
 .gitignore
 docs
-server
-"RPG GRID"
-Maze.jpg
 *.md
+
+# Arte original (230 MB). A versão web já está em client/public/.
+img
+Maze.jpg
+
+# Projetos antigos / protótipos
+RPG GRID
+arquivos temporarios
+
 deploy/data
 deploy/.env

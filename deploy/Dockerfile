@@ -6,18 +6,21 @@
 
 # ── Estágio 1: build do front ───────────────────────────────────────────────
 FROM node:22-alpine AS build
-WORKDIR /app
+WORKDIR /app/client
 
 COPY client/package.json client/package-lock.json ./
 RUN npm ci
 
+# O client importa a lógica de jogo de shared/ (alias no vite.config.ts).
+# O caminho relativo é ../shared, portanto shared/ fica em /app/shared.
+COPY shared /app/shared
 COPY client/ ./
 RUN npm run build
 
 # ── Estágio 2: servir com Caddy ─────────────────────────────────────────────
 FROM caddy:2-alpine
 
-COPY --from=build /app/dist /srv
+COPY --from=build /app/client/dist /srv
 COPY deploy/Caddyfile /etc/caddy/Caddyfile
 
 # Caddy já é o ENTRYPOINT da imagem oficial; nada a sobrescrever.
