@@ -21,7 +21,17 @@ import {
   visibleCellsFrom,
 } from "@helio/shared";
 import type { Actor, Cell, Role } from "@helio/shared";
+import { dbEnabled } from "./db.js";
+import { migrate } from "./migrate.js";
 import { createRoom, publicState, type Player, type Room } from "./room.js";
+import {
+  ensureCampaign,
+  flushRoom,
+  loadScene,
+  scheduleSave,
+  seedMaster,
+  setDefaultGmAccount,
+} from "./store.js";
 import { canMove } from "./validate.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -63,16 +73,46 @@ const GM_KEY = (process.env.GM_KEY ?? "").trim();
 /** Todas as salas vivas, por código. */
 const rooms = new Map<string, Room>();
 
+/** Salas sendo carregadas do banco — evita duas cargas em corrida. */
+const loading = new Map<string, Promise<Room>>();
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
-function getOrCreateRoom(code: unknown): Room {
-  const key = String(code ?? "").trim().toUpperCase().slice(0, 24) || DEFAULT_ROOM;
-  let room = rooms.get(key);
-  if (!room) {
-    room = createRoom(key);
+function normalizeCode(code: unknown): string {
+  return String(code ?? "").trim().toUpperCase().slice(0, 24) || DEFAULT_ROOM;
+}
+
+/**
+ * Sala viva, ou criada a partir do banco (ADR #17).
+ *
+ * Primeira entrada numa campanha carrega a cena persistida; sem banco, é a cena
+ * nova de sempre. O `loading` existe porque dois jogadores entrando ao mesmo
+ * tempo não podem carregar duas cenas — a segunda sobrescreveria a primeira.
+ */
+async function getOrCreateRoom(code: unknown): Promise<Room> {
+  const key = normalizeCode(code);
+
+  const living = rooms.get(key);
+  if (living) return living;
+
+  const inFlight = loading.get(key);
+  if (inFlight) return inFlight;
+
+  const task = (async () => {
+    const campaignId = await ensureCampaign(key);
+    const room = createRoom(key, campaignId);
+    const saved = await loadScene(campaignId);
+    if (saved) room.scene = saved;
     rooms.set(key, room);
-    console.log(`[sala] criada: ${key}`);
+    console.log(`[sala] criada: ${key}${campaignId ? "" : " (sem banco)"}`);
+    return room;
+  })();
+
+  loading.set(key, task);
+  try {
+    return await task;
+  } finally {
+    loading.delete(key);
   }
-  return room;
 }
 
 function roomOf(socketId: string): Room | null {
@@ -111,6 +151,7 @@ function spawnActor(room: Room, player: Player): Actor {
     path: [],
   };
   s.actors.push(actor);
+  room.pcActors.add(actor.id);
   return actor;
 }
 
@@ -196,6 +237,8 @@ function broadcast(room: Room): void {
 function bump(room: Room): void {
   room.scene.version += 1;
   broadcast(room);
+  // A gravação é com debounce: a cena viva manda, o banco só guarda (ADR #17).
+  scheduleSave(room);
 }
 
 // ── Conexão ──────────────────────────────────────────────────────────────────
@@ -246,7 +289,7 @@ io.on("connection", (socket) => {
     return m.room;
   };
 
-  socket.on("room:join", (msg, ack) => {
+  socket.on("room:join", async (msg, ack) => {
     const m = (msg ?? {}) as { code?: unknown; role?: Role; name?: unknown; key?: unknown };
     const wantsGm = m.role === "gm";
 
@@ -261,7 +304,7 @@ io.on("connection", (socket) => {
       return;
     }
 
-    const room = getOrCreateRoom(m.code);
+    const room = await getOrCreateRoom(m.code);
     const role: Role = wantsGm ? "gm" : "player";
     const name =
       String(m.name ?? "")
@@ -504,7 +547,7 @@ io.on("connection", (socket) => {
     bump(room);
   });
 
-  socket.on("disconnect", () => {
+  socket.on("disconnect", async () => {
     const room = roomOf(socket.id);
     if (!room) return;
     const p = room.players.get(socket.id);
@@ -517,6 +560,10 @@ io.on("connection", (socket) => {
     console.log(`[${room.code}] ${p?.name ?? socket.id} saiu`);
 
     if (room.players.size === 0) {
+      // Último momento em que a sala existe: grava antes de esquecer. É o que
+      // faz o F5 (e o restart do container) não apagar a mesa.
+      await flushRoom(room);
+      if (room.players.size > 0) return; // alguém entrou enquanto gravávamos
       rooms.delete(room.code);
       console.log(`[sala] vazia, removida: ${room.code}`);
     } else {
@@ -525,11 +572,50 @@ io.on("connection", (socket) => {
   });
 });
 
-httpServer.listen(PORT, () => {
-  console.log(`HELIO server ouvindo em :${PORT} (sala padrão: ${DEFAULT_ROOM})`);
-  console.log(
-    GM_KEY
-      ? "  entrada: jogador entra livre; MESTRE exige a senha (GM_KEY)"
-      : "  entrada: SEM senha de mestre - qualquer um vira mestre (so rede local!)",
-  );
-});
+/**
+ * Boot. O banco vem primeiro, mas **não pode impedir o servidor de subir**
+ * (ADR #17): se o Postgres estiver fora, a mesa funciona em memória e a
+ * partida não é perdida por causa do banco.
+ *
+ * A espera existe para cobrir a corrida normal do compose — o `app` sobe
+ * enquanto o Postgres ainda está inicializando. Não é `service_healthy` de
+ * propósito: banco quebrado não pode impedir a mesa de abrir.
+ */
+async function connectDatabase(): Promise<void> {
+  const attempts = 6;
+  for (let i = 1; i <= attempts; i += 1) {
+    try {
+      await migrate();
+      setDefaultGmAccount(await seedMaster());
+      console.log("[banco] conectado (migrations em dia)");
+      return;
+    } catch (err) {
+      const last = i === attempts;
+      console.warn(
+        `[banco] tentativa ${i}/${attempts} falhou: ${(err as Error).message}` +
+          (last ? " — seguindo em memória" : ""),
+      );
+      if (last) return;
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+}
+
+async function main(): Promise<void> {
+  if (!dbEnabled) {
+    console.log("[banco] DATABASE_URL vazia — salas só em memória, nada persiste");
+  } else {
+    await connectDatabase();
+  }
+
+  httpServer.listen(PORT, () => {
+    console.log(`HELIO server ouvindo em :${PORT} (sala padrão: ${DEFAULT_ROOM})`);
+    console.log(
+      GM_KEY
+        ? "  entrada: jogador entra livre; MESTRE exige a senha (GM_KEY)"
+        : "  entrada: SEM senha de mestre - qualquer um vira mestre (so rede local!)",
+    );
+  });
+}
+
+void main();

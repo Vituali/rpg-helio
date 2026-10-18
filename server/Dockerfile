@@ -19,6 +19,9 @@ RUN npm ci --omit=dev
 COPY shared /app/shared
 COPY server/tsconfig.json ./
 COPY server/src ./src
+# As migrations em SQL ficam FORA de src/ de propósito: são dado, não código, e
+# são lidas do disco em runtime. Ver ADR #17.
+COPY server/migrations ./migrations
 
 ENV NODE_ENV=production
 ENV PORT=3000

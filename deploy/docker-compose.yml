@@ -1,8 +1,11 @@
 # docker-compose.yml — HELIO
 #
-# Dois serviços:
-#   caddy → serve o front buildado e faz o proxy do WebSocket (única porta pública)
-#   app   → servidor autoritativo do jogo (Node + Socket.IO), interno
+# Três serviços:
+#   caddy    → serve o front buildado e faz o proxy do WebSocket (única porta pública)
+#   app      → servidor autoritativo do jogo (Node + Socket.IO), interno
+#   postgres → persistência (campanha e cena), interno; porta só no loopback
+#
+# Opcional: cloudflared (profile "tunnel") para acesso público sem abrir porta.
 #
 # Uso:  docker compose up -d --build
 #       docker compose logs -f
@@ -14,6 +17,12 @@ services:
       context: ..                        # raiz do repo (usa server/ e shared/)
       dockerfile: server/Dockerfile
     container_name: helio-app
+    # Dependência FRACA de propósito: só ordena a criação. O servidor tenta
+    # conectar algumas vezes e, se o banco não vier, sobe assim mesmo em memória
+    # (ADR #17). `service_healthy` aqui faria o contrário: banco quebrado
+    # impediria a mesa de abrir.
+    depends_on:
+      - postgres
     environment:
       - PORT=3000
       - ROOM_CODE=${ROOM_CODE:-HELIO}    # sala padrão
@@ -21,6 +30,15 @@ services:
       # Senha para entrar como MESTRE. Vazio = qualquer um vira mestre, o que só
       # é aceitável em rede local. Ponha uma senha antes de expor à internet.
       - GM_KEY=${GM_KEY:-}
+      # Banco (ADR #17). Vazio = salas só em memória, nada persiste.
+      - DATABASE_URL=${DATABASE_URL:-postgres://${POSTGRES_USER:-helio}:${POSTGRES_PASSWORD:-helio}@postgres:5432/${POSTGRES_DB:-helio}}
+      # Assinatura da sessão (ADR #16). Vazio = sessão desligada.
+      # Gere com: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+      - SESSION_SECRET=${SESSION_SECRET:-}
+      # Conta de mestre criada no primeiro boot, se ainda não existir. Serve para
+      # a campanha ter um dono antes de existir tela de cadastro. Trocar depois.
+      - SEED_MASTER_USER=${SEED_MASTER_USER:-}
+      - SEED_MASTER_PASS=${SEED_MASTER_PASS:-}
       # Limite de taxa por conexão (eventos por segundo e rajada). Os padrões
       # são ~15x o uso legítimo; só mexa se tiver motivo. Ver ADR #15.
       - RATE_PER_SEC=${RATE_PER_SEC:-60}
@@ -42,6 +60,37 @@ services:
       - no-new-privileges:true
     restart: unless-stopped
     # NÃO adicione `ports:` aqui. Só o Caddy fala com o mundo.
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Banco de dados (ADR #17).
+  #
+  # A cena da campanha vive aqui quando a mesa fica vazia — é o que faz o F5 e o
+  # restart do container não apagarem tudo. O servidor degrada sozinho se este
+  # serviço estiver fora: a mesa abre em memória, sem persistir.
+  #
+  # Sem `read_only` (o Postgres precisa escrever no volume) e sem
+  # `cap_drop: ALL` (a imagem oficial ajusta o dono do diretório no entrypoint).
+  # ───────────────────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:17-alpine
+    container_name: helio-postgres
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-helio}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-helio}
+      - POSTGRES_DB=${POSTGRES_DB:-helio}
+    ports:
+      # Publicado SÓ no loopback: é para desenvolvimento (rodar o servidor com
+      # `npm run dev` fora do Docker). Nunca em "0.0.0.0" — em IPv6, expor é o
+      # padrão (ADR #13), e um banco com senha não é lugar para aprender isso.
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-helio} -d ${POSTGRES_DB:-helio}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
 
   caddy:
     build:
@@ -117,3 +166,4 @@ services:
 volumes:
   caddy_data:
   caddy_config:
+  pg_data:

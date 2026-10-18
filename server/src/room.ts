@@ -41,8 +41,20 @@ export interface Player {
 
 export interface Room {
   code: string;
+  /**
+   * Campanha correspondente no banco — o Selo da Missão (ADR #17).
+   * `null` quando não há banco configurado, e aí a sala vive só em memória.
+   */
+  campaignId: string | null;
   scene: ServerScene;
   players: Map<string, Player>;
+  /**
+   * Tokens criados para jogadores (via `room:join`). NÃO são persistidos: um
+   * token de jogador pertence à sessão, e o `ownerId` dele é um socket, que não
+   * sobrevive a um restart. Gravar isso seria gravar lixo. Volta a existir
+   * quando o jogador entra de novo.
+   */
+  pcActors: Set<string>;
 }
 
 export function createScene(): ServerScene {
@@ -60,8 +72,8 @@ export function createScene(): ServerScene {
   };
 }
 
-export function createRoom(code: string): Room {
-  return { code, scene: createScene(), players: new Map() };
+export function createRoom(code: string, campaignId: string | null = null): Room {
+  return { code, campaignId, scene: createScene(), players: new Map(), pcActors: new Set() };
 }
 
 /** Payload enviado ao cliente: a cena + a lista de jogadores + quem é você. */
