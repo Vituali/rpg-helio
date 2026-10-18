@@ -107,6 +107,8 @@ export interface ActorDraw {
   moving: boolean;
   active: boolean;
   label: string;
+  /** Retrato estático (modo token). Tem prioridade sobre o spritesheet. */
+  portrait?: HTMLImageElement | null;
 }
 
 export function drawActor(
@@ -114,27 +116,38 @@ export function drawActor(
   sheet: SpriteSheet,
   p: ActorDraw,
 ): void {
-  const r = p.cell * 0.32;
+  const proceduralR = p.cell * 0.32;
+  const bodyR = p.portrait ? p.cell * 0.46 : proceduralR;
 
   // Sombra no chão
   ctx.save();
   ctx.globalAlpha = 0.35;
   ctx.fillStyle = "#000";
   ctx.beginPath();
-  ctx.ellipse(p.cx, p.cy + r * 0.95, r * 0.85, r * 0.34, 0, 0, Math.PI * 2);
+  ctx.ellipse(
+    p.cx,
+    p.cy + bodyR * 0.82,
+    bodyR * 0.85,
+    bodyR * (p.portrait ? 0.28 : 0.34),
+    0,
+    0,
+    Math.PI * 2,
+  );
   ctx.fill();
   ctx.restore();
 
-  if (sheet.image) {
+  if (p.portrait) {
+    drawToken(ctx, p.portrait, p, bodyR);
+  } else if (sheet.image) {
     drawSheet(ctx, sheet, p);
   } else {
-    drawProcedural(ctx, p, r);
+    drawProcedural(ctx, p, proceduralR);
   }
 
   // Anel do ator selecionado
   if (p.active) {
     ctx.beginPath();
-    ctx.arc(p.cx, p.cy, r * 1.25, 0, Math.PI * 2);
+    ctx.arc(p.cx, p.cy, bodyR * 1.18, 0, Math.PI * 2);
     ctx.strokeStyle = "#ffffff";
     ctx.lineWidth = 2;
     ctx.stroke();
@@ -145,7 +158,42 @@ export function drawActor(
   ctx.fillStyle = "#ede9fe";
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
-  ctx.fillText(p.label, p.cx, p.cy + r * 1.15);
+  ctx.fillText(p.label, p.cx, p.cy + bodyR * 1.12);
+}
+
+/**
+ * Modo token: retrato recortado num círculo com anel na cor do dono.
+ * É o visual clássico de VTT — o retrato DESLIZA entre as casas (o movimento
+ * suave vem da interpolação, não de uma animação de pernas).
+ * O arquivo já vem quadrado (ver tools/optimize-assets.ps1), então não distorce.
+ */
+function drawToken(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  p: ActorDraw,
+  r: number,
+): void {
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(p.cx, p.cy, r, 0, Math.PI * 2);
+  ctx.closePath();
+  ctx.clip();
+  ctx.drawImage(img, p.cx - r, p.cy - r, r * 2, r * 2);
+  ctx.restore();
+
+  // Anel na cor do dono
+  ctx.beginPath();
+  ctx.arc(p.cx, p.cy, r, 0, Math.PI * 2);
+  ctx.strokeStyle = p.color;
+  ctx.lineWidth = Math.max(2, r * 0.14);
+  ctx.stroke();
+
+  // Brilho interno, dá profundidade
+  ctx.beginPath();
+  ctx.arc(p.cx, p.cy, r, Math.PI, Math.PI * 2);
+  ctx.strokeStyle = "rgba(255,255,255,0.18)";
+  ctx.lineWidth = Math.max(1, r * 0.1);
+  ctx.stroke();
 }
 
 function drawSheet(

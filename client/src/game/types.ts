@@ -32,6 +32,8 @@ export interface Actor {
   vision: number;
   /** Chave do spritesheet em /sprites/<key>.png (com fallback procedural). */
   sprite: string;
+  /** Retrato estático em /tokens/*.png (modo token). Tem prioridade sobre `sprite`. */
+  portrait: string | null;
   color: string;
   /** Permissão individual de movimento, liberada pelo mestre. */
   canMove: boolean;

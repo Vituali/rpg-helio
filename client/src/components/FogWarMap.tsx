@@ -20,9 +20,10 @@ import {
 } from "../game/constants";
 import { clamp } from "../game/grid";
 import type { Cell, Tool } from "../game/types";
+import { loadAssets, type AssetManifests } from "../game/assets";
 import { useGameStore } from "../state/gameStore";
 import { stepAnimations, type AnimMap } from "../render/animation";
-import { getBgImage } from "../render/bgImage";
+import { getImage } from "../render/images";
 import { drawActor, getSheet } from "../render/sprites";
 
 const TOOL_LIST: { id: Tool; label: string; key: string }[] = [
@@ -77,6 +78,18 @@ export default function FogWarMap() {
   const [showTokens, setShowTokens] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
 
+  // Arte gerada por tools/optimize-assets.ps1 (tokens e mapas)
+  const [assets, setAssets] = useState<AssetManifests>({ tokens: [], maps: [] });
+  useEffect(() => {
+    let alive = true;
+    loadAssets().then((a) => {
+      if (alive) setAssets(a);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   // ── Refs ──────────────────────────────────────────────────────────────────
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -122,7 +135,7 @@ export default function FogWarMap() {
 
     // ── Fundo ──
     if (bg) {
-      const img = getBgImage(bg);
+      const img = getImage(bg);
       if (img) ctx.drawImage(img, 0, 0, TW, TH);
     } else {
       for (let r = 0; r < nr; r++) {
@@ -250,6 +263,7 @@ export default function FogWarMap() {
         moving: anim.moving,
         active: actor.id === activeId,
         label: actor.name,
+        portrait: actor.portrait ? getImage(actor.portrait) : null,
       });
     }
 
@@ -998,6 +1012,36 @@ export default function FogWarMap() {
           </div>
 
           <div>
+            <div style={s.sectionHead}>🗺 MAPA</div>
+            <div style={{ ...s.sectionBody, display: "flex", flexDirection: "column", gap: 5 }}>
+              {assets.maps.length === 0 && (
+                <div style={{ color: "#5a4d7a", fontSize: 10 }}>
+                  Rode <b>tools/optimize-assets.ps1</b> para gerar os mapas.
+                </div>
+              )}
+              {assets.maps.map((m) => (
+                <div key={m.id} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <img
+                    src={m.src}
+                    alt=""
+                    style={{
+                      width: 40, height: 30, objectFit: "cover", borderRadius: 3,
+                      border: `1px solid ${bgImage === m.src ? "#7c3aed" : "#3d2b60"}`,
+                    }}
+                  />
+                  <button
+                    style={{ ...s.btn(bgImage === m.src), flex: 1, textAlign: "left" }}
+                    onClick={() => setBgImage(bgImage === m.src ? null : m.src)}
+                    title={bgImage === m.src ? "Remover fundo" : "Usar como fundo"}
+                  >
+                    {m.name}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
             <div style={s.sectionHead} onClick={() => setShowTokens((p) => !p)}>
               ⚔ ATORES {showTokens ? "▲" : "▼"}
               <button
@@ -1059,12 +1103,37 @@ export default function FogWarMap() {
                       <span style={s.label}>{actor.vision}</span>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                      <span style={s.label}>Token</span>
+                      <select
+                        style={{ ...s.input, flex: 1, minWidth: 0 }}
+                        value={actor.portrait ?? ""}
+                        onChange={(e) => updateActor(actor.id, { portrait: e.target.value || null })}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <option value="">— bonequinho —</option>
+                        {assets.tokens.map((t) => (
+                          <option key={t.id} value={t.src}>{t.name}</option>
+                        ))}
+                      </select>
+                      {actor.portrait && (
+                        <img
+                          src={actor.portrait}
+                          alt=""
+                          style={{
+                            width: 24, height: 24, borderRadius: "50%",
+                            objectFit: "cover", border: `1px solid ${actor.color}`,
+                          }}
+                        />
+                      )}
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
                       <span style={s.label}>Sprite</span>
                       <input
                         style={{ ...s.input, width: 80 }}
                         value={actor.sprite}
                         onChange={(e) => updateActor(actor.id, { sprite: e.target.value })}
                         onClick={(e) => e.stopPropagation()}
+                        title="Chave do spritesheet de caminhada em /sprites/<chave>.png (usado quando não há token)"
                       />
                       <span style={{ color: "#5a4d7a", fontSize: 10 }}>
                         ({actor.col}, {actor.row})
