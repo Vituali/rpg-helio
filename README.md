@@ -108,8 +108,10 @@ O cliente em dev manda `/socket.io` para `localhost:3000` pelo proxy do Vite —
 que o Caddy usa em produção, então não há surpresa ao subir.
 
 **Como entrar:** todos abrem a mesma página, combinam um **código de sala** (ex.: `HELIO`) e entram.
-Quem abre a sala primeiro vira o **mestre**; os outros escolhem *Jogador* e recebem um token próprio.
-O mestre libera o movimento pelo painel 👥 MESA, no painel lateral.
+Jogador só escolhe *Jogador* e recebe um token próprio. Para ser **mestre** é preciso a senha
+(`GM_KEY`, no `deploy/.env` ou no ambiente do servidor) — sem ela definida, qualquer um vira mestre,
+o que só é aceitável em rede local; o servidor avisa no log quando sobe assim. O mestre libera o
+movimento pelo painel 👥 MESA, no painel lateral.
 
 Teste rápido das regras do servidor (sobe o servidor antes):
 

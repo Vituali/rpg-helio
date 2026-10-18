@@ -186,7 +186,7 @@ Cliente → Servidor
 
 | Evento | Payload | Quem pode |
 |---|---|---|
-| `room:join` | `{ code, name, role? }` + ack | todos |
+| `room:join` | `{ code, name, role, key }` + ack | todos — `role: "gm"` exige `key` |
 | `actor:intent-move` | `{ actorId, row, col }` | dono do ator ou GM |
 | `fog:discover` | `{ cells: [{row, col}] }` | todos |
 | `map:walls` | `{ op: "set" \| "clear", cells }` | GM |
@@ -217,6 +217,20 @@ delta entra **atrás do mesmo adapter** — o resto do sistema não muda.
 
 `room:join` recebe um ack com o estado inicial. O broadcast `room:state` chega **depois** do ack,
 então quem entra usa o ack como primeiro estado; sem isso a tela fica vazia por um instante.
+
+O ack também é o canal de recusa: `{ ok: false, error }`. Hoje só um motivo usa isso — entrar como
+mestre com `key` errada — e o cliente volta para o lobby mostrando o motivo, em vez de ficar
+conectado sem estar na sala.
+
+### Quem é mestre
+
+`GM_KEY` no servidor é uma senha única para entrar como mestre; jogador não pede nada. Sem `GM_KEY`
+definida, qualquer um vira mestre (o que só é aceitável em rede local — o servidor avisa no log ao
+subir, e `deploy/check-publico.ps1` avisa de novo se as portas estiverem abertas para a internet).
+
+Isso **não** é autenticação: não há conta, sessão assinada nem identidade estável (a identidade
+continua sendo o id do socket). O papel é decidido uma vez, na entrada, e vale para a conexão
+inteira. Ver `DECISOES.md` #12.
 
 ### O adapter de rede
 
@@ -311,7 +325,10 @@ Feito:
 
 Ainda não feito (anotado no ROADMAP):
 
-- Token de sessão assinado no `room:join` — hoje a identidade é o id do socket.
+- RBAC de verdade: contas, papéis e permissão por token. Hoje `GM_KEY` é uma senha única
+  compartilhada — resolve o estranho que acha a URL, não resolve "quem é quem".
+- Token de sessão assinado no `room:join` — hoje a identidade é o id do socket, então quem cai e
+  volta não é reconhecido como a mesma pessoa.
 - Rate limit por socket (passos/segundo).
-- `ROOM_CODE` não é segredo: quem tem o IP e o código entra. Para mesa fechada, use a Opção C
-  (Tailscale) do Caddyfile ou troque o código.
+- `ROOM_CODE` não é segredo: quem tem o endereço e o código entra como jogador. Ser mestre exige a
+  senha. Para mesa fechada de verdade, use a Opção C (Tailscale) do Caddyfile.

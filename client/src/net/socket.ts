@@ -19,6 +19,8 @@ import { setSender } from "./bridge";
 
 export interface ServerState {
   ok?: boolean;
+  /** Preenchido quando o servidor recusa a entrada (ex.: senha de mestre errada). */
+  error?: string;
   code: string;
   you: string;
   scene: ServerScene;
@@ -39,6 +41,8 @@ export interface JoinOptions {
   code: string;
   name: string;
   role: Role;
+  /** Senha de mestre. Só importa quando o servidor define `GM_KEY`. */
+  key: string;
 }
 
 export function connect(opts: JoinOptions): void {
@@ -57,9 +61,17 @@ export function connect(opts: JoinOptions): void {
   s.on("connect", () => {
     s.emit(
       "room:join",
-      { code: opts.code, name: opts.name, role: opts.role },
+      { code: opts.code, name: opts.name, role: opts.role, key: opts.key },
       (state: ServerState) => {
-        if (state?.ok) applyState(state);
+        if (state?.ok) {
+          applyState(state);
+          return;
+        }
+        // Entrada recusada (ex.: senha de mestre errada): volta ao lobby com o
+        // motivo, em vez de ficar um cliente conectado que não está na sala.
+        net().setNotice(state?.error ?? "O servidor recusou a entrada.");
+        net().setStatus("offline");
+        disconnect();
       },
     );
   });

@@ -18,6 +18,9 @@ services:
       - PORT=3000
       - ROOM_CODE=${ROOM_CODE:-HELIO}    # sala padrão
       - ORIGIN=${ORIGIN:-*}              # CORS; "*" basta pois tudo passa pelo Caddy
+      # Senha para entrar como MESTRE. Vazio = qualquer um vira mestre, o que só
+      # é aceitável em rede local. Ponha uma senha antes de expor à internet.
+      - GM_KEY=${GM_KEY:-}
     expose:
       - "3000"                           # interno: NÃO publicar no host
     restart: unless-stopped

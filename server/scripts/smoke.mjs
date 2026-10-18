@@ -12,6 +12,8 @@ import { io } from "socket.io-client";
 
 const URL = process.env.URL ?? "http://localhost:3100";
 const ROOM = `SMOKE-${Math.floor(Math.random() * 1e6)}`;
+/** Precisa ser igual ao GM_KEY do servidor que está sendo testado. */
+const GM_KEY = process.env.GM_KEY ?? "";
 
 let failures = 0;
 function check(ok, label) {
@@ -48,9 +50,9 @@ const joined = (c) =>
     c.socket.once("connect_error", reject);
   });
 
-const join = (c, role) =>
+const join = (c, role, key = "") =>
   new Promise((resolve) => {
-    c.socket.emit("room:join", { code: ROOM, name: c.name, role }, (state) => {
+    c.socket.emit("room:join", { code: ROOM, name: c.name, role, key }, (state) => {
       // O ack chega antes do primeiro broadcast; usa ele como estado inicial.
       if (state?.ok) c.last = state;
       resolve(state);
@@ -67,14 +69,28 @@ const cellOf = (c, id) => {
 // ── Roteiro ──────────────────────────────────────────────────────────────────
 const gm = makeClient("Mestre");
 const jogador = makeClient("Jogador");
+const intruso = makeClient("Intruso");
 
 await joined(gm);
 await joined(jogador);
+await joined(intruso);
 
-await join(gm, "gm");
+// Senha de mestre: com GM_KEY definida no servidor, senha errada não entra.
+if (GM_KEY) {
+  const errada = await join(intruso, "gm", "senha-errada");
+  check(errada?.ok === false, "senha de mestre errada é recusada");
+  const vazia = await join(intruso, "gm", "");
+  check(vazia?.ok === false, "sem senha nenhuma também é recusada");
+} else {
+  console.log("  --    GM_KEY vazia neste servidor: pulando os testes de senha");
+}
+intruso.socket.disconnect();
+
+await join(gm, "gm", GM_KEY);
 const jogState = await join(jogador, "player");
 
-check(me(gm)?.role === "gm", "mestre entrou (criou a sala)");
+check(me(gm)?.role === "gm", "mestre entrou (com a senha)");
+check(jogState?.ok === true, "jogador entra sem senha");
 check(jogState.scene.actors.length === 1, "jogador recebeu um token próprio");
 
 const playerId = jogador.last.you;

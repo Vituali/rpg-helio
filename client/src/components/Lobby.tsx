@@ -3,11 +3,15 @@ import type { Role } from "@helio/shared";
 import { connect } from "../net/socket";
 import { useNetStore } from "../state/netStore";
 
+/** Onde a senha de mestre fica guardada neste navegador (para não digitar sempre). */
+const GMKEY_STORAGE = "helio.gmkey";
+
 /**
  * Tela de entrada. Só aparece enquanto ninguém entrou numa sala.
  *
- * Quem cria a sala vira o mestre (o servidor garante isso). Os outros entram
- * com o código e recebem um token próprio.
+ * Jogador entra com o código e recebe um token próprio. Mestre só entra com a
+ * senha do servidor (`GM_KEY`), que é o que impede um estranho que achou a URL
+ * pública de assumir a mesa.
  */
 export default function Lobby({ onLocal }: { onLocal: () => void }) {
   const status = useNetStore((s) => s.status);
@@ -18,12 +22,20 @@ export default function Lobby({ onLocal }: { onLocal: () => void }) {
   const [code, setCode] = useState("HELIO");
   const [name, setName] = useState("");
   const [role, setRole] = useState<Role>("gm");
+  const [gmKey, setGmKey] = useState(() => localStorage.getItem(GMKEY_STORAGE) ?? "");
 
   const connecting = status === "connecting";
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    connect({ url, code: code.trim() || "HELIO", name: name.trim(), role });
+    if (role === "gm") localStorage.setItem(GMKEY_STORAGE, gmKey);
+    connect({
+      url,
+      code: code.trim() || "HELIO",
+      name: name.trim(),
+      role,
+      key: role === "gm" ? gmKey : "",
+    });
   };
 
   const styles = {
@@ -160,6 +172,23 @@ export default function Lobby({ onLocal }: { onLocal: () => void }) {
             </button>
           </div>
         </div>
+
+        {role === "gm" && (
+          <div>
+            <label style={styles.label}>Senha de mestre</label>
+            <input
+              style={styles.input}
+              type="password"
+              value={gmKey}
+              maxLength={64}
+              placeholder="a que foi definida no servidor"
+              onChange={(e) => setGmKey(e.target.value)}
+            />
+            <div style={{ ...styles.sub, marginTop: 4 }}>
+              Fica guardada neste navegador. Jogador não precisa de senha.
+            </div>
+          </div>
+        )}
 
         <button type="button" style={styles.ghost} onClick={() => setShowAdvanced((p) => !p)}>
           {showAdvanced ? "▲" : "▼"} Servidor

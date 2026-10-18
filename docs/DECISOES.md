@@ -197,3 +197,30 @@ novo. O preço: o padrão é HTTP puro, que quebra voz/WebRTC quando chegar a Fa
 que nesse momento o endereço será um domínio de qualquer forma. Efeito colateral do mesmo ajuste: o
 `encode` do Caddy saiu do site e foi para dentro do `handle` do front, para nunca comprimir o
 `/socket.io` (comprimir WebSocket quebra a conexão).
+
+---
+
+## #12 — Entrada: senha única de mestre (`GM_KEY`) até o RBAC
+
+**Contexto.** Ao decidir expor o servidor na internet, apareceu um problema que não existia na LAN:
+`room:join` dava o papel de mestre a quem **pedisse** (`wanted === "gm" => "gm"`), e mais: o primeiro
+que entrava virava mestre por acaso. Num endereço público isso é entregar a mesa ao primeiro que
+chegar. E "ninguém vai achar" não é defesa: o hostname de um certificado Let's Encrypt é publicado no
+log de Certificate Transparency, ou seja, fica catalogado e pesquisável (`crt.sh`) no minuto em que o
+HTTPS sobe.
+
+**Decisão.** Uma senha única, `GM_KEY`, conferida no `room:join` (comparação de tempo constante).
+Entrar como **jogador** não pede nada; entrar como **mestre** exige a senha. Sem `GM_KEY` definida, o
+comportamento antigo continua e o servidor avisa no log que está sem senha. Senha errada é **recusada
+com ack** (`{ ok: false, error }`) em vez de rebaixar em silêncio para jogador — rebaixar faria a
+pessoa não entender por que não consegue mexer no mapa. O cliente guarda a senha no navegador, então
+o mestre digita uma vez.
+
+**Consequências.** O risco real (estranho assume a mesa) está coberto com uma variável de ambiente e
+um campo no lobby. O que **não** está coberto, e é de propósito: não há conta, identidade estável nem
+permissão por token — a identidade segue sendo o id do socket, quem sabe a senha é mestre, e jogador
+pode ler o mapa todo. Também é uma senha compartilhada entre todos os mestres, sem como revogar um
+só. Isso é aceitável enquanto é mesa de amigos; **RBAC de verdade é a Fase 4**, e é para lá que este
+ADR aponta. Duas redes de segurança para não ficar exposto por esquecimento: o log do servidor ao
+subir e o `deploy/check-publico.ps1`, que avisa quando as portas estão abertas e a senha vazia ou
+óbvia.

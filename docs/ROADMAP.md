@@ -46,7 +46,7 @@ Servidor autoritativo com salas. Ver e mover tokens em conjunto.
 
 - ✅ `shared/` com as regras puras, usado pelo cliente **e** pelo servidor (uma implementação só)
 - ✅ `server/` Node + Socket.IO (`server/src/index.ts`, `room.ts`, `validate.ts`)
-- ✅ Salas com código; quem cria é o mestre; jogador que entra ganha um token próprio
+- ✅ Salas com código; jogador que entra ganha um token próprio; **mestre entra com senha** (`GM_KEY`)
 - ✅ Estado da cena no servidor (formato de `ARQUITETURA.md`) com `version`
 - ✅ `room:state` — snapshot completo a cada mudança (+ ack no `room:join`)
 - ✅ Adapter em `client/src/net/` (`bridge.ts` + `socket.ts`)
@@ -55,7 +55,8 @@ Servidor autoritativo com salas. Ver e mover tokens em conjunto.
 - ✅ Presença: lista de jogadores e painel da mesa no sidebar
 - ✅ Lobby de entrada (endereço, código, nome, papel) + modo local sem servidor
 - ✅ `fogExplored` compartilhado e `fog:discover`
-- ✅ Teste de fumaça (`server/scripts/smoke.mjs`, 12 verificações) passando local, via proxy do
+- ✅ Teste de fumaça (`server/scripts/smoke.mjs`, 15 verificações com `GM_KEY` — inclui recusar senha
+  de mestre errada — e 13 sem ela) passando local, via proxy do
   Vite e contra o container de produção
 - ✅ `deploy/`: serviço `app` + proxy `/socket.io` no Caddy; imagens buildam e sobem
 - ⬜ Comprimir walls/fog na rede (bitset + RLE) — **só se incomodar na prática**
@@ -95,6 +96,9 @@ resultado.
 
 ## Fase 4 — Polimento ⬜
 
+- ⬜ **RBAC de verdade**: contas, papéis, permissão por token e sessão assinada — substitui o `GM_KEY`
+  (senha única compartilhada, que resolve só o estranho que acha a URL). É o passo para virar
+  projeto e não só mesa de amigos; planejado para escalar.
 - ⬜ Voz (WebRTC) — Socket.IO já é a sinalização
 - ⬜ Rolagem de dados com histórico
 - ⬜ Fichas de personagem (Ordem Paranormal customizado)

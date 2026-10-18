@@ -5,6 +5,7 @@
  * fog são validados aqui. Protocolo completo em docs/ARQUITETURA.md.
  */
 
+import { timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { Server } from "socket.io";
 import {
@@ -27,6 +28,17 @@ const ORIGIN = process.env.ORIGIN ?? "*";
 const DEFAULT_ROOM = (process.env.ROOM_CODE ?? "HELIO").toUpperCase();
 const MAX_NAME = 24;
 
+/**
+ * Senha para ENTRAR COMO MESTRE. Vazia = sem senha (aceitável só em rede local).
+ *
+ * Isto NÃO é autenticação: qualquer um entra como jogador, e quem sabe a senha
+ * vira mestre. É deliberadamente mínimo — resolve o único risco que existe hoje,
+ * que é um estranho achar a URL pública e assumir a mesa. Um RBAC de verdade
+ * (contas, papéis, permissão por token, sessão assinada) é a Fase 4;
+ * ver docs/DECISOES.md #12.
+ */
+const GM_KEY = (process.env.GM_KEY ?? "").trim();
+
 /** Todas as salas vivas, por código. */
 const rooms = new Map<string, Room>();
 
@@ -47,6 +59,17 @@ function roomOf(socketId: string): Room | null {
     if (room.players.has(socketId)) return room;
   }
   return null;
+}
+
+/**
+ * Confere a senha de mestre. Sem `GM_KEY` configurada, não há o que conferir.
+ * A comparação é de tempo constante para não entregar a senha por temporização.
+ */
+function gmKeyMatches(given: string): boolean {
+  if (GM_KEY === "") return true;
+  const a = Buffer.from(given);
+  const b = Buffer.from(GM_KEY);
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 function spawnActor(room: Room, player: Player): Actor {
@@ -129,13 +152,24 @@ io.on("connection", (socket) => {
   };
 
   socket.on("room:join", (msg, ack) => {
-    const room = getOrCreateRoom((msg as { code?: unknown })?.code);
-    const isFirst = room.players.size === 0;
-    // Quem cria a sala é o mestre.
-    const wanted = (msg as { role?: Role })?.role;
-    const role: Role = isFirst ? "gm" : wanted === "gm" ? "gm" : "player";
+    const m = (msg ?? {}) as { code?: unknown; role?: Role; name?: unknown; key?: unknown };
+    const wantsGm = m.role === "gm";
+
+    // Ser mestre exige a senha; entrar como jogador não exige nada. Recusamos a
+    // entrada em vez de rebaixar em silêncio, senão a pessoa fica sem entender
+    // por que não consegue mexer no mapa.
+    if (wantsGm && !gmKeyMatches(String(m.key ?? ""))) {
+      console.log(`[entrada] senha de mestre incorreta (${socket.id})`);
+      if (typeof ack === "function") {
+        ack({ ok: false, error: "Senha de mestre incorreta." });
+      }
+      return;
+    }
+
+    const room = getOrCreateRoom(m.code);
+    const role: Role = wantsGm ? "gm" : "player";
     const name =
-      String((msg as { name?: unknown })?.name ?? "")
+      String(m.name ?? "")
         .trim()
         .slice(0, MAX_NAME) || "Anônimo";
 
@@ -391,4 +425,9 @@ io.on("connection", (socket) => {
 
 httpServer.listen(PORT, () => {
   console.log(`HELIO server ouvindo em :${PORT} (sala padrão: ${DEFAULT_ROOM})`);
+  console.log(
+    GM_KEY
+      ? "  entrada: jogador entra livre; MESTRE exige a senha (GM_KEY)"
+      : "  entrada: SEM senha de mestre - qualquer um vira mestre (so rede local!)",
+  );
 });

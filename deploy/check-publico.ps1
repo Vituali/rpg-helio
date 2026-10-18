@@ -85,7 +85,37 @@ foreach ($p in 80, 443) {
     Row ([bool]$l) "porta $p escutando nesta maquina" $(if ($l) { "sim (Docker/Caddy)" } else { "nao: o stack nao esta no ar" })
 }
 
-# ── 3. Veredito ──────────────────────────────────────────────────────────────
+# ── 3. Guarda-corpo: porta aberta + sem senha de mestre ──────────────────────
+if ($ok80 -eq $true -or $ok443 -eq $true) {
+    Write-Host ""
+    Write-Host "Entrada" -ForegroundColor DarkGray
+
+    $envFile = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) ".env"
+    $gmKey = $null
+    if (Test-Path $envFile) {
+        $hit = Select-String -Path $envFile -Pattern '^\s*GM_KEY\s*=' | Select-Object -First 1
+        if ($hit) { $gmKey = ($hit.Line -split '=', 2)[1].Trim() }
+    }
+
+    if ($null -eq $gmKey) {
+        Row $false "senha de mestre (GM_KEY)" "deploy/.env nao encontrado"
+    } elseif ($gmKey -eq "") {
+        Row $false "senha de mestre (GM_KEY)" "VAZIA"
+        Write-Host ""
+        Write-Host "  ATENCAO: a porta esta aberta e NAO ha senha de mestre." -ForegroundColor Red
+        Write-Host "  Qualquer um que chegar na URL entra como MESTRE e controla a mesa." -ForegroundColor Red
+        Write-Host "  E o endereco nao e secreto: ele fica publicado no log de" -ForegroundColor Red
+        Write-Host "  certificados (crt.sh) assim que o HTTPS subir." -ForegroundColor Red
+        Write-Host "  Ponha um GM_KEY no deploy/.env e rode 'docker compose up -d'." -ForegroundColor Red
+    } elseif ($gmKey -match '^(123456|12345678|senha|password|admin|helio)$') {
+        Row $true "senha de mestre (GM_KEY)" "definida, mas e uma senha obvia"
+        Write-Host "        (combinado com o grupo por enquanto; trocar no RBAC)" -ForegroundColor DarkYellow
+    } else {
+        Row $true "senha de mestre (GM_KEY)" "definida"
+    }
+}
+
+# ── 4. Veredito ──────────────────────────────────────────────────────────────
 Write-Host ""
 Write-Host ("-" * 72)
 if ($ok80 -eq $true -and $ok443 -eq $true) {

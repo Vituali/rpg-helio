@@ -89,6 +89,11 @@ série (dois NATs), WAN diferente do IP fixo, ou bloqueio da operadora nas porta
 > porta fechada, o Caddy tenta o certificado a cada poucos minutos, e o Let's Encrypt bloqueia quem
 > falha 5 vezes na mesma hora — o certificado atrasaria justamente quando você está testando.
 
+**Antes de abrir a porta, defina `GM_KEY` no `deploy/.env`.** Sem ela, qualquer um que chegar na URL
+entra como mestre e assume a mesa — e o endereço não é secreto: o hostname vai para o log público de
+certificados (`crt.sh`) assim que o HTTPS sobe. O `check-publico.ps1` avisa se você esquecer, e o log
+do servidor também. É uma senha única compartilhada, não um sistema de contas: RBAC é a Fase 4.
+
 ---
 
 ## As 3 pegadinhas (leia antes de configurar)
@@ -213,7 +218,7 @@ docker compose down -v            # derruba e apaga os dados salvos
 | `deploy/Caddyfile` | serve o front estático + proxy do WebSocket + TLS; o endereço vem de `SITE_ADDRESS` |
 | `deploy/install.ps1` | instala Docker (se preciso) e sobe o stack |
 | `deploy/check-publico.ps1` | testa, de fora para dentro, se a internet já alcança o servidor |
-| `deploy/.env.example` | modelo das variáveis (`SITE_ADDRESS`, `ROOM_CODE`, `ORIGIN`) |
+| `deploy/.env.example` | modelo das variáveis (`SITE_ADDRESS`, `ROOM_CODE`, `ORIGIN`, `GM_KEY`) |
 | `deploy/.env` | **não vai pro git** — a sua configuração real; crie a partir do exemplo |
 | `.dockerignore` | evita copiar `node_modules`/`dist` para a imagem |
 
