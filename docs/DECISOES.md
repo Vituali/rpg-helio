@@ -224,3 +224,28 @@ só. Isso é aceitável enquanto é mesa de amigos; **RBAC de verdade é a Fase 
 ADR aponta. Duas redes de segurança para não ficar exposto por esquecimento: o log do servidor ao
 subir e o `deploy/check-publico.ps1`, que avisa quando as portas estão abertas e a senha vazia ou
 óbvia.
+
+## #13 – Publicar portas só em IPv4; IPv6 global fica fechado
+
+**Contexto.** Ao investigar o risco de abrir 80/443 para a internet, um teste com um serviço de
+leitura remoto (`r.jina.ai`) mostrou que o jogo **já estava acessível da internet** mesmo com o IPv4
+fechado. A resposta vinha pelo IPv6: esta máquina tem IPv6 global (`2804:18e4:...`), o provedor
+entrega IPv6 por Router Advertisement, e o Docker publicava a porta 80 em `[::]` (todos os endereços
+IPv6). Como IPv6 **não tem NAT**, não existe "porta fechada por padrão": tudo que escuta está
+exposto. O `SITE_ADDRESS=:80` (catch-all) piorava, porque qualquer `Host` serve a página — nem
+domínio era preciso para chegar.
+
+**Decisão.** No `docker-compose.yml`, as portas do Caddy passam a ser publicadas em `0.0.0.0` (IPv4,
+que é o que o port forwarding usa) e em `[::1]` (loopback IPv6, só para `http://localhost`
+continuar funcionando). Nunca em `[::]`. O IPv6 da rede deixa de chegar no Caddy pelo Docker; a
+correção de fundo — o firewall IPv6 do roteador, que protege a casa inteira — fica documentada em
+`DEPLOY.md`, pegadinha #4.
+
+**Consequências.** Foi preciso trocar `"80:80"` por entradas explícitas, e uma recriação do
+container: a primeira tentativa falhou com `[::1]:80 already in use` (corrida com o proxy antigo
+ainda fechando; subir de novo resolveu). Verificado antes/depois com o mesmo serviço externo —
+antes, uma requisição com `User-Agent` de Linux (não esta máquina Windows) chegou e foi registrada
+no log do Caddy com status 200; depois, erro de conexão e nada no log. `localhost`, `127.0.0.1` e
+`192.168.1.69` seguem em 200, e o Socket.IO continua passando pelo Caddy. A lição generalizável:
+**em IPv6, expor é o padrão e proteger exige ação** — o oposto do IPv4, e a razão de isto não
+aparecer em tutorial nenhum de port forwarding.

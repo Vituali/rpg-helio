@@ -96,7 +96,7 @@ do servidor também. É uma senha única compartilhada, não um sistema de conta
 
 ---
 
-## As 3 pegadinhas (leia antes de configurar)
+## As 4 pegadinhas (leia antes de configurar)
 
 ### 1. HTTPS num IP pelado
 
@@ -139,6 +139,44 @@ IP residencial muda sozinho. Se for usar port forward, precisa de DDNS. O **Duck
 isso**: um script simples (ou o próprio container) atualiza o registro quando o IP muda.
 
 ---
+
+### 4. IPv6 não tem NAT — a porta que você **não** abriu já está aberta
+
+Esta é a pegadinha que derruba mais gente que se auto-hospeda, porque ela não aparece em nenhum
+tutorial de port forwarding. No IPv4, nada entra sem regra explícita: você encaminha 80 e 443, e só
+essas portas existem para o mundo. **No IPv6 não há NAT nem port forwarding.** Se o provedor te dá
+um IPv6 global (hoje é o padrão no Brasil), cada aparelho da casa já tem endereço público, e tudo
+que estiver escutando nele está ao alcance da internet.
+
+Aconteceu exatamente aqui: com `SITE_ADDRESS=:80`, o Docker publica a porta em `[::]` (todos os
+endereços IPv6, inclusive o global). O jogo ficou acessível da internet por IPv6 **antes** de
+qualquer port forwarding, com o IPv4 ainda fechado. A prova foi barata: um serviço de leitura
+remoto buscou a página e ela apareceu, com `User-Agent` de Linux — ou seja, não era esta máquina.
+
+O risco não é só o jogo. Na mesma rede, uma impressora, uma câmera, um NAS ou a própria interface
+do roteador também podem estar escutando em IPv6, e esses aparelhos quase nunca têm firewall
+próprio (o Windows tem e bloqueia entrada por padrão). Ou seja: **o problema é da rede inteira, não
+do HELIO.**
+
+**Como fechar** — as duas, não uma:
+
+1. **No roteador (a correção de verdade, protege a casa toda).** Na interface do Nokia G-1425G-B,
+   ache a seção de firewall **IPv6** e deixe a entrada como **deny / block** por padrão. Libere
+   portas só se precisar. Enquanto isso não for feito, nada do resto importa muito.
+2. **No compose (a rede de segurança do projeto).** As portas são publicadas em IPv4
+   (`0.0.0.0:80:80`) e em IPv6 **apenas no loopback** (`[::1]:80:80`) — nunca em `[::]`. Assim o
+   `http://localhost` continua funcionando, mas a máquina não escuta IPv6 nenhum vindo da rua.
+   Já está assim no `docker-compose.yml` (decisão #13): **não troque de volta para `"80:80"`.**
+
+**Como conferir.** De dentro da própria rede não dá — a conexão nem sai, e o teste sempre "passa".
+Use o **celular com o Wi-Fi desligado** (dados móveis têm IPv6) e abra `http://[seu-ipv6]/`. Se não
+carregar, está fechado — que é o esperado. Para ver o endereço:
+
+```powershell
+Get-NetIPAddress -AddressFamily IPv6 |
+  Where-Object { $_.IPAddress -notlike 'fe80*' -and $_.IPAddress -ne '::1' } |
+  Select-Object IPAddress, InterfaceAlias
+```
 
 ## Caminho recomendado: Tailscale (se o grupo é fechado)
 

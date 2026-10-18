@@ -40,9 +40,17 @@ services:
       # Para HTTPS automático, use um domínio (ver deploy/.env.example).
       - SITE_ADDRESS=${SITE_ADDRESS:-:80}
     ports:
-      - "80:80"          # HTTP + desafio ACME (Let's Encrypt)
-      - "443:443"        # HTTPS
-      - "443:443/udp"    # HTTP/3
+      # IPv4 para o mundo (é o que o port forwarding usa), e IPv6 SÓ no
+      # loopback. O motivo é importante: IPv6 não tem NAT, então publicar em
+      # "[::]" deixa a máquina acessível da internet inteira SEM port
+      # forwarding nenhum — foi o que aconteceu aqui (ver DECISOES.md #13).
+      # O loopback IPv6 fica para "http://localhost" continuar funcionando.
+      - "0.0.0.0:80:80"      # HTTP + desafio ACME (Let's Encrypt)
+      - "0.0.0.0:443:443"    # HTTPS
+      - "0.0.0.0:443:443/udp"  # HTTP/3
+      - "[::1]:80:80"        # só localhost, nunca da rede
+      - "[::1]:443:443"
+      - "[::1]:443:443/udp"
     volumes:
       - caddy_data:/data                # certificados TLS (persistir!)
       - caddy_config:/config
