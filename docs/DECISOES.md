@@ -381,9 +381,57 @@ rotas de autenticação serem `POST`.
   `scrypt` é caro de propósito e o mesmo processo está servindo a partida.
 - **A conta é lida uma vez por conexão, no escopo da conexão**, e não guardada em `socket.data`. Mesma
   promessa (resolvida no handshake, sem mensagem nova), sem espalhar estado mutável pelo socket.
-- **`/auth/*` entrou no Caddyfile.** Sem a rota, `POST /auth/login` caía no `try_files` da SPA e
-  devolvia o `index.html` com 200: um erro que se disfarça de sucesso. Rota nova em `handle` de
-  servidor é coisa que precisa de teste, não de olho.
+- **`/api` virou o prefixo de tudo que o servidor responde em HTTP.** A primeira versão listava rota
+  por rota no `Caddyfile` (`/auth/*`), e esquecer uma significava cair no `try_files` da SPA e receber
+  o `index.html` com **status 200** — erro que se disfarça de sucesso. Aconteceu duas vezes: primeiro
+  com `/auth/*`, depois com `/campaigns`. Com um prefixo só, o Caddy manda `/socket.io/*` e `/api/*`
+  para o app e o resto é arquivo estático: rota nova dentro do prefixo não tem como ser esquecida, e
+  rota que falta vira 404 de verdade.
+
+## #18 – Selo da Missão: campanha se cria de propósito, com código gerado e legível
+
+**Contexto.** A entrega 1 criou a campanha **de carona**: entrar com um selo qualquer criava a linha
+na hora (`ensureCampaign`). Isso mantinha o comportamento antigo e deixava o furo anotado — qualquer
+um com a URL cria campanha sem limite, e o banco encheu de `SMOKE-*` e `AUTH-*` só de rodar teste.
+Ao mesmo tempo ficou claro o que o selo **é** de verdade: convidado não tem conta, então o selo é o
+convite dele. Um código adivinhável é uma porta aberta.
+
+**Decisão.**
+
+- **Criar é um ato deliberado, e exige conta.** `POST /api/campaigns` (autenticado) cria a campanha e
+  torna a conta a **dona** (`gm_account_id`) — o que, pelo ADR #16, já dá o papel de mestre sem senha.
+  `GET /api/campaigns` lista as do dono, porque perder o selo é o mesmo que perder a mesa: ele precisa
+  poder consultar de novo. `DELETE /api/campaigns/:selo` é do dono, e é o par obrigatório do criar —
+  sem ele, cada selo abandonado é lixo permanente.
+- **Selo desconhecido não entra, e não cria nada.** Sem linha, sem sala em memória. `room:join`
+  devolve `{ok:false}` com o motivo, para o lobby explicar em vez de deixar a pessoa num socket
+  conectado que não está na mesa.
+- **O selo é gerado pelo servidor: três palavras e dois dígitos** (`CORVO-AMBAR-VEU-74`). Ditável em
+  voz alta, sem código fraco escolhido com pressa e sem dois mestres disputando o mesmo nome.
+  Palavras **sem acento** e distintas entre si; tolerância de digitação fica com `normalizeCode`, que
+  passa a **remover acentos** (quem ouvir "âmbar" e digitar `ÂMBAR` acerta do mesmo jeito). O nome
+  humano da missão ("A Maldição de Veríssimo") mora em `campaign.name`, separado do código.
+- **O nome não é segredo; o selo é.** Por isso os dois não se derivam: batizar a missão não pode
+  determinar o convite.
+- **`ROOM_CODE` deixa de ser "o código que cria a sala"** e vira o **selo sugerido** do lobby. É
+  criado no boot **apenas quando o banco está vazio** — o primeiro boot precisa de uma missão para o
+  grupo entrar, mas um selo que ressuscita a cada restart seria surpresa ruim: apagar a missão padrão
+  e vê-la voltar é o tipo de mágica que faz duvidar do que ficou salvo. Apagada com outras missões
+  existindo, ela fica apagada.
+- **Banco fora não recusa selo.** O veredito precisa de banco: sem ele não há como confirmar campanha
+  nenhuma, e recusar todo mundo transformaria "banco caiu" em "mesa não abre" — exatamente o que o
+  ADR #17 proíbe. A consulta distingue **"não existe"** de **"não deu para saber"**: no primeiro caso
+  recusa, no segundo entra em memória como antes.
+- **Errar o selo custa caro.** Cada conexão conta tentativas de selo errado e é derrubada ao passar do
+  limite. Sem isso, adivinhar vira uma conta de probabilidade contra o único evento que precisa de
+  palpite.
+
+**Consequências.** O lobby ganha a lista de missões da conta e o botão de criar — só para quem entrou;
+convidado continua digitando o nome e o selo, e o último selo fica guardado no navegador para não
+digitar de novo. Os testes param de criar lixo: passam a criar a campanha de que precisam e **apagar
+no fim** (com a degradação para selo aleatório, para continuarem rodando com o banco fora, que é um
+modo que a mesa precisa suportar). `GM_KEY` continua valendo como bootstrap até a entrega 4 — o
+caminho de mestre por conta e o legado convivem.
 
 ## #17 – Persistência: Postgres, campanha com Selo da Missão e cena em JSONB
 
@@ -406,9 +454,11 @@ apaga a mesa; e não existe lugar nenhum para guardar conta, campanha ou ficha. 
   - `campaign (id, code unique /* Selo da Missão */, name, gm_account_id → account, created_at)`
   - `membership (account_id, campaign_id, role, created_at)` — chave primária composta
   - `scene (campaign_id PK → campaign, data jsonb, updated_at)`
-- **Selo da Missão** é `campaign.code`, gerado com alfabeto **sem caracteres ambíguos** (sem
-  `0/O`, `1/I/L` — porque isso vai ser lido em voz alta no grupo). Substitui o `ROOM_CODE` fixo:
-  cada mesa tem o próprio selo, e o `ROOM_CODE` vira só a conveniência padrão.
+- **Selo da Missão** é `campaign.code`. Substitui o `ROOM_CODE` fixo: cada mesa tem o próprio selo, e
+  o `ROOM_CODE` vira só a conveniência padrão.
+  *(Emenda: o formato previsto aqui — alfabeto sem `0/O`, `1/I/L` — foi trocado na entrega 3 por
+  **três palavras e dois dígitos** (`CORVO-AMBAR-VEU-74`). Ver o ADR #18: palavras sem acento são
+  ditáveis e não têm caractere ambíguo nenhum, o que resolve o mesmo problema sem código ilegível.)*
 - **Cena em JSONB**, com `schemaVersion` dentro. As regras do sistema ainda não estão fixadas — a
   ficha vai ser inventada na mesa —, então coluna rígida brigaria com o autor. JSONB + versão
   deixa evoluir sem migration de esquema. A ficha segue o mesmo princípio quando chegar.

@@ -315,6 +315,25 @@ lição do IPv6 (pegadinha #4).
 Nesse modo nada é gravado: dá para jogar a sessão inteira, mas ela não sobrevive a um restart. Isso é
 de propósito. Derrubar a mesa por causa do banco seria pior do que não ter banco.
 
+### O Selo da Missão (como o grupo entra)
+
+Cada missão tem um **selo** — `CORVO-AMBAR-VEU-74`, três palavras e dois dígitos, sorteado pelo
+servidor (ADR #18). É o convite: quem tem o endereço **e** o selo entra como jogador, sem conta.
+
+| Quem | O que faz |
+|---|---|
+| Mestre | Entra com a conta (`SEED_MASTER_USER`/`SEED_MASTER_PASS`), cria a missão no lobby e **dita o selo** para o grupo |
+| Jogador | Abre o endereço, digita o selo uma vez (fica guardado no navegador) e escolhe o nome |
+
+Três consequências práticas:
+
+- **Selo errado não abre a mesa**, e não cria nada — a mensagem diz para conferir com o mestre. Errar
+  20 vezes na mesma conexão derruba a conexão.
+- **Perdeu o selo?** Ele está na lista *Missões de \<conta\>* do lobby, para quem está logado.
+- **`ROOM_CODE` é só o selo sugerido.** Ele é criado no boot **quando o banco está vazio** (primeiro
+  boot), para o grupo não precisar criar a missão antes de entrar. Com outras missões já existindo,
+  apagar a padrão funciona e ela não volta.
+
 ### Backup
 
 A campanha é o dado insubstituível — são as horas que vocês passaram jogando. O volume `pg_data`
@@ -349,7 +368,7 @@ docker compose down -v            # derruba e apaga o banco — a campanha vai j
 ```
 
 > **Mexeu no `Caddyfile` ou no front?** Rebuilde o `caddy` (`docker compose up -d --build caddy`).
-> Ele é quem serve o front e quem roteia `/socket.io/*` e `/auth/*` para o app — e é a imagem mais
+> Ele é quem serve o front e quem roteia `/socket.io/*` e `/api/*` para o app — e é a imagem mais
 > fácil de esquecer, porque o serviço `app` é o que aparece nos logs do jogo.
 >
 > **Mexeu só no servidor?** `docker compose up -d --build app` basta, e o túnel não é recriado (a URL
@@ -361,7 +380,7 @@ docker compose down -v            # derruba e apaga o banco — a campanha vai j
 |---|---|
 | `deploy/docker-compose.yml` | define os serviços `app`, `caddy` e `postgres` |
 | `deploy/Dockerfile` | build multi-stage: compila o front e serve com Caddy |
-| `deploy/Caddyfile` | serve o front estático + proxy do WebSocket **e do `/auth/*`** + TLS; o endereço vem de `SITE_ADDRESS` |
+| `deploy/Caddyfile` | serve o front estático + proxy do WebSocket **e de todo `/api/*`** + TLS; o endereço vem de `SITE_ADDRESS` |
 | `deploy/install.ps1` | instala Docker (se preciso) e sobe o stack |
 | `deploy/check-publico.ps1` | testa, de fora para dentro, se a internet já alcança o servidor |
 | `deploy/.env.example` | modelo das variáveis (endereço, `GM_KEY`, banco, sessão) |

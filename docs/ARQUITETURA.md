@@ -167,25 +167,32 @@ O login passa por **HTTP**, não pelo socket. Três rotas, e só:
 
 | Rota | O que faz |
 |---|---|
-| `POST /auth/login` | `{ name, password }` → confere o `scrypt` e devolve o cookie de sessão |
-| `POST /auth/logout` | Apaga o cookie no cliente |
-| `GET /auth/me` | `{ ok, account }` — quem este navegador é, se alguém for |
+| `POST /api/auth/login` | `{ name, password }` → confere o `scrypt` e devolve o cookie de sessão |
+| `POST /api/auth/logout` | Apaga o cookie no cliente |
+| `GET /api/auth/me` | `{ ok, account }` — quem este navegador é, se alguém for |
 
 O jogo continua inteiro no Socket.IO. A divisão é deliberada: tempo real e CRUD são módulos
 separados, para trocar um sem encostar no outro (`server/src/http.ts`).
+
+**Tudo que o servidor responde em HTTP vive sob `/api`, e isso é contrato, não estilo.** O Caddy
+manda `/socket.io/*` e `/api/*` para o app e serve o resto como arquivo estático; rota nova dentro do
+prefixo não tem como ser esquecida, e rota que falta vira **404 de verdade**. Antes disso, cada rota
+precisava ser lembrada no `Caddyfile`, e esquecer uma significava cair no `try_files` da SPA e receber
+o `index.html` com **status 200** — um erro que se disfarça de sucesso, e que custou duas sessões de
+depuração.
 
 **A parte que faz tudo caber:** o Socket.IO manda os cookies da mesma origem **no handshake**. Então
 a identidade chega junto com a conexão — não existe mensagem para "autenticar", e por isso não há
 como esquecer de autenticar um evento novo:
 
 ```
-POST /auth/login ─▶ cookie assinado (HMAC-SHA256, HttpOnly, SameSite=Lax, Secure)
+POST /api/auth/login ─▶ cookie assinado (HMAC-SHA256, HttpOnly, SameSite=Lax, Secure)
                           │
                           ▼
 navegador abre o socket ─▶ handshake leva o cookie ─▶ servidor sabe QUEM é, antes de qualquer evento
                           │
                           ▼
-room:join ─▶ nome vem da conta; papel vem do vínculo com a campanha
+room:join ─▶ nome vem da conta; papel vem do dono da campanha
 ```
 
 O cookie é **stateless**: carrega `{accountId, name, iat, exp}` e a assinatura. Sem tabela de
@@ -222,8 +229,66 @@ id do socket, como sempre foi. A conta é um upgrade, não um pedágio — o gru
 - **`Secure` não vem do `X-Forwarded-Proto`.** O Caddy termina o TLS e repassa HTTP puro, então esse
   cabeçalho diz `http` mesmo numa visita HTTPS. Quem sabe a verdade é a borda da Cloudflare, que marca
   a requisição; o acesso direto na LAN não tem marca e continua funcionando sem `Secure`.
-- **O `/auth/*` precisa de rota no Caddy.** Sem ela, `POST /auth/login` cai no `try_files` da SPA e
-  devolve o `index.html` com status 200 — um erro que parece sucesso.
+
+---
+
+## Selo da Missão (ADR #18, entrega 3)
+
+O selo é o **convite do convidado**: quem não tem conta entra por ele, então ele é a única coisa entre
+um estranho que achou a URL e a sua mesa. Por isso ele é **gerado**, legível e não escolhido:
+
+```
+CORVO-AMBAR-VEU-74      três palavras (de 165, sem acento) + dois dígitos ≈ 28 bits
+```
+
+Palavras curtas e distintas, ditáveis em voz alta no Discord, e nenhuma que soe como outra (`LENTE`
+ficou, `LENTO` não). A lista é validada ao carregar o servidor: palavra repetida, comprida ou fora de
+A-Z derruba o boot com a mensagem na cara, em vez de virar um selo esquisito meses depois.
+
+A campanha passou a ser criada **de propósito**, e não de carona:
+
+| Rota | Quem pode | O que faz |
+|---|---|---|
+| `POST /api/campaigns` | conta | Cria a missão (nome + selo sorteado) e torna a conta **dona** |
+| `GET /api/campaigns` | conta | As missões da conta — perder o selo não pode ser perder a mesa |
+| `DELETE /api/campaigns/:selo` | dona | Apaga a missão, a cena e o vínculo junto |
+
+Antes, entrar com um selo novo criava a linha na hora: qualquer um com a URL criava campanha sem
+limite — e a tabela encheu de `SMOKE-*` e `AUTH-*` só de rodar teste. Agora **selo desconhecido não
+entra e não cria nada**, nem sala em memória. Os testes também mudaram de comportamento: criam a
+missão de que precisam e **apagam no fim**.
+
+### O que decide se um selo entra
+
+```
+room:join ─▶ normaliza (maiúsculas, sem acento)
+                 │
+                 ▼
+        pergunta ao banco ─┬─ existe ─────────────▶ entra
+                           ├─ não existe ─────────▶ recusa, sem criar nada
+                           └─ banco não respondeu ▶ entra em memória (ADR #17)
+```
+
+A terceira linha é a que impede o banco de derrubar a mesa: **sem banco não existe veredito**, e
+recusar todo mundo transformaria "banco caiu" em "mesa não abre". Por isso a consulta distingue
+"não existe" de "não deu para saber" (`CampaignLookup`), em vez de devolver `null` para os dois.
+
+Errar o selo tem preço: a conexão guarda um contador e é derrubada ao passar de 20 tentativas. Adivinhar
+um selo é a única porta que depende de palpite, e sem contador uma conexão varre selos na velocidade do
+limite de pacotes.
+
+### Onde o selo mora na tela
+
+| Momento | O que aparece |
+|---|---|
+| Logado, no lobby | Lista **Missões de \<conta\>** — clicar preenche o selo, `×` apaga (com confirmação que avisa que a cena vai junto) |
+| Recém-criada | O selo é destacado e já cai no campo: é o que o mestre dita para o grupo |
+| Convidado | Digita o selo uma vez; fica guardado no navegador para a próxima |
+| Na mesa | O cabeçalho mostra o **nome** da missão; o selo continua à mão do mestre |
+
+O nome (\"A Maldição de Veríssimo\") é para ler; o selo é para entrar. **Os dois não se derivam**:
+batizar a missão não pode determinar o convite. E o `ROOM_CODE` do deploy virou o **selo sugerido**,
+criado no boot **apenas quando o banco está vazio**.
 
 ---
 
@@ -287,7 +352,7 @@ Cliente → Servidor
 
 | Evento | Payload | Quem pode |
 |---|---|---|
-| `room:join` | `{ code, name, role, key }` + ack | todos — `role: "gm"` exige a conta dona da campanha **ou** `key` |
+| `room:join` | `{ code, name, role, key }` + ack | todos — `code` precisa ser um **selo existente**; `role: "gm"` exige a conta dona da campanha **ou** `key` |
 | `actor:intent-move` | `{ actorId, row, col }` | dono do ator ou GM |
 | `fog:discover` | `{ cells: [{row, col}] }` | todos — o servidor só aceita célula que algum ator enxerga |
 | `map:walls` | `{ op: "set" \| "clear", cells }` | GM |
@@ -319,13 +384,15 @@ delta entra **atrás do mesmo adapter** — o resto do sistema não muda.
 `room:join` recebe um ack com o estado inicial. O broadcast `room:state` chega **depois** do ack,
 então quem entra usa o ack como primeiro estado; sem isso a tela fica vazia por um instante.
 
-O ack também é o canal de recusa: `{ ok: false, error }`. Hoje só um motivo usa isso — entrar como
-mestre sem ser a conta dona da campanha e com `key` errada — e o cliente volta para o lobby mostrando
-o motivo, em vez de ficar conectado sem estar na sala. A recusa também **descarta a sala** se ela
-tiver ficado vazia: a sala foi carregada só para decidir o papel, e sem isso ela ficaria para sempre
-em memória, vazia e invisível.
+O ack também é o canal de recusa: `{ ok: false, error }`. **Dois** motivos usam isso hoje — o **selo
+desconhecido** (ADR #18) e entrar como mestre sem ser a conta dona da campanha e com `key` errada. Nos
+dois casos o cliente volta para o lobby mostrando o motivo, em vez de ficar conectado sem estar na
+sala. A recusa de mestre também **descarta a sala** se ela tiver ficado vazia: a sala foi carregada só
+para decidir o papel, e sem isso ela ficaria para sempre em memória, vazia e invisível. A recusa de
+selo nem chega a criar sala.
 
-As rotas HTTP de autenticação são o segundo caminho de entrada, e estão em "Contas e sessão".
+As rotas HTTP (`/api/auth/*` e `/api/campaigns`) são o outro caminho de entrada, e estão em "Contas e
+sessão" e em "Selo da Missão".
 
 ### Quem é mestre
 
@@ -440,8 +507,10 @@ Feito:
 - O serviço `app` não publica porta (só o Caddy fala com o mundo) e **não roda como root**:
   `USER node`, filesystem somente-leitura, `/tmp` em tmpfs, nenhuma capability,
   `no-new-privileges`.
-- Caddy na frente: TLS, headers, proxy do WebSocket **e do `/auth/*`**.
-- Sala por código, nome limitado a 24 caracteres.
+- Caddy na frente: TLS, headers, proxy do WebSocket **e de todo `/api/*`**.
+- Sala por **selo**, nome limitado a 24 caracteres. O selo é sorteado pelo servidor (três palavras +
+  dois dígitos, ~28 bits) e **selo desconhecido não entra** — não cria linha nem sala. Errar o selo
+  mais de 20 vezes na mesma conexão derruba a conexão: adivinhar é a única porta que depende de palpite.
 - **Conta e sessão (ADR #16):** senha com `scrypt` (`node:crypto`, sem dependência nova), nunca em
   texto puro nem no log; cookie `HttpOnly` + `SameSite=Lax` + `Secure` quando a visita é HTTPS, e
   assinado com HMAC-SHA256. Resposta de login igual para usuário inexistente e senha errada — inclusive
@@ -449,6 +518,8 @@ Feito:
   partida.
 - **A identidade chega no handshake**, pelo cookie: não existe evento de "autenticar" que alguém possa
   esquecer de chamar.
+- **Criar e apagar missão exigem conta** (ADR #18): quem cria é o dono, e apagar é do dono. Quem não é
+  dono recebe 404 e não descobre nem quais selos existem.
 
 Ainda não feito (anotado no ROADMAP):
 
@@ -462,10 +533,10 @@ Ainda não feito (anotado no ROADMAP):
 - **Jogador entra sem senha.** O `GM_KEY` protege só o papel de mestre. O plano mudou de um `JOIN_KEY`
   separado para o **vínculo com a campanha** (ADR #16): quem controla a entrada é pertencer à mesa,
   não saber uma segunda senha.
-- **Qualquer código novo cria uma campanha.** Enquanto não existe tela de criar campanha (entrega 3),
-  entrar com um selo desconhecido cria a linha na hora — quem tem a URL cria campanhas sem limite. A
-  correção é a própria entrega 3: criar campanha de propósito e recusar selo desconhecido.
-- Visão por jogador (`visibleNow`): hoje `fogExplored` é compartilhado e o cliente recebe **todos**
+- **Missão não tem renomear.** O nome é escolhido na criação e o `PATCH` ainda não existe: quem
+  errou o nome cria outra missão. Barato de resolver, e não interfere em nada.
+- **Visão por jogador (`visibleNow`):** hoje `fogExplored` é compartilhado e o cliente recebe **todos**
   os atores, então um jogador vê o raio de visão dos outros tokens, não só o do dele.
-- `ROOM_CODE` não é segredo: quem tem o endereço e o código entra como jogador. Ser mestre exige a
-  senha. Para mesa fechada de verdade, use a Opção C (Tailscale) do Caddyfile.
+- **O selo é o convite, e convite vaza.** Quem tem o endereço e o selo entra como jogador; o selo não
+  é segredo forte, é difícil de adivinhar. Ser mestre exige a conta dona da campanha. Para mesa fechada
+  de verdade, use a Opção C (Tailscale) do Caddyfile.

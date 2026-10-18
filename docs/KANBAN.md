@@ -35,15 +35,25 @@ assunto só: sem identidade, "salvar" não tem dono. Quatro entregas, cada uma u
 |---|---|---|
 | 1 | Postgres + migrations + cena que sobrevive ao restart | ✅ (commit `6873327`) |
 | 2 | Login + sessão assinada em cookie (a conta já nasce no banco) | ✅ (commit `7691266`) |
-| 3 | Selo da Missão como código da campanha (hoje `ROOM_CODE` é fixo) | 🔜 próximo |
-| 4 | Papel pelo vínculo com a campanha; `GM_KEY` vira legado | ⏳ |
+| 3 | Selo da Missão: campanha criada de propósito, selo gerado, selo desconhecido recusado | ✅ (commit `cd4b3c8`) |
+| 4 | Papel pelo vínculo com a campanha; `GM_KEY` vira legado | 🔜 próximo |
 
-**Entrega 2 fechada**, e com três coisas que só a prática mostrou (emenda no ADR #16): o `Secure` não
-podia sair do `X-Forwarded-Proto` (o Caddy repassa HTTP puro, e a sessão pública estava saindo sem
-ele), o limite de tentativas de login tem que ser **global** (atrás do túnel todo mundo tem o mesmo
-IP), e o `/auth/*` precisava de rota no Caddy — sem ela o login caía no `try_files` da SPA e devolvia
-o `index.html` com 200. Verificado com `auth.mjs`: **18/18**, local e pela URL pública, mais o smoke
-19/19 nos dois.
+**Entrega 3 fechada.** A campanha deixou de nascer de carona: quem cria é a conta, e vira dona. O selo
+é sorteado pelo servidor — `CORVO-AMBAR-VEU-74`, três palavras sem acento e dois dígitos, ~28 bits —
+porque código escolhido à mão erra os dois lados (\"MALDICAO\" é adivinhável e dois mestres escolhem o
+mesmo). Selo desconhecido **não entra e não cria nada**, e um contador derruba quem erra 20 vezes. Os
+testes pararam de poluir o banco: criam a missão de que precisam e apagam no fim — prova: a tabela
+passou de 18 campanhas (16 de lixo) para 1 depois de rodar os quatro scripts três vezes.
+
+Duas coisas que a prática corrigiu, e uma delas vale para sempre:
+
+- **`/api` virou o prefixo** de tudo que o servidor responde em HTTP. O `/campaigns` caiu no mesmo
+  buraco que o `/auth/*`: sem rota no Caddy, resposta `index.html` com **status 200** — erro que se
+  disfarça de sucesso. Duas vezes é sinal de que o problema não era a rota esquecida, era o desenho.
+- **Falha ao apagar não recarregava a lista.** Com a lista velha na tela, apagar de novo dá 404 em
+  cima de 404. Agora recarrega sempre.
+- **A missão padrão só nasce com o banco vazio.** Antes ela voltava a cada boot: apagar e ver
+  reaparecer faz duvidar do que ficou salvo.
 
 **Fog por jogador (Fase 3) fica fora deste slice**, de propósito: é lógica de jogo, não persistência,
 e entraria só para inflar o WIP.
@@ -77,6 +87,7 @@ Que aconteceu com os outros:
 - Chat e log de eventos
 - Voz (WebRTC)
 - Biblioteca de mapas e tokens (upload pelo mestre)
+- **Renomear missão** — hoje o nome só é escolhido na criação; quem errou cria outra
 
 **Infra e produto:**
 
@@ -101,7 +112,7 @@ Nada aqui bloqueia jogar. Bloqueia **escalar sem retrabalho**.
 | Banco de dados | **Feito** | Postgres no ar com migrations e a cena em JSONB (ADR #17, entrega 1) |
 | Framework de servidor | **Decidido** | Nada de NestJS — o servidor é máquina de estado quente, não CRUD |
 | Site público e wiki | **Alvo** | Next estático + MDX no repo. Entra **depois** da mesa |
-| Identidade | **Feito (entrega 2)** | Login, sessão assinada em cookie e papel pela conta. Falta o `GM_KEY` sair (entrega 4) |
+| Identidade | **Feito (entregas 2 e 3)** | Login, sessão assinada em cookie, papel pela conta dona da campanha e missão criada de propósito com selo gerado. Falta o `GM_KEY` sair (entrega 4) |
 | Arquivos (mapas/tokens) | Pendente | Volume + Caddy vs. objeto (S3/MinIO) |
 | Publicar o repositório | Pendente | Afeta CI e o Project board |
 
@@ -120,6 +131,10 @@ isso aponta*.
 
 ## Feito (últimos)
 
+- ✅ **Selo da Missão** (entrega 3 do slice) — campanha criada de propósito pela conta dona, selo
+  sorteado (três palavras + dois dígitos), selo desconhecido recusado sem criar nada, apagar só pelo
+  dono, e `/api` como prefixo único de tudo que o servidor responde em HTTP. Testes novos
+  (`selo.mjs`, 25 verificações) e os antigos pararam de deixar campanha órfã — ADR #18, commit `cd4b3c8`
 - ✅ Login e sessão assinada (entrega 2 do slice) — a conta entra por HTTP, o cookie `HttpOnly`
   chega no handshake do socket e o `room:join` passa a saber **quem** está falando: nome da conta,
   mestre pela conta dona da campanha sem senha nenhuma, e quem cai e volta é reconhecido (fim do id
