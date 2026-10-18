@@ -1,7 +1,16 @@
 import { useEffect, useState } from "react";
 import type { Role } from "@helio/shared";
 import { connect } from "../net/socket";
-import { login, logout, refreshAccount, type Account } from "../net/auth";
+import {
+  createCampaign,
+  deleteCampaign,
+  listCampaigns,
+  login,
+  logout,
+  refreshAccount,
+  type Account,
+  type Campaign,
+} from "../net/auth";
 import { useNetStore } from "../state/netStore";
 import {
   IconAlert,
@@ -17,6 +26,9 @@ import {
 /** Onde a senha de mestre fica guardada neste navegador (para não digitar sempre). */
 const GMKEY_STORAGE = "helio.gmkey";
 
+/** Último selo usado neste navegador: convidado não redigita o selo toda vez. */
+const SELO_STORAGE = "helio.selo";
+
 /**
  * Tela de entrada — Grimório / Portal de Convocação inspirado em Ordem Paranormal.
  *
@@ -29,11 +41,21 @@ export default function Lobby({ onLocal }: { onLocal: () => void }) {
   const serverUrl = useNetStore((s) => s.serverUrl);
 
   const [url, setUrl] = useState(serverUrl);
-  const [code, setCode] = useState("HELIO");
+  const [code, setCode] = useState(() => localStorage.getItem(SELO_STORAGE) ?? "HELIO");
   const [name, setName] = useState("");
   const [role, setRole] = useState<Role>("gm");
   const [gmKey, setGmKey] = useState(() => localStorage.getItem(GMKEY_STORAGE) ?? "");
   const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // ── Missões da conta (ADR #18) ─────────────────────────────────────────────
+  // Criar e apagar exigem conta; escolher uma só preenche o selo. Perder o selo
+  // não pode ser perder a mesa, por isso a lista fica aqui.
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [newName, setNewName] = useState("");
+  const [missaoBusy, setMissaoBusy] = useState(false);
+  const [missaoError, setMissaoError] = useState("");
+  /** Selo recém-criado, para destacar o que o mestre precisa ditar. */
+  const [seloNovo, setSeloNovo] = useState("");
 
   // ── Conta (opcional) ───────────────────────────────────────────────────────
   // Entrar é opcional de propósito: convidado digita o nome e joga. A conta
@@ -55,6 +77,54 @@ export default function Lobby({ onLocal }: { onLocal: () => void }) {
       alive = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!account) {
+      setCampaigns([]);
+      return;
+    }
+    let alive = true;
+    void listCampaigns().then((list) => {
+      if (alive) setCampaigns(list);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [account]);
+
+  const reloadCampaigns = async () => setCampaigns(await listCampaigns());
+
+  const criarMissao = async () => {
+    if (missaoBusy) return;
+    setMissaoBusy(true);
+    setMissaoError("");
+    const result = await createCampaign(newName.trim());
+    setMissaoBusy(false);
+    if (result.ok && result.campaign) {
+      setSeloNovo(result.campaign.code);
+      setCode(result.campaign.code); // já joga o selo no campo de entrada
+      setNewName("");
+      await reloadCampaigns();
+    } else {
+      setMissaoError(result.error ?? "Não foi possível criar a missão.");
+    }
+  };
+
+  const apagarMissao = async (c: Campaign) => {
+    // Apagar leva a cena junto: a confirmação diz isso com todas as letras.
+    const ok = window.confirm(
+      `Apagar a missão "${c.name}" (${c.code})?\n\nO mapa, as paredes e o fog dela vão junto.`,
+    );
+    if (!ok) return;
+    setMissaoError("");
+    const result = await deleteCampaign(c.code);
+    if (!result.ok) setMissaoError(result.error ?? "Não foi possível apagar.");
+    // Recarrega SEMPRE, deu certo ou não: se falhou, a linha provavelmente já
+    // não existia (alguém apagou em outro lugar) e insistir nela só rende mais
+    // 404 — e a lista fica velha na tela, que foi como isto apareceu.
+    if (seloNovo === c.code) setSeloNovo("");
+    await reloadCampaigns();
+  };
 
   const signIn = async () => {
     if (authBusy) return;
@@ -83,6 +153,8 @@ export default function Lobby({ onLocal }: { onLocal: () => void }) {
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (role === "gm") localStorage.setItem(GMKEY_STORAGE, gmKey);
+    // Guardar o selo: convidado não redigita a cada visita (ADR #18).
+    localStorage.setItem(SELO_STORAGE, code.trim());
     connect({
       url,
       code: code.trim() || "HELIO",
@@ -320,6 +392,166 @@ export default function Lobby({ onLocal }: { onLocal: () => void }) {
           )}
         </div>
 
+        {/* Missões da conta — criar, escolher e apagar (ADR #18) */}
+        {account && (
+          <div
+            style={{
+              border: "1px solid rgba(245, 158, 11, 0.3)",
+              background: "rgba(12, 8, 24, 0.55)",
+              borderRadius: 10,
+              padding: "10px 12px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <IconSigil size={14} style={{ color: "#fbbf24" }} />
+              <span
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  letterSpacing: "0.08em",
+                  textTransform: "uppercase",
+                  color: "#d8cef0",
+                }}
+              >
+                Missões de {account.name}
+              </span>
+            </div>
+
+            {campaigns.length > 0 && (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 4,
+                  maxHeight: 132,
+                  overflowY: "auto",
+                }}
+              >
+                {campaigns.map((c) => {
+                  const atual = c.code === code.trim().toUpperCase();
+                  return (
+                    <div
+                      key={c.code}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        padding: "5px 7px",
+                        borderRadius: 6,
+                        border: atual
+                          ? "1px solid rgba(245, 158, 11, 0.6)"
+                          : "1px solid rgba(139, 92, 246, 0.18)",
+                        background: atual ? "rgba(245, 158, 11, 0.1)" : "rgba(8, 5, 16, 0.6)",
+                      }}
+                    >
+                      <button
+                        type="button"
+                        title="Usar este selo"
+                        onClick={() => {
+                          setCode(c.code);
+                          setSeloNovo("");
+                        }}
+                        style={{
+                          flex: 1,
+                          minWidth: 0,
+                          textAlign: "left",
+                          background: "none",
+                          border: "none",
+                          padding: 0,
+                          cursor: "pointer",
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: 11,
+                            color: "#d8cef0",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {c.name}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 11,
+                            color: "#fbbf24",
+                            fontFamily: "monospace",
+                            letterSpacing: "0.04em",
+                          }}
+                        >
+                          {c.code}
+                        </div>
+                      </button>
+                      <button
+                        type="button"
+                        title="Apagar missão"
+                        onClick={() => void apagarMissao(c)}
+                        style={{
+                          flexShrink: 0,
+                          background: "none",
+                          border: "none",
+                          color: "#a78bfa",
+                          cursor: "pointer",
+                          fontSize: 15,
+                          lineHeight: 1,
+                          padding: "2px 4px",
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 6 }}>
+              <input
+                className="occult-input"
+                style={{ padding: "7px 9px", fontSize: 12 }}
+                value={newName}
+                placeholder="Nome da nova missão"
+                maxLength={40}
+                onChange={(e) => setNewName(e.target.value)}
+              />
+              <button
+                type="button"
+                className="occult-btn"
+                style={{ padding: "7px 12px", fontSize: 12, flexShrink: 0 }}
+                disabled={missaoBusy}
+                onClick={() => void criarMissao()}
+              >
+                {missaoBusy ? "..." : "Criar"}
+              </button>
+            </div>
+
+            {seloNovo && (
+              <div style={{ fontSize: 11, color: "#fde68a", lineHeight: 1.5 }}>
+                Selo da nova missão:{" "}
+                <span style={{ fontFamily: "monospace", fontWeight: 700 }}>{seloNovo}</span>
+                <br />
+                <span style={{ color: "#7e6ea8" }}>
+                  Dite para o grupo — é por ele que os agentes entram.
+                </span>
+              </div>
+            )}
+
+            {missaoError ? (
+              <div style={{ fontSize: 11, color: "#fca5a5" }}>{missaoError}</div>
+            ) : (
+              campaigns.length === 0 && (
+                <div style={{ fontSize: 10, color: "#7e6ea8", lineHeight: 1.4 }}>
+                  Nenhuma missão ainda. Crie uma e o selo sai pronto para ditar.
+                </div>
+              )
+            )}
+          </div>
+        )}
+
         {/* Nome do Agente / Narrador */}
         <div>
           <label
@@ -351,7 +583,7 @@ export default function Lobby({ onLocal }: { onLocal: () => void }) {
           )}
         </div>
 
-        {/* Código da Sala */}
+        {/* Selo da Missão */}
         <div>
           <label
             style={{
@@ -364,7 +596,7 @@ export default function Lobby({ onLocal }: { onLocal: () => void }) {
               display: "block",
             }}
           >
-            Selo da Missão (Código da Sala)
+            Selo da Missão
           </label>
           <input
             className="occult-input"
@@ -377,11 +609,14 @@ export default function Lobby({ onLocal }: { onLocal: () => void }) {
               color: "#fde68a",
             }}
             value={code}
-            maxLength={24}
+            maxLength={32}
+            placeholder="CORVO-AMBAR-VEU-74"
             onChange={(e) => setCode(e.target.value.toUpperCase())}
           />
           <div style={{ fontSize: 11, color: "#7e6ea8", marginTop: 4 }}>
-            Compartilhe este selo com os investigadores para sincronizar o mapa.
+            {account
+              ? "O mestre cria a missão acima e dita o selo. Sem ele, o servidor não abre a mesa."
+              : "Peça o selo ao mestre — é ele que abre a mesa. Fica guardado neste navegador."}
           </div>
         </div>
 

@@ -47,6 +47,11 @@ export interface Player {
 export interface Room {
   code: string;
   /**
+   * Nome humano da missão (ADR #18). O selo é o convite; isto é o que se lê.
+   * Sem banco, é o próprio selo — melhor repetir o código do que mostrar vazio.
+   */
+  name: string;
+  /**
    * Campanha correspondente no banco — o Selo da Missão (ADR #17).
    * `null` quando não há banco configurado, e aí a sala vive só em memória.
    */
@@ -83,9 +88,11 @@ export function createRoom(
   code: string,
   campaignId: string | null = null,
   gmAccountId: string | null = null,
+  name: string = code,
 ): Room {
   return {
     code,
+    name,
     campaignId,
     gmAccountId,
     scene: createScene(),
@@ -97,6 +104,8 @@ export function createRoom(
 /** Payload enviado ao cliente: a cena + a lista de jogadores + quem é você. */
 export interface PublicState {
   code: string;
+  /** Nome humano da missão, para o cabeçalho não mostrar só o selo. */
+  name: string;
   you: string;
   scene: ServerScene;
   players: Player[];
@@ -105,6 +114,7 @@ export interface PublicState {
 export function publicState(room: Room, you: string): PublicState {
   return {
     code: room.code,
+    name: room.name,
     you,
     scene: room.scene,
     players: [...room.players.values()],

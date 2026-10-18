@@ -15,6 +15,7 @@ import type { Actor, Facing, FogMode, FogValue, Sector } from "@helio/shared";
 import { hashPassword } from "./auth.js";
 import { dbEnabled, tryQuery } from "./db.js";
 import { createScene, type Room, type ServerScene } from "./room.js";
+import { newSelo } from "./selo.js";
 
 /** Versão do formato guardado em `scene.data`. */
 export const SCENE_SCHEMA = 1;
@@ -40,33 +41,156 @@ export interface CampaignRef {
    * dono não precisa saber segredo nenhum (ADR #16).
    */
   gmAccountId: string | null;
+  /** Nome humano da missão. O selo é o convite; isto é o que se lê. */
+  name: string;
 }
 
 /**
- * Garante que existe uma campanha para este código e devolve a referência dela.
+ * O veredito sobre um selo (ADR #18).
  *
- * Enquanto não existe tela de criar campanha (entrega 3), entrar com um selo
- * novo cria a campanha na hora. É o caminho que mantém o comportamento atual —
- * e é o furo anotado no KANBAN: sem limite, qualquer código novo cria uma linha.
+ * A distinção entre "não existe" e "não deu para saber" é o que impede o banco
+ * de derrubar a mesa: sem banco não há como confirmar campanha nenhuma, e
+ * recusar todo mundo transformaria "banco caiu" em "mesa não abre".
  */
-export async function ensureCampaign(code: string): Promise<CampaignRef | null> {
+export interface CampaignLookup {
+  /** A campanha, quando o selo existe. */
+  campaign: CampaignRef | null;
+  /** `false` = o banco não respondeu, então não existe veredito. */
+  checked: boolean;
+}
+
+/**
+ * Procura a campanha pelo Selo. **Não cria nada**: selo desconhecido é selo
+ * errado, e quem recusa é `room:join` (ADR #18).
+ */
+export async function findCampaign(code: string): Promise<CampaignLookup> {
+  if (!dbEnabled) return { campaign: null, checked: false };
+  const rows = await tryQuery<{ id: string; gm_account_id: string | null; name: string }>(
+    "select id, gm_account_id, name from campaign where code = $1",
+    [code],
+    `procurar campanha ${code}`,
+  );
+  if (rows === null) return { campaign: null, checked: false };
+  const row = rows[0];
+  if (!row) return { campaign: null, checked: true };
+  return {
+    campaign: { id: row.id, gmAccountId: row.gm_account_id, name: row.name },
+    checked: true,
+  };
+}
+
+export interface CampaignInfo {
+  code: string;
+  name: string;
+  createdAt: string;
+}
+
+/**
+ * Cria a campanha — o ato deliberado que substituiu a criação de carona.
+ *
+ * O selo é sorteado aqui e o `unique` do banco decide a corrida: se colidir,
+ * sorteia de novo. Algumas tentativas e desiste, porque desistir é honesto —
+ * insistir para sempre esconderia uma lista de palavras quebrada.
+ */
+export async function createCampaign(
+  name: string,
+  gmAccountId: string,
+): Promise<CampaignInfo | null> {
   if (!dbEnabled) return null;
-  const rows = await tryQuery<{ id: string; gm_account_id: string | null }>(
-    `with ins as (
-       insert into campaign (id, code, name, gm_account_id)
+
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    const code = newSelo();
+    const rows = await tryQuery<{ code: string; name: string; created_at: Date }>(
+      `insert into campaign (id, code, name, gm_account_id)
        values ($1, $2, $3, $4)
        on conflict (code) do nothing
-       returning id, gm_account_id
-     )
-     select id, gm_account_id from ins
-     union all
-     select id, gm_account_id from campaign where code = $2
-     limit 1`,
+       returning code, name, created_at`,
+      [uid("camp"), code, name, gmAccountId],
+      `criar campanha ${code}`,
+    );
+    if (rows === null) return null; // banco fora
+    const row = rows[0];
+    if (row) {
+      console.log(`[campanha] criada: ${row.code} "${row.name}"`);
+      return { code: row.code, name: row.name, createdAt: row.created_at.toISOString() };
+    }
+    console.warn(`[campanha] selo sorteado já existia (${code}), sorteando de novo`);
+  }
+
+  console.error("[campanha] 5 sorteios colidiram — a lista do selo está quebrada?");
+  return null;
+}
+
+/** As missões de quem é dono. Perder o selo não pode ser perder a mesa. */
+export async function listCampaigns(gmAccountId: string): Promise<CampaignInfo[]> {
+  if (!dbEnabled) return [];
+  const rows = await tryQuery<{ code: string; name: string; created_at: Date }>(
+    `select code, name, created_at from campaign
+     where gm_account_id = $1
+     order by created_at desc
+     limit 50`,
+    [gmAccountId],
+    "listar campanhas",
+  );
+  return (rows ?? []).map((r) => ({
+    code: r.code,
+    name: r.name,
+    createdAt: r.created_at.toISOString(),
+  }));
+}
+
+export type DeleteResult = "ok" | "notfound" | "error";
+
+/**
+ * Apaga a missão — o par obrigatório de criar.
+ *
+ * Só o dono apaga, e a checagem é feita **na consulta** (`gm_account_id = $2`),
+ * não em memória: quem não é dono não distingue "não existe" de "não é sua", e
+ * assim nem descobre quais selos existem.
+ */
+export async function deleteCampaign(
+  code: string,
+  gmAccountId: string,
+): Promise<DeleteResult> {
+  if (!dbEnabled) return "error";
+  const rows = await tryQuery<{ id: string }>(
+    `delete from campaign
+     where code = $1 and gm_account_id = $2
+     returning id`,
+    [code, gmAccountId],
+    `apagar campanha ${code}`,
+  );
+  if (rows === null) return "error";
+  if (!rows[0]) return "notfound";
+  console.log(`[campanha] apagada: ${code}`);
+  return "ok";
+}
+
+/**
+ * Garante o selo sugerido do `ROOM_CODE` — mas **só quando o banco está vazio**
+ * (ADR #18).
+ *
+ * A intenção é o primeiro boot: sem isto, um banco novo recebe todo mundo com
+ * "selo desconhecido" e o grupo precisa criar a primeira missão antes de
+ * qualquer coisa. A intenção **não** é tornar este selo eterno: se o mestre
+ * apagou a missão padrão e já tem outras, ela fica apagada. Um selo que ressuscita
+ * a cada restart seria uma surpresa ruim.
+ */
+export async function ensureDefaultCampaign(code: string): Promise<CampaignRef | null> {
+  if (!dbEnabled) return null;
+  const rows = await tryQuery<{ id: string; gm_account_id: string | null; name: string }>(
+    `insert into campaign (id, code, name, gm_account_id)
+     select $1, $2, $3, $4
+     where not exists (select 1 from campaign)
+     on conflict (code) do nothing
+     returning id, gm_account_id, name`,
     [uid("camp"), code, code, defaultGmAccountId],
-    `criar campanha ${code}`,
+    `garantir campanha padrao ${code}`,
   );
   const row = rows?.[0];
-  return row ? { id: row.id, gmAccountId: row.gm_account_id } : null;
+  if (!row) return null;
+  console.log(`[campanha] banco vazio: selo padrao criado (${code})`);
+  return { id: row.id, gmAccountId: row.gm_account_id, name: row.name };
 }
 
 // ── Serialização ─────────────────────────────────────────────────────────────

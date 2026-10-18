@@ -22,6 +22,8 @@ export interface ServerState {
   /** Preenchido quando o servidor recusa a entrada (ex.: senha de mestre errada). */
   error?: string;
   code: string;
+  /** Nome humano da missão (ADR #18). */
+  name: string;
   you: string;
   scene: ServerScene;
   players: NetPlayer[];
@@ -144,6 +146,7 @@ function applyState(state: ServerState): void {
   const store = useNetStore.getState();
   store.setRoom({
     code: state.code,
+    mission: state.name,
     you: state.you,
     role: me?.role ?? "player",
     players: state.players,

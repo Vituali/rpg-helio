@@ -1,9 +1,15 @@
 /**
- * Contas — as rotas HTTP de autenticação (docs/DECISOES.md #16).
+ * A API do servidor — contas e missões (docs/DECISOES.md #16 e #18).
  *
- * Três chamadas só: entrar, sair e "quem sou eu". O cookie de sessão vai e volta
- * sozinho (mesma origem), e é ele que o Socket.IO lê no handshake — depois do
- * login, o `connect()` não precisa saber de nada disso.
+ * Tudo vive sob `/api` (o Caddy manda o prefixo inteiro para o app), e as duas
+ * famílias são:
+ *
+ *   /api/auth/*       entrar, sair e "quem sou eu" (ADR #16)
+ *   /api/campaigns    criar, listar e apagar missões (ADR #18)
+ *
+ * O cookie de sessão vai e volta sozinho (mesma origem), e é ele que o Socket.IO
+ * lê no handshake — depois do login, o `connect()` não precisa saber de nada
+ * disso.
  *
  * A senha NUNCA é guardada aqui: nem em estado, nem em localStorage. Só existe
  * durante a requisição. O que fica no navegador é o cookie `HttpOnly`, que o
@@ -17,9 +23,23 @@ export interface Account {
   name: string;
 }
 
+/** Uma missão: o selo é o convite, o nome é o que se lê. */
+export interface Campaign {
+  code: string;
+  name: string;
+  createdAt?: string;
+}
+
 export interface AuthResult {
   ok: boolean;
   account?: Account;
+  error?: string;
+}
+
+export interface CampaignsResult {
+  ok: boolean;
+  campaigns?: Campaign[];
+  campaign?: Campaign;
   error?: string;
 }
 
@@ -56,14 +76,14 @@ async function request(
 
 /** Quem está logado neste navegador, se alguém estiver. */
 export async function refreshAccount(): Promise<Account | null> {
-  const body = await request("/auth/me");
+  const body = await request("/api/auth/me");
   if (!body?.ok) return null;
   const account = body.account as Account | undefined;
   return account ?? null;
 }
 
 export async function login(name: string, password: string): Promise<AuthResult> {
-  const body = await request("/auth/login", {
+  const body = await request("/api/auth/login", {
     method: "POST",
     body: JSON.stringify({ name, password }),
   });
@@ -75,5 +95,35 @@ export async function login(name: string, password: string): Promise<AuthResult>
 }
 
 export async function logout(): Promise<void> {
-  await request("/auth/logout", { method: "POST", body: "{}" });
+  await request("/api/auth/logout", { method: "POST", body: "{}" });
+}
+
+/** As missões de quem está logado. Perder o selo não pode ser perder a mesa. */
+export async function listCampaigns(): Promise<Campaign[]> {
+  const body = await request("/api/campaigns");
+  if (!body?.ok) return [];
+  return (body.campaigns as Campaign[] | undefined) ?? [];
+}
+
+export async function createCampaign(name: string): Promise<CampaignsResult> {
+  const body = await request("/api/campaigns", {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+  if (!body) return { ok: false, error: "Servidor não respondeu." };
+  if (!body.ok) {
+    return { ok: false, error: String(body.error ?? "Não foi possível criar a missão.") };
+  }
+  return { ok: true, campaign: body.campaign as Campaign };
+}
+
+export async function deleteCampaign(code: string): Promise<CampaignsResult> {
+  const body = await request(`/api/campaigns/${encodeURIComponent(code)}`, {
+    method: "DELETE",
+  });
+  if (!body) return { ok: false, error: "Servidor não respondeu." };
+  if (!body.ok) {
+    return { ok: false, error: String(body.error ?? "Não foi possível apagar a missão.") };
+  }
+  return { ok: true };
 }

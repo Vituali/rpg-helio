@@ -27,13 +27,16 @@ import { dbEnabled } from "./db.js";
 import { handleHttp } from "./http.js";
 import { migrate } from "./migrate.js";
 import { createRoom, publicState, type Player, type Room } from "./room.js";
+import { normalizeCode } from "./selo.js";
 import {
-  ensureCampaign,
+  ensureDefaultCampaign,
+  findCampaign,
   flushRoom,
   loadScene,
   scheduleSave,
   seedMaster,
   setDefaultGmAccount,
+  type CampaignRef,
 } from "./store.js";
 import { canMove } from "./validate.js";
 
@@ -80,8 +83,12 @@ const rooms = new Map<string, Room>();
 const loading = new Map<string, Promise<Room>>();
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-function normalizeCode(code: unknown): string {
-  return String(code ?? "").trim().toUpperCase().slice(0, 24) || DEFAULT_ROOM;
+/**
+ * Forma canônica do selo da sala. Vazio cai no selo sugerido do servidor
+ * (`ROOM_CODE`) — é o que mantém o hábito do grupo funcionando.
+ */
+function normalizeCodeOr(code: unknown): string {
+  return normalizeCode(code) || DEFAULT_ROOM;
 }
 
 /**
@@ -90,10 +97,11 @@ function normalizeCode(code: unknown): string {
  * Primeira entrada numa campanha carrega a cena persistida; sem banco, é a cena
  * nova de sempre. O `loading` existe porque dois jogadores entrando ao mesmo
  * tempo não podem carregar duas cenas — a segunda sobrescreveria a primeira.
+ *
+ * A campanha chega **já resolvida** por quem chamou: quem julga o selo é
+ * `room:join` (ADR #18), e esta função só cuida da sala.
  */
-async function getOrCreateRoom(code: unknown): Promise<Room> {
-  const key = normalizeCode(code);
-
+async function getOrCreateRoom(key: string, campaign: CampaignRef | null): Promise<Room> {
   const living = rooms.get(key);
   if (living) return living;
 
@@ -101,8 +109,7 @@ async function getOrCreateRoom(code: unknown): Promise<Room> {
   if (inFlight) return inFlight;
 
   const task = (async () => {
-    const campaign = await ensureCampaign(key);
-    const room = createRoom(key, campaign?.id ?? null, campaign?.gmAccountId ?? null);
+    const room = createRoom(key, campaign?.id ?? null, campaign?.gmAccountId ?? null, campaign?.name ?? key);
     const saved = await loadScene(room.campaignId);
     if (saved) room.scene = saved;
     rooms.set(key, room);
@@ -318,6 +325,15 @@ io.on("connection", (socket) => {
     return player ? { room, player } : null;
   };
 
+  /**
+   * Selos errados nesta conexão. Existe porque adivinhar o selo é a única porta
+   * que depende de palpite (ADR #18): sem contador, uma conexão pode varrer
+   * selos na velocidade do limite de pacotes. Ao passar do teto, a conexão cai —
+   * errar o selo é raro, então quem chega aqui está tentando.
+   */
+  let wrongSelos = 0;
+  const MAX_WRONG_SELOS = 20;
+
   const deny = (msg: string) => socket.emit("error", { code: "DENIED", msg });
 
   /** Só o mestre passa daqui. */
@@ -334,8 +350,35 @@ io.on("connection", (socket) => {
   socket.on("room:join", async (msg, ack) => {
     const m = (msg ?? {}) as { code?: unknown; role?: Role; name?: unknown; key?: unknown };
     const wantsGm = m.role === "gm";
+    const key = normalizeCodeOr(m.code);
 
-    const room = await getOrCreateRoom(m.code);
+    /*
+     * O selo precisa existir (ADR #18). Antes, um selo novo criava a campanha na
+     * hora — e qualquer um com a URL criava campanha sem limite.
+     *
+     * Mas "não existe" e "não deu para saber" são coisas diferentes: sem banco
+     * não há veredito, e recusar todo mundo transformaria "banco caiu" em "mesa
+     * não abre", que é justamente o que o ADR #17 proíbe. Só recusamos quando o
+     * banco respondeu e disse que o selo não existe.
+     */
+    const lookup = await findCampaign(key);
+    if (lookup.checked && !lookup.campaign) {
+      wrongSelos += 1;
+      console.log(`[entrada] selo desconhecido: ${key} (${wrongSelos} nesta conexao)`);
+      if (typeof ack === "function") {
+        ack({
+          ok: false,
+          error: `Selo desconhecido: "${key}". Confira com o mestre.`,
+        });
+      }
+      if (wrongSelos >= MAX_WRONG_SELOS) {
+        console.warn(`[entrada] ${socket.id} errou o selo ${wrongSelos}x — desconectando`);
+        socket.disconnect(true);
+      }
+      return;
+    }
+
+    const room = await getOrCreateRoom(key, lookup.campaign);
 
     /*
      * Duas formas de ser mestre, durante a migração (ADR #16):
@@ -654,6 +697,10 @@ async function connectDatabase(): Promise<void> {
     try {
       await migrate();
       setDefaultGmAccount(await seedMaster());
+      // O selo sugerido do lobby precisa existir (ADR #18): num banco novo, todo
+      // mundo receberia "selo desconhecido" na primeira vez. É a única criação
+      // de carona que sobrou, e ela acontece uma vez, aqui.
+      await ensureDefaultCampaign(DEFAULT_ROOM);
       console.log("[banco] conectado (migrations em dia)");
       return;
     } catch (err) {

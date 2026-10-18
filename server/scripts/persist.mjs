@@ -6,24 +6,54 @@
  * é justamente o cenário que motivou tudo:
  *
  *   # 1. escreve uma cena marcada e sai (o servidor grava no banco)
- *   PHASE=write CODE=TESTE node scripts/persist.mjs
+ *   PHASE=write node scripts/persist.mjs
  *
  *   # 2. reinicia o container — a sala sai da memória
  *   docker compose restart app
  *
  *   # 3. volta e confere que a cena é a mesma
- *   PHASE=check CODE=TESTE node scripts/persist.mjs
+ *   PHASE=check CODE=<o selo que a fase 1 imprimiu> DISPOSABLE=1 node scripts/persist.mjs
  *
- * Sem `CODE`, sorteia um. A cena é sempre a mesma marca, derivada do código,
- * então as duas fases não precisam combinar nada por fora.
+ * A cena é sempre a mesma marca, derivada do selo, então as duas fases não
+ * precisam combinar nada por fora além do próprio selo.
+ *
+ * Sobre o selo (ADR #18): a fase 1 **cria** uma missão descartável, porque selo
+ * desconhecido não entra mais. Ela imprime o comando exato da fase 2 — e só com
+ * `DISPOSABLE=1` a fase 2 apaga a missão no fim. Sem isso, nada é apagado: um
+ * `CODE` seu nunca corre o risco de virar `DELETE`.
  */
 
 import { io } from "socket.io-client";
+import { api, masterCookie } from "./harness.mjs";
 
 const URL = process.env.URL ?? "http://localhost";
-const CODE = (process.env.CODE ?? `PERSIST-${Math.floor(Math.random() * 1e6)}`).toUpperCase();
 const GM_KEY = process.env.GM_KEY ?? "";
 const PHASE = process.env.PHASE ?? "write";
+const GIVEN = (process.env.CODE ?? "").trim().toUpperCase();
+const DISPOSABLE = process.env.DISPOSABLE === "1";
+
+let CODE = GIVEN;
+if (CODE === "") {
+  if (PHASE !== "write") {
+    console.error("PHASE=check precisa de CODE=<o selo que a fase de escrita imprimiu>");
+    process.exit(1);
+  }
+  const cookie = await masterCookie(URL);
+  const created = cookie
+    ? await api(URL, "POST", "/api/campaigns", {
+        body: { name: "Teste de persistencia" },
+        cookie,
+      })
+    : null;
+  CODE = created?.body?.campaign?.code ?? "";
+  if (CODE === "") {
+    console.error(
+      "não deu para criar a missão de teste (banco fora, ou falta a conta-semente).\n" +
+        "Passe CODE=<um selo que existe> se já tiver uma missão para isso.",
+    );
+    process.exit(1);
+  }
+}
 
 let failures = 0;
 function check(ok, label) {
@@ -109,7 +139,13 @@ if (PHASE === "write") {
   // Sair é o que dispara a gravação (o último jogador esvazia a sala).
   client.disconnect();
   await sleep(400);
-  console.log("\nOK — agora reinicie o servidor e rode de novo com PHASE=check");
+  console.log(
+    `\nOK — agora reinicie o servidor e rode:\n` +
+      `  PHASE=check CODE=${CODE} DISPOSABLE=1 node scripts/persist.mjs\n` +
+      `(o DISPOSABLE=1 faz a conferência apagar esta missão de teste no fim)`,
+  );
+  // Fase de escrita terminou: sai AQUI. Sem isto o script escorrega para a
+  // conferência e confere contra o que acabou de escrever (e "passa" à toa).
   process.exit(0);
 }
 
@@ -133,5 +169,19 @@ check(
 check(scene()?.version === 0, "a cena volta como versão 0 (contador não persiste)");
 
 client.disconnect();
+
+// A conferência é a última fase: se a missão foi criada para este teste, ela
+// vai embora agora (ADR #18 — teste não deixa lixo).
+if (DISPOSABLE) {
+  const cookie = await masterCookie(URL);
+  const gone = cookie ? await api(URL, "DELETE", `/api/campaigns/${CODE}`, { cookie }) : null;
+  console.log(
+    gone?.status === 200
+      ? `missão de teste apagada: ${CODE}`
+      : `não deu para apagar a missão de teste ${CODE} (apague na tela)`,
+  );
+}
+
 console.log(`\n${failures === 0 ? "TUDO OK" : `${failures} FALHA(S)`} — sala ${CODE}`);
-process.exit(failures === 0 ? 0 : 1);
+process.exitCode = failures === 0 ? 0 : 1;
+client.close();

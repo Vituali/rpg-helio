@@ -9,11 +9,16 @@
  */
 
 import { io } from "socket.io-client";
+import { testCampaign } from "./harness.mjs";
 
 const URL = process.env.URL ?? "http://localhost:3100";
-const ROOM = `SMOKE-${Math.floor(Math.random() * 1e6)}`;
 /** Precisa ser igual ao GM_KEY do servidor que está sendo testado. */
 const GM_KEY = process.env.GM_KEY ?? "";
+
+// O selo da sala de teste: criado aqui e apagado no fim (ADR #18). Sem banco,
+// vem um selo inventado e o servidor não julga — a mesa abre em memória.
+const missao = await testCampaign(URL, "SMOKE");
+const ROOM = missao.code;
 
 let failures = 0;
 function check(ok, label) {
@@ -257,7 +262,13 @@ await until(
 check(true, "ao sair, o token volta para as mãos do mestre");
 
 gm.socket.disconnect();
+
+// O teste não deixa missão órfã para trás (ADR #18).
+await missao.cleanup();
+
 console.log(
-  `\n${failures === 0 ? "TUDO OK" : `${failures} FALHA(S)`} — sala ${ROOM}`,
+  `\n${failures === 0 ? "TUDO OK" : `${failures} FALHA(S)`} — sala ${ROOM}${
+    missao.ephemeral ? " (sem banco, selo inventado)" : ""
+  }`,
 );
 process.exit(failures === 0 ? 0 : 1);

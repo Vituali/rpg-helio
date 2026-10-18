@@ -22,6 +22,8 @@ export type NetStatus = "offline" | "connecting" | "online";
 export interface NetState {
   status: NetStatus;
   code: string | null;
+  /** Nome humano da missão (ADR #18). O selo é o convite; isto é o que se lê. */
+  mission: string | null;
   you: string | null;
   role: Role | null;
   players: NetPlayer[];
@@ -33,6 +35,7 @@ export interface NetState {
   setStatus: (status: NetStatus) => void;
   setRoom: (room: {
     code: string;
+    mission: string;
     you: string;
     role: Role;
     players: NetPlayer[];
@@ -46,6 +49,7 @@ export interface NetState {
 export const useNetStore = create<NetState>()((set) => ({
   status: "offline",
   code: null,
+  mission: null,
   you: null,
   role: null,
   players: [],
@@ -53,8 +57,8 @@ export const useNetStore = create<NetState>()((set) => ({
   serverUrl: "",
 
   setStatus: (status) => set({ status }),
-  setRoom: ({ code, you, role, players }) =>
-    set({ code, you, role, players }),
+  setRoom: ({ code, mission, you, role, players }) =>
+    set({ code, mission, you, role, players }),
   setPlayers: (players) => set({ players }),
   setNotice: (notice) => set({ notice }),
   setServerUrl: (serverUrl) => set({ serverUrl }),
@@ -62,6 +66,7 @@ export const useNetStore = create<NetState>()((set) => ({
     set({
       status: "offline",
       code: null,
+      mission: null,
       you: null,
       role: null,
       players: [],

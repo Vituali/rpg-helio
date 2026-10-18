@@ -13,12 +13,20 @@
 # para conferir que tudo funciona; troque para o domínio quando for jogar de fora.
 
 {$SITE_ADDRESS} {
-	# O servidor do jogo fica com o WebSocket E com a autenticação. Os dois têm
-	# que vir ANTES do handle geral, que serve arquivos estáticos.
+	# O servidor do jogo tem DUAS portas de entrada, e as duas têm que vir ANTES
+	# do handle geral, que serve arquivos estáticos:
+	#
+	#   /socket.io/*  o jogo em tempo real (WebSocket)
+	#   /api/*        tudo que o servidor responde em HTTP
+	#
+	# O `/api` não é enfeite: sem um prefixo só dele, rota nova que esquece de ser
+	# listada aqui cai no `try_files` da SPA e volta o `index.html` com status 200
+	# — um erro que se disfarça de sucesso. Aconteceu duas vezes. Com um prefixo
+	# único, /api/* nunca chega na SPA, e rota que falta vira 404 de verdade.
 	#
 	# Sem compressão aqui: comprimir um WebSocket quebra a conexão.
 	@srv {
-		path /socket.io/* /auth/*
+		path /socket.io/* /api/*
 	}
 	handle @srv {
 		reverse_proxy app:3000

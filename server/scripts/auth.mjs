@@ -13,11 +13,14 @@
  *   SEED_MASTER_USER=helio SEED_MASTER_PASS=123456 npm run auth
  */
 
+import { testCampaign } from "./harness.mjs";
+
 const URL = process.env.URL ?? "http://localhost";
 const USER = process.env.SEED_MASTER_USER ?? "helio";
 const PASS = process.env.SEED_MASTER_PASS ?? "123456";
-/** Senha de mestre compartilhada. Se o servidor tiver uma, o teste a ignora. */
-const ROOM = `AUTH-${Math.floor(Math.random() * 1e6)}`;
+/** Missão descartável deste teste: criada aqui e apagada no fim (ADR #18). */
+const missao = await testCampaign(URL, "AUTH");
+const ROOM = missao.code;
 
 let failures = 0;
 function check(ok, label) {
@@ -82,22 +85,22 @@ async function joinAs(role, { cookie, key = "", name = "Convidado" } = {}) {
 // ── Roteiro ──────────────────────────────────────────────────────────────────
 
 // 1) quem sou eu, sem cookie
-const anon = await get("/auth/me");
-check(anon.body?.ok === false, "sem cookie, /auth/me não conhece ninguém");
+const anon = await get("/api/auth/me");
+check(anon.body?.ok === false, "sem cookie, /api/auth/me não conhece ninguém");
 
 // 2) senha errada não entra
-const errada = await post("/auth/login", { name: USER, password: "senha-errada" });
+const errada = await post("/api/auth/login", { name: USER, password: "senha-errada" });
 check(errada.status === 401, "senha errada é recusada com 401");
 
 // 3) usuário que não existe devolve a MESMA resposta (não entrega quem existe)
-const inexistente = await post("/auth/login", { name: "ninguem-aqui", password: "x" });
+const inexistente = await post("/api/auth/login", { name: "ninguem-aqui", password: "x" });
 check(
   inexistente.status === 401 && inexistente.body?.error === errada.body?.error,
   "usuário inexistente responde igual a senha errada",
 );
 
 // 4) login de verdade
-const login = await post("/auth/login", { name: USER, password: PASS });
+const login = await post("/api/auth/login", { name: USER, password: PASS });
 check(login.status === 200 && login.body?.ok === true, `a conta "${USER}" entrou`);
 check(login.body?.account?.name === USER, "o servidor devolveu o nome da conta");
 const cookie = cookieOf(login.res);
@@ -112,8 +115,8 @@ if (URL.startsWith("https://")) {
 }
 
 // 5) quem sou eu, com cookie
-const eu = await get("/auth/me", cookie);
-check(eu.body?.ok === true && eu.body.account.name === USER, "/auth/me reconhece a conta");
+const eu = await get("/api/auth/me", cookie);
+check(eu.body?.ok === true && eu.body.account.name === USER, "/api/auth/me reconhece a conta");
 
 // 6) o cookie sozinho já dá o papel de mestre — SEM GM_KEY
 const gm = await joinAs("gm", { cookie });
@@ -145,10 +148,17 @@ check(convidado.me?.accountId === null, "e não tem conta — a identidade é do
 convidado.socket.disconnect();
 
 // 10) sair apaga o cookie
-const out = await post("/auth/logout", {}, cookie);
+const out = await post("/api/auth/logout", {}, cookie);
 const setCookie = (out.res.headers.getSetCookie?.() ?? [])[0] ?? "";
 check(cookieOf(out.res) === "helio_session=", "o logout manda o cookie vazio");
 check(setCookie.includes("Max-Age=0"), "com Max-Age=0, para o navegador esquecer na hora");
 
-console.log(`\n${failures === 0 ? "TUDO OK" : `${failures} FALHA(S)`} — sala ${ROOM}`);
+// O teste não deixa missão órfã para trás (ADR #18).
+await missao.cleanup();
+
+console.log(
+  `\n${failures === 0 ? "TUDO OK" : `${failures} FALHA(S)`} — sala ${ROOM}${
+    missao.ephemeral ? " (sem banco, selo inventado)" : ""
+  }`,
+);
 process.exit(failures === 0 ? 0 : 1);

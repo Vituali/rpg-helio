@@ -19,6 +19,7 @@ import {
 export default function PlayersPanel() {
   const status = useNetStore((s) => s.status);
   const code = useNetStore((s) => s.code);
+  const mission = useNetStore((s) => s.mission);
   const you = useNetStore((s) => s.you);
   const role = useNetStore((s) => s.role);
   const players = useNetStore((s) => s.players);
@@ -73,12 +74,13 @@ export default function PlayersPanel() {
             <span
               style={{
                 color: "#fde68a",
-                fontFamily: "var(--font-mono)",
+                fontFamily: "var(--font-body)",
                 fontWeight: 600,
                 fontSize: 11,
               }}
+              title={`Selo: ${code ?? "?"}`}
             >
-              · {code}
+              · {mission ?? code}
             </span>
           </span>
         </span>

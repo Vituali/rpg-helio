@@ -23,6 +23,14 @@ import {
   verifyPassword,
 } from "./auth.js";
 import { findAccountByName } from "./accounts.js";
+import { normalizeCode } from "./selo.js";
+import {
+  createCampaign,
+  deleteCampaign,
+  listCampaigns,
+  type CampaignInfo,
+} from "./store.js";
+import type { Session } from "./auth.js";
 
 /** Teto do corpo de uma requisição de auth. Nome e senha não passam de 200 bytes. */
 const MAX_BODY = 4 * 1024;
@@ -122,21 +130,37 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown> |
 
 // ── Rotas ────────────────────────────────────────────────────────────────────
 
+function sessionOf(req: IncomingMessage): Session | null {
+  return readSession(cookieValue(req.headers.cookie, SESSION_COOKIE));
+}
+
 /**
- * Trata as rotas de auth. Devolve `false` quando o caminho não é daqui — quem
- * chamou decide o que fazer (hoje: 404).
+ * Trata as rotas HTTP do servidor. Devolve `false` quando o caminho não é daqui
+ * — quem chamou decide o que fazer (hoje: 404).
+ *
+ * **Tudo aqui vive sob `/api`**, e isso é contrato, não estilo: é o que permite
+ * ao Caddy mandar `/api/*` para o app sem enumerar rota por rota. Rota nova
+ * dentro do prefixo não tem como ser esquecida; fora dele, não existe (e o
+ * `/api` jamais chega no servidor de arquivos, então rota que falta vira 404
+ * de verdade em vez de `index.html` com status 200 — erro que já custou duas
+ * depurações).
+ *
+ * São duas famílias: **auth** (ADR #16) e **campanhas** (ADR #18). O jogo em si
+ * não passa por aqui.
  */
 export async function handleHttp(
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<boolean> {
   const url = req.url ?? "";
-  const path = url.split("?")[0];
+  const full = url.split("?")[0];
+  if (!full.startsWith("/api/")) return false;
+  const path = full.slice("/api".length);
   const method = req.method ?? "GET";
   const secure = isSecure(req);
 
   if (path === "/auth/me" && method === "GET") {
-    const session = readSession(cookieValue(req.headers.cookie, SESSION_COOKIE));
+    const session = sessionOf(req);
     if (!session) {
       send(res, 200, { ok: false });
       return true;
@@ -149,6 +173,57 @@ export async function handleHttp(
     // Sem estado no servidor: sair é o cliente esquecer o cookie. Ver ADR #16 —
     // revogar uma sessão específica exigiria tabela, e não vale o preço agora.
     header(res, clearSessionCookie(secure));
+    send(res, 200, { ok: true });
+    return true;
+  }
+
+  // ── Campanhas: criar e listar são de quem tem conta (ADR #18) ──
+  if (path === "/campaigns" && (method === "GET" || method === "POST")) {
+    const session = sessionOf(req);
+    if (!session) {
+      send(res, 401, { ok: false, error: "Entre com sua conta para isso." });
+      return true;
+    }
+
+    if (method === "GET") {
+      const campaigns = await listCampaigns(session.accountId);
+      send(res, 200, { ok: true, campaigns });
+      return true;
+    }
+
+    const body = await readJson(req);
+    const raw = typeof body?.name === "string" ? body.name.trim().slice(0, 40) : "";
+    // Nome vazio não é erro: a missão passa a existir e o mestre renomeia
+    // depois. O que não pode é o selo depender do nome (ADR #18).
+    const name = raw === "" ? "Missão sem nome" : raw;
+    const campaign: CampaignInfo | null = await createCampaign(name, session.accountId);
+    if (!campaign) {
+      send(res, 503, { ok: false, error: "Banco indisponível: não deu para criar a missão." });
+      return true;
+    }
+    console.log(`[campanha] ${session.name} criou ${campaign.code}`);
+    send(res, 201, { ok: true, campaign });
+    return true;
+  }
+
+  if (path.startsWith("/campaigns/") && method === "DELETE") {
+    const session = sessionOf(req);
+    if (!session) {
+      send(res, 401, { ok: false, error: "Entre com sua conta para isso." });
+      return true;
+    }
+    const code = normalizeCode(decodeURIComponent(path.slice("/campaigns/".length)));
+    const result = await deleteCampaign(code, session.accountId);
+    if (result === "error") {
+      send(res, 503, { ok: false, error: "Banco indisponível: não deu para apagar." });
+      return true;
+    }
+    if (result === "notfound") {
+      // Mesma resposta para "não existe" e "não é sua": quem não é dono não
+      // precisa saber quais selos existem.
+      send(res, 404, { ok: false, error: "Missão não encontrada." });
+      return true;
+    }
     send(res, 200, { ok: true });
     return true;
   }
