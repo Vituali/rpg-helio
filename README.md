@@ -6,7 +6,12 @@ personalizado. O mestre vê tudo e controla o mapa; os jogadores veem apenas o q
 ## O que já existe
 
 - `RPG GRID/FogWarMap.jsx` — protótipo original (single-player) com fog of war, LOS, paredes,
-  setores, minimap, pan/zoom e export/import. **É a referência do projeto**, mantido intacto.
+  setores, minimap, pan/zoom e export/import. **É a referência direta do mapa**, mantido intacto.
+- `img/` — arte do jogo (tokens, artes de personagem, mapas) em altíssima resolução, **~230 MB**.
+  Fica **fora do git** (ver `.gitignore`); as versões otimizadas para web irão em `client/public/`.
+- `arquivos temporarios/Primeiro RPG que fiz para ele/` — projeto anterior em **React + Firebase**
+  (fichas, inventário, habilidades, rituais, painel do mestre, rolador de dados, status ao vivo via
+  Realtime Database). Repositório git próprio; serve de **referência** para portar essas telas.
 - `Maze.jpg` — mapa de exemplo.
 
 ## Estado atual

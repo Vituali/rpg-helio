@@ -36,12 +36,12 @@ IP**, só para domínio. Então:
 | Opção | HTTPS | Precisa comprar? | Observação |
 |---|---|---|---|
 | **HTTP puro no IP** | ❌ | não | funciona pro jogo; `ws://` ok. **Quebra voz/WebRTC** depois (`getUserMedia` exige contexto seguro) |
-| **DuckDNS** (`helio.duckdns.org`) | ✅ | não | subdomínio grátis; Caddy emite cert automático. **Recomendado** |
+| **IP fixo + sslip.io** | ✅ | não | `189-40-12-7.sslip.io` — sem DDNS, o IP não muda. **Melhor opção com IP fixo** |
+| **DuckDNS** (`helio.duckdns.org`) | ✅ | não | subdomínio grátis; Caddy emite cert automático. Bom p/ IP dinâmico |
 | **sslip.io / nip.io** (`203-0-113-5.sslip.io`) | ✅ | não | o IP vai no próprio hostname; também pega cert |
 | Domínio próprio | ✅ | sim | melhor a longo prazo |
 
-**Recomendação: DuckDNS desde já.** Cria `helio.duckdns.org`, aponta pro IP, e o Caddy cuida do
-resto. Você também resolve o IP dinâmico de graça (ver #3).
+**Recomendação: IP fixo + `sslip.io`** (sem DDNS, certificado automático) ou DuckDNS se o IP mudar.
 
 ### 2. CGNAT — o assassino silencioso
 

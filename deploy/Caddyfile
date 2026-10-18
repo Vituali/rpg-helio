@@ -33,8 +33,20 @@ helio.duckdns.org {
 	}
 }
 
-# ── Opção B: Tailscale (rede privada, sem abrir porta) ──────────────────────
-# Comente o bloco acima e use este. O hostname é o nome da máquina na tailnet,
+# ── Opção B: IP FIXO + sslip.io (grátis, sem DDNS) — RECOMENDADO p/ IP fixo ──
+# Com IP público FIXO, o sslip.io embute o IP no próprio hostname e o Caddy
+# emite o certificado normalmente. Não precisa de DuckDNS nem de registrar IP
+# dinâmico. Troque pelos SEUS octetos (pontos viram hífens).
+# 189-40-12-7.sslip.io {
+# 	encode zstd gzip
+# 	handle {
+# 		root * /srv
+# 		try_files {path} /index.html
+# 		file_server
+# 	}
+# }
+
+# ── Opção C: Tailscale (rede privada, sem abrir porta) ──────────────────────# Comente o bloco acima e use este. O hostname é o nome da máquina na tailnet,
 # ex.: helio-pc.tailXXXX.ts.net . O TLS sai via `tailscale cert`.
 # helio-pc.tailXXXX.ts.net {
 # 	encode zstd gzip
@@ -45,7 +57,7 @@ helio.duckdns.org {
 # 	}
 # }
 
-# ── Opção C: HTTP puro no IP (sem HTTPS, sem domínio) ───────────────────────
+# ── Opção D: HTTP puro no IP (sem HTTPS, sem domínio) ───────────────────────
 # Funciona pro jogo, mas quebra voz/WebRTC depois (getUserMedia exige HTTPS).
 # :80 {
 # 	root * /srv
