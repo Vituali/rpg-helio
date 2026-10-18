@@ -211,6 +211,12 @@ convidar consegue **chegar** no servidor, com login por e-mail. Isso resolve na 
 `GM_KEY` resolve dentro do jogo, e é o mais perto de um "login com autorização" de verdade sem
 escrever RBAC ainda.
 
+> **Não misture túnel com `SITE_ADDRESS` de domínio.** No modo rápido, deixe `SITE_ADDRESS=:80` e
+> pronto. Se você puser um domínio em `SITE_ADDRESS` enquanto o túnel aponta para `http://caddy:80`,
+> o Caddy responde um redirecionamento para `https://seu-dominio`, o navegador volta pelo túnel, e
+> você entra num **loop de redirecionamento**. Ao migrar para a URL fixa com domínio, aponte o túnel
+> para `https://caddy:443` e deixe o Caddy cuidar do TLS.
+
 ## Alternativa: Tailscale (se o grupo é fechado)
 
 Se quem vai jogar são pessoas conhecidas, **Tailscale** é de longe o menor atrito:
