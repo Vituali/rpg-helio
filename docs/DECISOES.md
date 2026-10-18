@@ -175,3 +175,25 @@ de visão. Fica só no servidor (`map:fog { op: "reveal" }`); o cliente desenha 
 
 **Consequências.** "Revelar" e "explorar" viram coisas distintas, que é o que eles são na mesa. A
 regra de visão ficou com uma linha de exceção em vez de uma condição especial espalhada pelo render.
+
+---
+
+## #11 — Um `SITE_ADDRESS` só, com `:80` como padrão
+
+**Contexto.** O `deploy/Caddyfile` tinha quatro blocos prontos (DuckDNS, IP fixo + sslip.io,
+Tailscale, HTTP puro) e o ativo era um domínio fixo (`helio.duckdns.org`). Resultado: `docker compose
+up` num computador sem DNS apontando para ele e sem portas abertas ficava tentando emitir
+certificado para sempre, e o site não subia. O primeiro contato com o projeto era um erro.
+
+**Decisão.** Um **único** bloco de site no Caddyfile, endereço vindo de `SITE_ADDRESS` (no
+`deploy/.env`, com padrão `:80` no `docker-compose.yml` via `${SITE_ADDRESS:-:80}`).
+`:80` é um *catch-all*: responde em qualquer host que aponte para a máquina — `localhost` **e** o IP
+da LAN — sem DNS, sem certificado, sem porta aberta. Os quatro cenários viram valores dessa
+variável, documentados em `.env.example` e em `DEPLOY.md`.
+
+**Consequências.** `docker compose up -d --build` funciona de primeira em qualquer máquina, e o grupo
+testa na rede local antes de mexer em roteador. Trocar para HTTPS é editar uma linha e subir de
+novo. O preço: o padrão é HTTP puro, que quebra voz/WebRTC quando chegar a Fase 4 — aceitável, já
+que nesse momento o endereço será um domínio de qualquer forma. Efeito colateral do mesmo ajuste: o
+`encode` do Caddy saiu do site e foi para dentro do `handle` do front, para nunca comprimir o
+`/socket.io` (comprimir WebSocket quebra a conexão).

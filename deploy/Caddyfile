@@ -1,16 +1,20 @@
 # Caddyfile — front estático + proxy do WebSocket do jogo.
 #
-# O Caddy é a única porta para o mundo: serve o front em /srv e repassa
-# /socket.io/* para o serviço `app` (Node + Socket.IO). O app não é publicado
-# no host — ver docker-compose.yml.
+# O endereço é UM só lugar: SITE_ADDRESS (no deploy/.env, ou no ambiente).
+# O Caddy é a única porta para o mundo; o serviço `app` não publica nada.
+#
+#   SITE_ADDRESS=:80                    PADRÃO — HTTP em qualquer host.
+#                                       Funciona já: http://localhost e http://192.168.x.x
+#   SITE_ADDRESS=helio.duckdns.org      HTTPS automático (DuckDNS + portas 80/443 abertas)
+#   SITE_ADDRESS=189-40-12-7.sslip.io   HTTPS automático com IP FIXO, sem DDNS
+#   SITE_ADDRESS=helio-pc.tailXXXX.ts.net   HTTPS via Tailscale (rede privada)
+#
+# Com um domínio, o Caddy emite e renova o certificado sozinho. Comece no :80
+# para conferir que tudo funciona; troque para o domínio quando for jogar de fora.
 
-# ── Opção A: acesso público com DuckDNS (HTTPS automático) ──────────────────
-# Troque helio.duckdns.org pelo seu subdomínio. Precisa das portas 80 e 443
-# abertas no roteador e de IP público (sem CGNAT).
-helio.duckdns.org {
-	encode zstd gzip
-
-	# WebSocket do jogo: precisa vir ANTES do handle geral.
+{$SITE_ADDRESS} {
+	# O WebSocket do jogo tem que vir ANTES do handle geral.
+	# Sem compressão aqui: comprimir um WebSocket quebra a conexão.
 	handle /socket.io/* {
 		reverse_proxy app:3000
 	}
@@ -19,6 +23,7 @@ helio.duckdns.org {
 		root * /srv
 		try_files {path} /index.html   # SPA: qualquer rota cai no index
 		file_server
+		encode zstd gzip
 	}
 
 	header {
@@ -33,49 +38,19 @@ helio.duckdns.org {
 	}
 }
 
-# ── Opção B: IP FIXO + sslip.io (grátis, sem DDNS) — RECOMENDADO p/ IP fixo ──
-# Com IP público FIXO, o sslip.io embute o IP no próprio hostname e o Caddy
-# emite o certificado normalmente. Não precisa de DuckDNS nem de registrar IP
-# dinâmico. Troque pelos SEUS octetos (pontos viram hífens).
-# 189-40-12-7.sslip.io {
-# 	encode zstd gzip
-# 	handle /socket.io/* {
-# 		reverse_proxy app:3000
-# 	}
-# 	handle {
-# 		root * /srv
-# 		try_files {path} /index.html
-# 		file_server
-# 	}
-# }
-
-# ── Opção C: Tailscale (rede privada, sem abrir porta) ──────────────────────
-# Comente o bloco acima e use este. O hostname é o nome da máquina na tailnet,
-# ex.: helio-pc.tailXXXX.ts.net . O TLS sai via `tailscale cert`.
-# helio-pc.tailXXXX.ts.net {
-# 	encode zstd gzip
-# 	handle /socket.io/* {
-# 		reverse_proxy app:3000
-# 	}
-# 	handle {
-# 		root * /srv
-# 		try_files {path} /index.html
-# 		file_server
-# 	}
-# }
-
-# ── Opção D: HTTP puro no IP (sem HTTPS, sem domínio) ───────────────────────
-# Funciona pro jogo, mas quebra voz/WebRTC depois (getUserMedia exige HTTPS).
-# :80 {
-# 	handle /socket.io/* {
-# 		reverse_proxy app:3000
-# 	}
-# 	handle {
-# 		root * /srv
-# 		try_files {path} /index.html
-# 		file_server
-# 	}
-# }
-
-# ── Desafio ACME (Let's Encrypt) num IP pelado: não é possível ──────────────
-# Por isso as opções acima usam domínio (DuckDNS/Tailscale) ou HTTP puro.
+# ───────────────────────────────────────────────────────────────────────────
+# Notas, se um dia você quiser voltar aos blocos separados por opção:
+#
+#  · A — DuckDNS: precisa das portas 80 e 443 abertas no roteador e IP público
+#        (sem CGNAT). O IP residencial muda, então rode também o serviço
+#        `duckdns` comentado no docker-compose.yml.
+#  · B — IP FIXO + sslip.io: o hostname embute o próprio IP, então não há DDNS
+#        nem registro para atualizar. É a opção mais simples com IP fixo.
+#  · C — Tailscale: nada de porta aberta; só quem está na tailnet entra. É a
+#        forma de ter mesa fechada sem senha.
+#  · D — HTTP puro: é o padrão acima (:80). Funciona para jogar, mas quebra
+#        voz/WebRTC depois (getUserMedia exige HTTPS).
+#
+#  Let's Encrypt não emite certificado para IP pelado — por isso HTTP puro ou
+#  um domínio (DuckDNS/sslip.io/Tailscale).
+# ───────────────────────────────────────────────────────────────────────────

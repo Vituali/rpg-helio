@@ -12,28 +12,36 @@ export interface AssetEntry {
   src: string;
 }
 
+/** Mapa: além dos campos comuns, guarda o formato real da imagem. */
+export interface MapEntry extends AssetEntry {
+  /** Largura da imagem otimizada, em pixels. */
+  w?: number;
+  /** Altura da imagem otimizada, em pixels. */
+  h?: number;
+}
+
 export interface AssetManifests {
   tokens: AssetEntry[];
-  maps: AssetEntry[];
+  maps: MapEntry[];
 }
 
 /**
  * O `ConvertTo-Json` do PowerShell 5.1 serializa um array de 1 item como
  * objeto (sem colchetes). Normalizamos para sempre devolver array.
  */
-function toArray(d: unknown): AssetEntry[] {
-  if (Array.isArray(d)) return d as AssetEntry[];
+function toArray<T>(d: unknown): T[] {
+  if (Array.isArray(d)) return d as T[];
   if (d && typeof d === "object" && "src" in (d as Record<string, unknown>)) {
-    return [d as AssetEntry];
+    return [d as T];
   }
   return [];
 }
 
-async function fetchManifest(url: string): Promise<AssetEntry[]> {
+async function fetchManifest<T>(url: string): Promise<T[]> {
   try {
     const res = await fetch(url);
     if (!res.ok) return [];
-    return toArray(await res.json());
+    return toArray<T>(await res.json());
   } catch {
     // Sem manifesto (arte ainda não gerada) → segue com a lista vazia.
     return [];
@@ -45,8 +53,8 @@ let cache: AssetManifests | null = null;
 export async function loadAssets(): Promise<AssetManifests> {
   if (cache) return cache;
   const [tokens, maps] = await Promise.all([
-    fetchManifest("/tokens/manifest.json"),
-    fetchManifest("/maps/manifest.json"),
+    fetchManifest<AssetEntry>("/tokens/manifest.json"),
+    fetchManifest<MapEntry>("/maps/manifest.json"),
   ]);
   cache = { tokens, maps };
   return cache;

@@ -26,6 +26,39 @@ Dois serviços, uma rede interna: a `app` **não publica porta nenhuma**, só o 
 
 ---
 
+## Subindo (3 passos)
+
+```powershell
+cd deploy
+copy .env.example .env          # só na primeira vez
+# edite SITE_ADDRESS no .env (tabela abaixo)
+docker compose up -d --build
+```
+
+O endereço é controlado por **uma variável só**, `SITE_ADDRESS`:
+
+| `SITE_ADDRESS` | URL para o grupo | HTTPS | Precisa |
+|---|---|---|---|
+| `:80` **← padrão** | `http://localhost` e `http://192.168.1.69` (LAN) | ❌ | nada |
+| `helio.duckdns.org` | `https://helio.duckdns.org` | automático | DuckDNS + portas 80/443 |
+| `189-40-12-7.sslip.io` | `https://189-40-12-7.sslip.io` | automático | IP fixo + portas 80/443 |
+| `helio-pc.tailXXXX.ts.net` | `https://helio-pc.tailXXXX.ts.net` | automático | Tailscale |
+
+**Comece no `:80`.** Ele responde em *qualquer* host, então funciona tanto em `http://localhost`
+quanto em `http://<IP-da-máquina>` — dá para juntar o grupo na mesma casa e conferir que o jogo
+funciona antes de mexer em roteador, DNS ou certificado. Quando estiver de pé, troque pelo domínio.
+
+Conferindo que subiu:
+
+```powershell
+docker compose ps                 # app = healthy, caddy = Up
+(Invoke-WebRequest "http://localhost/socket.io/?EIO=4&transport=polling").StatusCode   # 200
+```
+
+Depois de mexer no `.env`, basta `docker compose up -d`: o Caddy é recriado com o endereço novo.
+
+---
+
 ## As 3 pegadinhas (leia antes de configurar)
 
 ### 1. HTTPS num IP pelado
@@ -33,15 +66,17 @@ Dois serviços, uma rede interna: a `app` **não publica porta nenhuma**, só o 
 O grande atrativo do Caddy é emitir TLS sozinho — mas o Let's Encrypt **não emite certificado para
 IP**, só para domínio. Então:
 
-| Opção | HTTPS | Precisa comprar? | Observação |
+| `SITE_ADDRESS` | HTTPS | Precisa comprar? | Observação |
 |---|---|---|---|
-| **HTTP puro no IP** | ❌ | não | funciona pro jogo; `ws://` ok. **Quebra voz/WebRTC** depois (`getUserMedia` exige contexto seguro) |
+| **`:80`** (padrão) | ❌ | não | HTTP puro. Já funciona em `localhost` e na LAN. **Quebra voz/WebRTC** depois (`getUserMedia` exige contexto seguro) |
 | **IP fixo + sslip.io** | ✅ | não | `189-40-12-7.sslip.io` — sem DDNS, o IP não muda. **Melhor opção com IP fixo** |
 | **DuckDNS** (`helio.duckdns.org`) | ✅ | não | subdomínio grátis; Caddy emite cert automático. Bom p/ IP dinâmico |
 | **sslip.io / nip.io** (`203-0-113-5.sslip.io`) | ✅ | não | o IP vai no próprio hostname; também pega cert |
 | Domínio próprio | ✅ | sim | melhor a longo prazo |
 
-**Recomendação: IP fixo + `sslip.io`** (sem DDNS, certificado automático) ou DuckDNS se o IP mudar.
+**Comece em `:80` para testar com o grupo na mesma rede; para jogar de fora, IP fixo + `sslip.io`**
+(sem DDNS, certificado automático) ou DuckDNS se o IP mudar. Nos dois casos é só trocar o
+`SITE_ADDRESS` no `deploy/.env` e rodar `docker compose up -d` de novo.
 
 ### 2. CGNAT — o assassino silencioso
 
@@ -79,8 +114,9 @@ Se quem vai jogar são pessoas conhecidas, **Tailscale** é de longe o menor atr
 
 Trade-off: cada jogador precisa instalar o Tailscale. Para uma mesa de amigos, isso é 2 minutos.
 
-No `docker-compose.yml` isso é só rodar o Caddy na porta 80 e servir via `tailscale serve` (ou
-expor direto no IP da tailnet). O resto do stack não muda.
+No `deploy/.env`, `SITE_ADDRESS=helio-pc.tailXXXX.ts.net` já basta: o Caddy pega o certificado
+via `tailscale cert`/MagicDNS e serve em HTTPS na tailnet. Portas 80/443 não precisam ser abertas
+para a internet. O resto do stack não muda.
 
 ---
 
@@ -142,9 +178,10 @@ docker compose down -v            # derruba e apaga os dados salvos
 |---|---|
 | `deploy/docker-compose.yml` | define os serviços `app` e `caddy` |
 | `deploy/Dockerfile` | build multi-stage: compila o front e serve com Caddy |
-| `deploy/Caddyfile` | serve o front estático + proxy do WebSocket + TLS |
+| `deploy/Caddyfile` | serve o front estático + proxy do WebSocket + TLS; o endereço vem de `SITE_ADDRESS` |
 | `deploy/install.ps1` | instala Docker (se preciso) e sobe o stack |
-| `deploy/.env.example` | variáveis (domínio, e-mail do Let's Encrypt, código de sala) |
+| `deploy/.env.example` | modelo das variáveis (`SITE_ADDRESS`, `ROOM_CODE`, `ORIGIN`) |
+| `deploy/.env` | **não vai pro git** — a sua configuração real; crie a partir do exemplo |
 | `.dockerignore` | evita copiar `node_modules`/`dist` para a imagem |
 
 > O front é compilado **dentro** do Docker (estágio `node` do `deploy/Dockerfile`).
@@ -154,8 +191,8 @@ docker compose down -v            # derruba e apaga os dados salvos
 
 | Porta | De onde | Para onde | Precisa abrir no roteador? |
 |---|---|---|---|
-| 80 | internet/tailnet | Caddy | sim (desafio do cert) |
-| 443 | internet/tailnet | Caddy | sim |
+| 80 | internet/LAN/tailnet | Caddy | sim — é onde o jogo roda em `SITE_ADDRESS=:80` e onde o cert é validado |
+| 443 | internet/tailnet | Caddy | só se usar domínio (HTTPS) |
 | 5173 | só local | Vite dev | **não** (só desenvolvimento) |
 | porta do `app` | — | — | **nunca** (interna do compose) |
 | 2375/2376 (Docker API) | — | — | **nunca, jamais** |

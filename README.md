@@ -32,7 +32,7 @@ Se algo assim aparecer, é acessório digitado pelo mestre na mesa — nunca o m
 - `arquivos temporarios/Primeiro RPG que fiz para ele/` — projeto anterior em **React + Firebase**
   (fichas, inventário, habilidades, rituais, painel do mestre, rolador de dados, status ao vivo via
   Realtime Database). Repositório git próprio; serve de **referência** para portar essas telas.
-- `Maze.jpg` — mapa de exemplo.
+- `img/maps/` — mapas em alta resolução (`Maze.jpg` 36 MB, `D'Base.jpg` 10 MB), **fora do git**.
 
 ## Estado atual
 
@@ -63,12 +63,14 @@ powershell -ExecutionPolicy Bypass -File tools\optimize-assets.ps1
 | De | Para | Resultado |
 |---|---|---|
 | `img/tokens/*.png` | `client/public/tokens/*.png` | 59 tokens 256×256, **2 MB** (era 230 MB) |
-| `img/maps/*` | `client/public/maps/*.jpg` | 1 mapa 2400px, **2 MB** |
+| `img/maps/*` | `client/public/maps/*.jpg` | 2 mapas 2400px, **2,8 MB** |
 
 Rode de novo sempre que adicionar arte. O app lê `manifest.json` de cada pasta para popular os
-seletores de token e de mapa no painel lateral.
+seletores de token e de mapa no painel lateral. O manifesto do mapa guarda também a **largura e a
+altura** da imagem: com isso o botão `⊞` ao lado do mapa ajusta a grade ao formato dele — sem isso
+a imagem aparece esticada.
 
-Ainda **não** existe o servidor multiplayer nem o deploy — isso é Fase 2 e Fase 3 (ver `docs/ROADMAP.md`).
+O servidor multiplayer já existe (Fase 2 ✅) — o próximo passo é a visão por jogador (Fase 3).
 
 ## Rodando
 
@@ -118,8 +120,18 @@ npm run smoke        # 12 verificações: permissão, parede, fog, saída
 
 ### Em produção (Docker)
 
-Ver [`docs/DEPLOY.md`](docs/DEPLOY.md). Resumo: `cd deploy && docker compose up -d --build` — o Caddy
-serve o front e faz o proxy do WebSocket; só 80/443 saem para fora.
+Ver [`docs/DEPLOY.md`](docs/DEPLOY.md). Resumo:
+
+```bash
+cd deploy
+copy .env.example .env     # só na primeira vez
+docker compose up -d --build
+```
+
+O Caddy serve o front e faz o proxy do WebSocket; só 80/443 saem para fora. O endereço público é
+**uma variável só**, `SITE_ADDRESS`, no `deploy/.env`: o padrão `:80` já funciona em
+`http://localhost` **e** na rede local (`http://192.168.1.69`); troque por um domínio
+(`helio.duckdns.org`, `189-40-12-7.sslip.io`) para ter HTTPS automático.
 
 ## Documentação
 
@@ -150,12 +162,13 @@ HELIO/
 │   ├── src/                 # index.ts (socket), room.ts (estado), validate.ts (regras)
 │   ├── scripts/smoke.mjs    # teste de fumaça com dois clientes
 │   └── Dockerfile
-├── deploy/                  # docker-compose, Dockerfile, Caddyfile, install.ps1
+├── deploy/                  # docker-compose, Dockerfile, Caddyfile, install.ps1, .env
 ├── tools/                   # optimize-assets.ps1 (arte → web)
 ├── docs/                    # documentação
 ├── img/                     # arte original (fora do git, ~230 MB)
-├── RPG GRID/FogWarMap.jsx   # protótipo original (referência)
-└── Maze.jpg
+│   ├── maps/                # mapas em alta resolução (originais)
+│   └── tokens/              # retratos em alta resolução (originais)
+└── RPG GRID/FogWarMap.jsx   # protótipo original (referência)
 ```
 
 ## Controles do mapa (cliente)

@@ -132,11 +132,15 @@ if (Test-Path $srcMaps) {
         $id  = Get-Slug $f.BaseName
         $out = Join-Path $outMaps "$id.jpg"
         Write-Progress -Activity "Mapas" -Status $f.Name -PercentComplete (100 * $i / $files.Count)
-        Convert-Image -Src $f.FullName -Dst $out -Max 2400 -Quality 85 -Jpeg | Out-Null
+        $dim = Convert-Image -Src $f.FullName -Dst $out -Max 2400 -Quality 85 -Jpeg
+        # w/h vao no manifesto para o app poder ajustar a grade ao formato do
+        # mapa (sem isso o mapa aparece esticado).
         $maps += [pscustomobject]@{
             id   = $id
             name = $f.BaseName
             src  = "/maps/$id.jpg"
+            w    = $dim.W
+            h    = $dim.H
         }
     }
     Write-Progress -Activity "Mapas" -Completed

@@ -22,7 +22,7 @@ import {
   clamp,
 } from "@helio/shared";
 import type { Cell, Tool } from "@helio/shared";
-import { loadAssets, type AssetManifests } from "../render/assets";
+import { loadAssets, type AssetManifests, type MapEntry } from "../render/assets";
 import { useGameStore } from "../state/gameStore";
 import { useNetStore } from "../state/netStore";
 import PlayersPanel from "./PlayersPanel";
@@ -657,6 +657,18 @@ export default function FogWarMap() {
     reader.readAsDataURL(file);
   };
 
+  /**
+   * Deixa as células quadradas: a grade passa a ter o MESMO formato do mapa.
+   * Sem isso a imagem é esticada para caber na grade (30×22) e o mapa sai
+   * achatado ou alongado. Mantém o número de linhas e recalcula as colunas.
+   */
+  const fitGridToMap = (m: MapEntry) => {
+    if (!m.w || !m.h) return;
+    const rows = useGameStore.getState().rows;
+    const cols = clamp(Math.round(rows * (m.w / m.h)), 5, 80);
+    setDims(rows, cols);
+  };
+
   // ── Export / Import ───────────────────────────────────────────────────────
   const exportState = () => {
     const snap = snapshot();
@@ -1053,6 +1065,15 @@ export default function FogWarMap() {
                   >
                     {m.name}
                   </button>
+                  {m.w && m.h ? (
+                    <button
+                      style={{ ...s.btn(false), padding: "3px 6px" }}
+                      onClick={() => fitGridToMap(m)}
+                      title={`Ajustar a grade ao formato deste mapa (${m.w}×${m.h}) — evita a imagem esticada`}
+                    >
+                      ⊞
+                    </button>
+                  ) : null}
                 </div>
               ))}
             </div>

@@ -31,8 +31,13 @@ services:
     container_name: helio-caddy
     depends_on:
       - app
+    environment:
+      # Endereço público — o único botão que importa. Padrão ":80": HTTP em
+      # qualquer host, funciona em localhost e na rede local sem DNS.
+      # Para HTTPS automático, use um domínio (ver deploy/.env.example).
+      - SITE_ADDRESS=${SITE_ADDRESS:-:80}
     ports:
-      - "80:80"          # desafio ACME (Let's Encrypt)
+      - "80:80"          # HTTP + desafio ACME (Let's Encrypt)
       - "443:443"        # HTTPS
       - "443:443/udp"    # HTTP/3
     volumes:
