@@ -18,11 +18,17 @@ documento resolve.
                         ▼
                  ┌─────────────┐
                  │     app     │  Node + Socket.IO + regras de jogo
-                 │  (interno)  │  volume: dados das salas
+                 │  (interno)  │  a sala viva fica aqui, em memória
+                 └──────┬──────┘
+                        │  (grava a cena quando a mesa esvazia)
+                        ▼
+                 ┌─────────────┐
+                 │  postgres   │  conta, campanha e cena   (:5432 só no loopback)
                  └─────────────┘
 ```
 
-Dois serviços, uma rede interna: a `app` **não publica porta nenhuma**, só o Caddy fala com o mundo.
+Três serviços, uma rede interna: nem a `app` nem o `postgres` publicam porta — só o Caddy fala com o
+mundo. O front é estático, servido pelo próprio Caddy.
 
 ---
 
@@ -32,6 +38,7 @@ Dois serviços, uma rede interna: a `app` **não publica porta nenhuma**, só o 
 cd deploy
 copy .env.example .env          # só na primeira vez
 # edite SITE_ADDRESS no .env (tabela abaixo)
+# e gere as duas chaves novas (banco e sessão) — ver "Banco de dados" adiante
 docker compose up -d --build
 ```
 
@@ -51,7 +58,7 @@ funciona antes de mexer em roteador, DNS ou certificado. Quando estiver de pé, 
 Conferindo que subiu:
 
 ```powershell
-docker compose ps                 # app = healthy, caddy = Up
+docker compose ps                 # app = healthy, postgres = healthy, caddy = Up
 (Invoke-WebRequest "http://localhost/socket.io/?EIO=4&transport=polling").StatusCode   # 200
 ```
 
@@ -276,27 +283,83 @@ opção de Fase 4.
 
 ---
 
+## Banco de dados e backup
+
+O Postgres guarda **conta, campanha e a cena da mesa** (mapa, paredes, fog, NPCs). É o que faz o F5
+e o restart do container não apagarem a partida — ver ADR #17. Ele sobe junto com o resto, sem passo
+extra:
+
+```powershell
+docker compose up -d --build
+docker compose logs app            # deve dizer "[banco] conectado (migrations em dia)"
+```
+
+Três variáveis novas no `.env` (detalhe em `.env.example`):
+
+| Variável | Para que |
+|---|---|
+| `POSTGRES_PASSWORD` | senha do banco; troque por uma sua |
+| `SESSION_SECRET` | assina o cookie de sessão (ADR #16) |
+| `SEED_MASTER_USER` / `SEED_MASTER_PASS` | conta de mestre criada no primeiro boot, se não existir |
+
+A porta 5432 é publicada **só no loopback** (`127.0.0.1`): dá para abrir um cliente de banco nesta
+máquina, mas nada na rede alcança. É de propósito — um banco com senha não é lugar para repetir a
+lição do IPv6 (pegadinha #4).
+
+**Se o banco estiver fora, a mesa abre do mesmo jeito**, em memória, e o log avisa:
+
+```
+[banco] tentativa 6/6 falhou: getaddrinfo ENOTFOUND postgres — seguindo em memória
+```
+
+Nesse modo nada é gravado: dá para jogar a sessão inteira, mas ela não sobrevive a um restart. Isso é
+de propósito. Derrubar a mesa por causa do banco seria pior do que não ter banco.
+
+### Backup
+
+A campanha é o dado insubstituível — são as horas que vocês passaram jogando. O volume `pg_data`
+guarda tudo, mas **volume não é backup**: ele morre junto com o Docker Desktop, com um `down -v`
+distraído ou com o disco.
+
+```powershell
+# um arquivo por dia, na pasta que quiser
+cmd /c "docker exec helio-postgres pg_dump -U helio -d helio -Fc > C:\Backup\helio-2026-10-18.dump"
+```
+
+> O `cmd /c` não é frescura: o PowerShell 5.1 trata a saída de um comando nativo como texto e
+> **corrompe** redirecionamento binário. O `cmd` faz isso do jeito certo. Use `POSTGRES_USER` e
+> `POSTGRES_DB` do seu `.env` se você trocou os padrões.
+
+Restaurando (num banco limpo):
+
+```powershell
+cmd /c "docker exec -i helio-postgres pg_restore -U helio -d helio --clean --if-exists < C:\Backup\helio-2026-10-18.dump"
+```
+
+---
+
 ## Comandos
 
 ```powershell
 docker compose up -d --build      # sobe/atualiza
 docker compose logs -f app        # logs do servidor de jogo
 docker compose logs -f caddy      # logs do proxy/TLS
-docker compose down               # derruba
-docker compose down -v            # derruba e apaga os dados salvos
+docker compose down               # derruba (os dados ficam no volume)
+docker compose down -v            # derruba e apaga o banco — a campanha vai junto!
 ```
 
 ## Arquivos
 
 | Arquivo | Papel |
 |---|---|
-| `deploy/docker-compose.yml` | define os serviços `app` e `caddy` |
+| `deploy/docker-compose.yml` | define os serviços `app`, `caddy` e `postgres` |
 | `deploy/Dockerfile` | build multi-stage: compila o front e serve com Caddy |
 | `deploy/Caddyfile` | serve o front estático + proxy do WebSocket + TLS; o endereço vem de `SITE_ADDRESS` |
 | `deploy/install.ps1` | instala Docker (se preciso) e sobe o stack |
 | `deploy/check-publico.ps1` | testa, de fora para dentro, se a internet já alcança o servidor |
-| `deploy/.env.example` | modelo das variáveis (`SITE_ADDRESS`, `ROOM_CODE`, `ORIGIN`, `GM_KEY`) |
+| `deploy/.env.example` | modelo das variáveis (endereço, `GM_KEY`, banco, sessão) |
 | `deploy/.env` | **não vai pro git** — a sua configuração real; crie a partir do exemplo |
+| `server/migrations/*.sql` | esquema do banco, em SQL numerado (ADR #17) |
 | `.dockerignore` | evita copiar `node_modules`/`dist` para a imagem |
 
 > O front é compilado **dentro** do Docker (estágio `node` do `deploy/Dockerfile`).
@@ -309,5 +372,6 @@ docker compose down -v            # derruba e apaga os dados salvos
 | 80 | internet/LAN/tailnet | Caddy | sim — é onde o jogo roda em `SITE_ADDRESS=:80` e onde o cert é validado |
 | 443 | internet/tailnet | Caddy | só se usar domínio (HTTPS) |
 | 5173 | só local | Vite dev | **não** (só desenvolvimento) |
+| 5432 | só local (`127.0.0.1`) | postgres | **não** — é para desenvolvimento; nada na rede alcança |
 | porta do `app` | — | — | **nunca** (interna do compose) |
 | 2375/2376 (Docker API) | — | — | **nunca, jamais** |

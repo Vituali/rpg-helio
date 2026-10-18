@@ -28,7 +28,18 @@ a mexer vai perder.
 
 ## Em andamento (WIP = 1)
 
-— nada. A refatoração de UI terminou e a próxima frente ainda não foi escolhida.
+🔵 **Slice "a sessão que sobrevive"** — persistência + conta + identidade (ADR #16 e #17). É um
+assunto só: sem identidade, "salvar" não tem dono. Quatro entregas, cada uma utilizável sozinha.
+
+| # | Entrega | Estado |
+|---|---|---|
+| 1 | Postgres + migrations + cena que sobrevive ao restart | ✅ (commit `6873327`) |
+| 2 | Login + sessão assinada em cookie (a conta já nasce no banco) | 🔜 próximo |
+| 3 | Selo da Missão como código da campanha (hoje `ROOM_CODE` é fixo) | ⏳ |
+| 4 | Papel pelo vínculo com a campanha; `GM_KEY` vira legado | ⏳ |
+
+**Fog por jogador (Fase 3) fica fora deste slice**, de propósito: é lógica de jogo, não persistência,
+e entraria só para inflar o WIP.
 
 ---
 
@@ -36,10 +47,15 @@ a mexer vai perder.
 
 | # | Item | Onde | Pronto quando |
 |---|---|---|---|
-| S1 | **Persistir a cena em disco** | `server/` | Reiniciar o container e a sala voltar com mapa, paredes, fog e tokens |
-| S2 | **`JOIN_KEY`** (senha de jogador) | `server/` (campo do lobby é `client/`) | Smoke prova: jogador sem a senha é recusado quando `JOIN_KEY` está definida |
 | S3 | **Testes de `shared/`** | `shared/` | Colisão, LOS, pathfinding e validação cobertas, rodando sem dependência nova |
-| S4 | **Reconexão estável por `actorId`** | `server/` (sessão assinada) | Cair e voltar mantém o mesmo token e o mesmo papel |
+
+Que aconteceu com os outros:
+
+- **S1 (persistir a cena)** virou a entrega 1 do slice — feita, e com o `persist.mjs` provando.
+- **S2 (`JOIN_KEY`)** foi **cancelado**: o ADR #16 decidiu que quem controla a entrada é o vínculo
+  com a campanha, não uma segunda senha compartilhada.
+- **S4 (reconexão estável)** é justamente o que a entrega 2 entrega: a sessão assinada é o
+  `actorId` estável.
 
 ---
 
@@ -75,10 +91,10 @@ Nada aqui bloqueia jogar. Bloqueia **escalar sem retrabalho**.
 | Assunto | Situação | Observação |
 |---|---|---|
 | Framework do cliente | **Decidido** | SPA Vite + React 19. A refatoração de UI terminou (commit `d701ac3`) sem fixar premissa contrária |
-| Banco de dados | **Decidido** | **Postgres**, com JSONB para cena e ficha. SQLite descartado: mais de um serviço vai escrever |
+| Banco de dados | **Feito** | Postgres no ar com migrations e a cena em JSONB (ADR #17, entrega 1) |
 | Framework de servidor | **Decidido** | Nada de NestJS — o servidor é máquina de estado quente, não CRUD |
 | Site público e wiki | **Alvo** | Next estático + MDX no repo. Entra **depois** da mesa |
-| Identidade | Pendente | Hoje é o id do socket. Sessão assinada é pré-requisito de RBAC **e** de reconexão (S4) |
+| Identidade | **Em andamento** | A conta e o `scrypt` já estão no banco; falta o login e a sessão no cookie (ADR #16, entrega 2) |
 | Arquivos (mapas/tokens) | Pendente | Volume + Caddy vs. objeto (S3/MinIO) |
 | Publicar o repositório | Pendente | Afeta CI e o Project board |
 
@@ -97,6 +113,9 @@ isso aponta*.
 
 ## Feito (últimos)
 
+- ✅ Persistência (entrega 1 do slice) — Postgres, migrations, Selo da Missão e cena em JSONB que
+  sobrevive ao restart do container (ADR #17). Verificado com `persist.mjs`, e a mesa funciona com o
+  banco fora
 - ✅ Refatoração de UI — tema ocultista, ícones SVG e suporte mobile (commit `d701ac3`, outra IA)
 - ✅ Stack alvo consolidada em `STACK.md`
 - ✅ Fase 2 — multiplayer com servidor autoritativo (ADR #1, #8, #9)

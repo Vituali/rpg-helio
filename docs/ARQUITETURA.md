@@ -126,6 +126,41 @@ ROADMAP como otimização, não como pendência: medir antes de otimizar.
 
 ---
 
+## Persistência (o que sobrevive)
+
+A cena continua vivendo em **memória** — é ela que manda, e é dela que sai cada broadcast. O banco
+é a **cópia durável**, e é escrito com **debounce** (alguns segundos depois da última mudança, mais
+um flush quando o último jogador sai). Gravar a cada evento seria amplificação de escrita por nada,
+porque cada mudança já transmite a cena inteira para todos.
+
+```
+jogador entra ─▶ sala existe em memória?
+                   não ─▶ carrega a cena do banco (uma vez) ─▶ memória
+                   sim ─▶ usa a de memória
+mudança ─▶ bump() ─▶ broadcast ─▶ agenda gravação (debounce)
+último jogador sai ─▶ grava agora ─▶ sala sai da memória
+```
+
+O que **não** é persistido, de propósito:
+
+| Campo | Por quê |
+|---|---|
+| `version` | Contador de sessão. Uma cena restaurada volta em `0` |
+| `ownerId` do ator | É um **socket** — não sobrevive a um restart. Gravar seria gravar lixo |
+| `path` do ator | É predição do cliente; no servidor está sempre vazio |
+| Token de jogador | Pertence à sessão. Volta a existir quando o jogador entra de novo (`pcActors` em `room.ts`) |
+
+O `data` da coluna `scene` é o **único** lugar do servidor onde entra dado que não passou pela
+validação de mensagem: pode ser uma linha antiga, de outro formato, ou editada à mão. Por isso tudo
+é coagido, cortado e limitado na volta (`sceneFromPersisted`), e uma linha ilegível é descartada em
+vez de derrubar a sala. Há `schemaVersion` dentro do JSON — as regras do jogo ainda vão mudar, e
+coluna rígida brigaria com o autor.
+
+**O banco nunca decide o jogo.** Se ele estiver fora, o servidor sobe, avisa no log e a mesa funciona
+em memória. Perder a partida por causa do banco seria pior do que não ter banco.
+
+---
+
 ## Fluxo de uma ação (ex.: mover)
 
 ```
@@ -337,12 +372,16 @@ Feito:
 
 Ainda não feito (anotado no ROADMAP):
 
-- RBAC de verdade: contas, papéis e permissão por token. Hoje `GM_KEY` é uma senha única
-  compartilhada — resolve o estranho que acha a URL, não resolve "quem é quem".
-- **Jogador entra sem senha.** O `GM_KEY` protege só o papel de mestre. Fechar isso é um `JOIN_KEY`,
-  com a mesma mecânica de tempo constante — o gancho é curto, falta a decisão de produto.
-- Token de sessão assinado no `room:join` — hoje a identidade é o id do socket, então quem cai e
-  volta não é reconhecido como a mesma pessoa.
+- **Login e sessão assinada.** A tabela `account` já existe e a senha é guardada com **`scrypt`**
+  (a conta-semente `helio` nasce no primeiro boot, ADR #16 e #17), mas ainda não há rota de login nem
+  leitura do cookie no `room:join`. Enquanto isso a identidade segue sendo o id do socket, e quem cai
+  e volta não é reconhecido como a mesma pessoa.
+- **RBAC de verdade:** papéis e permissão por token. Hoje existem **duas** formas de virar mestre — o
+  `GM_KEY`, que é segredo compartilhado e portanto não responde "quem é quem", e a conta dona da
+  campanha, que ainda não está ligada ao `room:join`.
+- **Jogador entra sem senha.** O `GM_KEY` protege só o papel de mestre. O plano mudou de um `JOIN_KEY`
+  separado para o **vínculo com a campanha** (ADR #16): quem controla a entrada é pertencer à mesa,
+  não saber uma segunda senha.
 - Visão por jogador (`visibleNow`): hoje `fogExplored` é compartilhado e o cliente recebe **todos**
   os atores, então um jogador vê o raio de visão dos outros tokens, não só o do dele.
 - `ROOM_CODE` não é segredo: quem tem o endereço e o código entra como jogador. Ser mestre exige a
