@@ -21,8 +21,25 @@ services:
       # Senha para entrar como MESTRE. Vazio = qualquer um vira mestre, o que só
       # é aceitável em rede local. Ponha uma senha antes de expor à internet.
       - GM_KEY=${GM_KEY:-}
+      # Limite de taxa por conexão (eventos por segundo e rajada). Os padrões
+      # são ~15x o uso legítimo; só mexa se tiver motivo. Ver ADR #15.
+      - RATE_PER_SEC=${RATE_PER_SEC:-60}
+      - RATE_BURST=${RATE_BURST:-150}
     expose:
       - "3000"                           # interno: NÃO publicar no host
+    # ── Endurecimento do container ──
+    # Nada é escrito em disco (as salas vivem em memória), então o filesystem
+    # pode ser somente-leitura e o processo perde TODAS as capabilities. O /tmp
+    # vira tmpfs porque o Node precisa de um lugar gravável. Junto com o
+    # `USER node` do server/Dockerfile, é o que reduz o estrago se alguém
+    # conseguir executar código aqui dentro. Ver ADR #15.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
     # NÃO adicione `ports:` aqui. Só o Caddy fala com o mundo.
 

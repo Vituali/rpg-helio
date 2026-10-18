@@ -24,6 +24,15 @@ ENV NODE_ENV=production
 ENV PORT=3000
 EXPOSE 3000
 
+# ── Usuário sem privilégio ──────────────────────────────────────────────────
+# O processo não precisa de root para nada: as salas vivem em memória e nada é
+# escrito em disco. Rodar como `node` (uid 1000) limita bastante o estrago se
+# alguém conseguir executar código aqui dentro. O cache do npm vai para /tmp
+# porque o container roda com o filesystem somente-leitura
+# (ver `read_only` em deploy/docker-compose.yml).
+ENV NPM_CONFIG_CACHE=/tmp/.npm
+USER node
+
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD wget --spider -q http://localhost:3000/health || exit 1
 

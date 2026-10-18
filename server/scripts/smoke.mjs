@@ -189,7 +189,65 @@ await until(
 );
 check(true, "fog explorado pelo jogador é compartilhado");
 
-// 6) sair limpa o dono do token
+// 6) o servidor é dono da verdade do fog: célula longe da visão é recusada
+const longe = { row: 0, col: jogador.last.scene.cols - 1 };
+jogador.socket.emit("fog:discover", { cells: [longe] });
+await sleep(500);
+check(
+  gm.last.scene.fogExplored[longe.row][longe.col] === 0,
+  "fog fora da visão de qualquer ator é recusado",
+);
+
+// o ataque que existia antes: mandar o tabuleiro inteiro numa mensagem e
+// apagar o fog de guerra de todo mundo de uma vez.
+const tudo = [];
+for (let r = 0; r < jogador.last.scene.rows; r += 1) {
+  for (let c = 0; c < jogador.last.scene.cols; c += 1) {
+    tudo.push({ row: r, col: c });
+  }
+}
+jogador.socket.emit("fog:discover", { cells: tudo });
+await sleep(500);
+const total = jogador.last.scene.rows * jogador.last.scene.cols;
+const vistas = gm.last.scene.fogExplored.flat().filter((v) => v === 1).length;
+check(
+  vistas <= 100,
+  `tabuleiro inteiro numa mensagem não revela o mapa (${vistas} de ${total})`,
+);
+
+// 7) limite de taxa: a rajada estoura o balde e o pacote é descartado
+const inerte = { row: alvo.row, col: alvo.col }; // já explorada: flood não muda estado
+const parado = cellOf(jogador, myActor.id);
+jogador.errors.length = 0;
+for (let i = 0; i < 500; i += 1) {
+  jogador.socket.emit("fog:discover", { cells: [inerte] });
+}
+// sem pausa de propósito: os tokens acabaram, então isto tem que ser barrado
+jogador.socket.emit("actor:intent-move", {
+  actorId: myActor.id,
+  row: agora.row,
+  col: agora.col + 1,
+});
+await sleep(600);
+check(
+  cellOf(jogador, myActor.id) === parado && jogador.errors.length === 0,
+  "rajada acima do limite é descartada em silêncio",
+);
+
+// 8) e o limite não trava o jogador para sempre: o balde reenche
+await sleep(3000);
+jogador.socket.emit("actor:intent-move", {
+  actorId: myActor.id,
+  row: agora.row,
+  col: agora.col + 1,
+});
+await until(
+  () => cellOf(jogador, myActor.id) === `${agora.row},${agora.col + 1}`,
+  "o movimento volta a funcionar depois da rajada",
+);
+check(true, "o limite de taxa não trava o jogador para sempre");
+
+// 9) sair limpa o dono do token
 jogador.socket.disconnect();
 await until(
   () =>

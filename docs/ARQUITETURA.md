@@ -188,7 +188,7 @@ Cliente → Servidor
 |---|---|---|
 | `room:join` | `{ code, name, role, key }` + ack | todos — `role: "gm"` exige `key` |
 | `actor:intent-move` | `{ actorId, row, col }` | dono do ator ou GM |
-| `fog:discover` | `{ cells: [{row, col}] }` | todos |
+| `fog:discover` | `{ cells: [{row, col}] }` | todos — o servidor só aceita célula que algum ator enxerga |
 | `map:walls` | `{ op: "set" \| "clear", cells }` | GM |
 | `map:fog` | `{ op: "reveal" \| "hide", cells }` | GM |
 | `map:config` | `{ cols?, rows?, cell?, bgImage?, fogMode? }` | GM |
@@ -271,11 +271,14 @@ Render do fog para um jogador = união: `explored` (escuro, 62% de opacidade) + 
 
 **Fase 1/3 inicial — confiança no grupo:** o servidor guarda `fogExplored`; o cliente calcula
 `visibleNow` localmente com o próprio token e envia ao servidor as células novas descobertas
-(`fog:discover`). Simples e suficiente.
+(`fog:discover`). Mas **o cliente não decide o que foi revelado**: o servidor recalcula a visão de
+todos os atores com `visibleCellsFrom` (a mesma função que o cliente usa) e descarta qualquer célula
+fora dela. Sem essa checagem, um jogador mandava o tabuleiro inteiro numa mensagem e apagava o fog
+de guerra de todo mundo. Ver `DECISOES.md` #15.
 
-**Anti-cheat (opcional, depois):** o servidor calcula `visibleNow` e manda só o resultado pro
-cliente — o jogador nunca recebe o mapa inteiro. Custa CPU (raycast de ~660 células por token a
-cada passo), mas é barato na escala real. Documentado em `ROADMAP.md` Fase 3.
+**Anti-cheat completo (depois):** o servidor calcula `visibleNow` **por jogador** e manda só o
+resultado pro cliente — aí o jogador nunca recebe o mapa inteiro. Custa CPU (raycast de ~660 células
+por token a cada passo), mas é barato na escala real. Documentado em `ROADMAP.md` Fase 3.
 
 O GM ignora tudo isso: `gmMode` mostra o mapa inteiro.
 
@@ -319,16 +322,28 @@ Feito:
 
 - Nenhuma regra de jogo no cliente é confiada: o servidor tem a palavra final em movimento,
   permissão, edição de mapa e fog.
-- O serviço `app` não publica porta: só o Caddy fala com o mundo.
+- `fog:discover` é validado aqui: só célula que **algum ator realmente enxerga** é aceita, e no
+  máximo 5000 células por mensagem. O cliente sugere, o servidor decide.
+- Limite de taxa por conexão (token bucket: 60 eventos/s, rajada de 150) e payload máximo de 256 KB.
+  Pacote acima do limite é descartado em silêncio; abuso contínuo derruba a conexão. Isto dói mais
+  que o normal porque **cada evento aceito transmite a cena inteira** para todos.
+- Handshake só de **mesma origem**: requisição com `Origin` de outro site leva 403, então uma página
+  maliciosa não abre socket aqui a partir do navegador da vítima.
+- O serviço `app` não publica porta (só o Caddy fala com o mundo) e **não roda como root**:
+  `USER node`, filesystem somente-leitura, `/tmp` em tmpfs, nenhuma capability,
+  `no-new-privileges`.
 - Caddy na frente: TLS, headers, proxy do WebSocket.
-- `origin` configurável (CORS), sala por código, nome limitado a 24 caracteres.
+- Sala por código, nome limitado a 24 caracteres.
 
 Ainda não feito (anotado no ROADMAP):
 
 - RBAC de verdade: contas, papéis e permissão por token. Hoje `GM_KEY` é uma senha única
   compartilhada — resolve o estranho que acha a URL, não resolve "quem é quem".
+- **Jogador entra sem senha.** O `GM_KEY` protege só o papel de mestre. Fechar isso é um `JOIN_KEY`,
+  com a mesma mecânica de tempo constante — o gancho é curto, falta a decisão de produto.
 - Token de sessão assinado no `room:join` — hoje a identidade é o id do socket, então quem cai e
   volta não é reconhecido como a mesma pessoa.
-- Rate limit por socket (passos/segundo).
+- Visão por jogador (`visibleNow`): hoje `fogExplored` é compartilhado e o cliente recebe **todos**
+  os atores, então um jogador vê o raio de visão dos outros tokens, não só o do dele.
 - `ROOM_CODE` não é segredo: quem tem o endereço e o código entra como jogador. Ser mestre exige a
   senha. Para mesa fechada de verdade, use a Opção C (Tailscale) do Caddyfile.

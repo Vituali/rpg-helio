@@ -6,7 +6,7 @@
  */
 
 import { timingSafeEqual } from "node:crypto";
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage } from "node:http";
 import { Server } from "socket.io";
 import {
   ACTOR_COLORS,
@@ -18,6 +18,7 @@ import {
   facingBetween,
   resizeGrid,
   uid,
+  visibleCellsFrom,
 } from "@helio/shared";
 import type { Actor, Cell, Role } from "@helio/shared";
 import { createRoom, publicState, type Player, type Room } from "./room.js";
@@ -27,6 +28,26 @@ const PORT = Number(process.env.PORT ?? 3000);
 const ORIGIN = process.env.ORIGIN ?? "*";
 const DEFAULT_ROOM = (process.env.ROOM_CODE ?? "HELIO").toUpperCase();
 const MAX_NAME = 24;
+
+/**
+ * Teto de células aceitas numa única mensagem. O maior tabuleiro possível é
+ * 80x60 = 4800 (`map:config` limita nisso), então 5000 cobre qualquer seleção
+ * legítima e barra um payload absurdo, tipo 1 milhão de células.
+ */
+const MAX_CELLS = 5000;
+
+/**
+ * Limite de taxa por conexão (token bucket).
+ *
+ * Dói mais do que o normal porque CADA evento aceito transmite a cena inteira
+ * para todos os jogadores. Sem isto, um cliente mandando mensagens em loop
+ * trava a mesa de todo mundo (Node é single-thread). Os padrões são ~15x o uso
+ * legítimo, então não incomodam quem joga.
+ */
+const RATE_PER_SEC = Number(process.env.RATE_PER_SEC ?? 60);
+const RATE_BURST = Number(process.env.RATE_BURST ?? 150);
+/** Pacotes descartados seguidos antes de derrubar a conexão de vez. */
+const RATE_STRIKES = Number(process.env.RATE_STRIKES ?? 600);
 
 /**
  * Senha para ENTRAR COMO MESTRE. Vazia = sem senha (aceitável só em rede local).
@@ -93,14 +114,39 @@ function spawnActor(room: Room, player: Player): Actor {
   return actor;
 }
 
-/** Normaliza `{ cells: [{row, col}] }` vindo do cliente. */
+/** Normaliza `{ cells: [{row, col}] }` vindo do cliente. Nunca confie no tamanho. */
 function cellsOf(msg: unknown): Cell[] {
   const raw = (msg as { cells?: unknown })?.cells;
   if (!Array.isArray(raw)) return [];
-  return raw.map((c) => ({
+  return raw.slice(0, MAX_CELLS).map((c) => ({
     row: Number((c as Cell)?.row),
     col: Number((c as Cell)?.col),
   }));
+}
+
+/**
+ * O teto do que um jogador pode revelar: a união do que TODOS os atores
+ * enxergam agora, calculada aqui com a MESMA função que o cliente usa.
+ *
+ * Isto é o que um cliente honesto reporta — `reportNewFog` manda a visão
+ * compartilhada — então nada legítimo é recusado. Mas ninguém consegue mais
+ * marcar o mapa inteiro numa mensagem e apagar o fog de guerra da mesa.
+ * Quem decide o que foi revelado é o servidor, não o cliente.
+ */
+function discoverableCells(room: Room): Set<string> {
+  const s = room.scene;
+  const out = new Set<string>();
+  for (const a of s.actors) {
+    const seen = visibleCellsFrom(
+      s.walls,
+      { row: a.row, col: a.col },
+      a.vision ?? 5,
+      s.rows,
+      s.cols,
+    );
+    for (const c of seen) out.add(`${c.row},${c.col}`);
+  }
+  return out;
 }
 
 // ── HTTP + Socket.IO ─────────────────────────────────────────────────────────
@@ -114,8 +160,31 @@ const httpServer = createServer((req, res) => {
   res.end();
 });
 
+/**
+ * Aceita só conexão de MESMA ORIGEM.
+ *
+ * A página sempre é servida pelo mesmo host que fala com o socket (Caddy numa
+ * ponta, o túnel na outra), então origem igual é o esperado. Sem isto,
+ * `origin: true` deixava qualquer site abrir um socket aqui a partir do
+ * navegador da vítima. Requisição sem cabeçalho `Origin` passa: aí não existe
+ * navegador para ser enganado (é o caso do smoke e de qualquer script).
+ */
+function sameOrigin(req: IncomingMessage): boolean {
+  const origin = req.headers.origin;
+  if (typeof origin !== "string" || origin === "") return true;
+  if (ORIGIN !== "*" && ORIGIN.split(",").includes(origin)) return true;
+  try {
+    return new URL(origin).host === (req.headers.host ?? "");
+  } catch {
+    return false;
+  }
+}
+
 const io = new Server(httpServer, {
+  // Payload máximo: 256 KB. Um tabuleiro cheio (4800 células) cabe folgado.
+  maxHttpBufferSize: 256 * 1024,
   cors: { origin: ORIGIN === "*" ? true : ORIGIN.split(",") },
+  allowRequest: (req, cb) => cb(null, sameOrigin(req)),
 });
 
 function broadcast(room: Room): void {
@@ -131,6 +200,32 @@ function bump(room: Room): void {
 
 // ── Conexão ──────────────────────────────────────────────────────────────────
 io.on("connection", (socket) => {
+  // ── Limite de taxa (token bucket por conexão) ──
+  // Vale para TODOS os eventos, inclusive os futuros, porque roda no
+  // middleware de pacote do Socket.IO. Pacote barrado é descartado em
+  // silêncio (não chama `next()`): não vale gastar banda explicando para quem
+  // está só tentando derrubar a mesa.
+  let tokens = RATE_BURST;
+  let last = Date.now();
+  let strikes = 0;
+
+  socket.use((_packet, next) => {
+    const now = Date.now();
+    tokens = Math.min(RATE_BURST, tokens + ((now - last) / 1000) * RATE_PER_SEC);
+    last = now;
+    if (tokens >= 1) {
+      tokens -= 1;
+      strikes = 0;
+      return next();
+    }
+    strikes += 1;
+    if (strikes === RATE_STRIKES) {
+      console.log(`[limite] ${socket.id} estourou o limite - desconectando`);
+      socket.disconnect(true);
+    }
+    return undefined;
+  });
+
   const me = (): { room: Room; player: Player } | null => {
     const room = roomOf(socket.id);
     if (!room) return null;
@@ -224,12 +319,19 @@ io.on("connection", (socket) => {
   });
 
   // ── Fog que o token do jogador acabou de enxergar ──
+  //
+  // O cliente NÃO decide o que foi revelado: ele só sugere. O servidor calcula
+  // a visão real dos atores e aceita apenas o que está dentro dela. Antes, o
+  // cliente era dono da verdade e um jogador qualquer podia mandar o tabuleiro
+  // inteiro numa mensagem e apagar o fog de guerra de todo mundo.
   socket.on("fog:discover", (msg) => {
     const m = me();
     if (!m) return;
     const grid = m.room.scene.fogExplored;
+    const allowed = discoverableCells(m.room);
     let changed = false;
     for (const { row, col } of cellsOf(msg)) {
+      if (!allowed.has(`${row},${col}`)) continue;
       if (grid[row]?.[col] === FOG_NONE) {
         grid[row][col] = FOG_SEEN;
         changed = true;

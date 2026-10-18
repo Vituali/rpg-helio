@@ -282,3 +282,48 @@ container do `app` roda como root; e o CORS aceita qualquer origem. Nenhum desse
 IPv4, IPv6, túnel ou Tailscale — são correções de aplicação, e ficam como próximo passo.
 Para uso contínuo, o complemento natural é domínio na Cloudflare + Access (até 50 usuários grátis),
 que barra na borda e se aproxima de "login com autorização" sem escrever RBAC.
+
+## #15 – Fechar os buracos de aplicação: fog, limite de taxa e container
+
+**Contexto.** Fechado o transporte (ADR #13 e #14), sobrou o que nenhum deles resolve: os buracos do
+próprio servidor. Uma revisão do código encontrou quatro, todos verificados:
+
+1. `fog:discover` era completamente confiado ao cliente. Qualquer jogador mandava as células que
+   quisesse e elas viravam "explorado" para a mesa inteira, permanente — ou seja, **uma mensagem
+   apagava o fog de guerra de todos**. Não era hipótese: é literalmente a função do evento, sem
+   validação. Medido: o tabuleiro inteiro (660 de 660 células) ia de uma vez só.
+2. Sem limite de taxa. E cada evento aceito transmite a **cena inteira** para todos os jogadores,
+   então um cliente em loop multiplica o custo por jogador. Node é single-thread: a mesa trava.
+3. O container do `app` rodava como **root**.
+4. CORS `origin: true` aceitava qualquer origem, então uma página maliciosa podia abrir um socket
+   aqui a partir do navegador da vítima.
+
+**Decisão.**
+
+- `fog:discover` passa a ser validado: o servidor recalcula a visão de **todos os atores** com
+  `visibleCellsFrom` — a mesma função que o cliente usa — e aceita só célula dentro dela. A escolha
+  do conjunto é o ponto fino: usar a união (e não apenas o token de quem manda) mantém o
+  comportamento atual intacto, porque é exatamente o que `reportNewFog` reporta. Nada legítimo é
+  recusado, e o ataque morre por inteiro. O corte por jogador é a Fase 3.
+- Teto de 5000 células por mensagem (o maior tabuleiro possível é 80x60 = 4800) e payload máximo de
+  256 KB, então um payload absurdo nem chega a ser percorrido.
+- Limite de taxa por conexão: token bucket de 60 eventos/s com rajada de 150, aplicado no middleware
+  de pacote do Socket.IO — vale para todo evento, inclusive os que ainda não existem. Pacote acima
+  do limite é descartado em silêncio; 600 descartes seguidos derrubam a conexão. Os números são ~15x
+  o uso legítimo de propósito: limite apertado atrapalharia mais quem joga do que quem ataca.
+- Handshake só de mesma origem (`allowRequest`): `Origin` de outro site leva 403. Requisição sem
+  `Origin` (script, teste) passa — sem navegador, não há o que enganar.
+- Container: `USER node` na imagem, e no compose `read_only`, `/tmp` em tmpfs, `cap_drop: [ALL]` e
+  `no-new-privileges`. O processo não escreve em disco (as salas vivem em memória), então dá para
+  tirar o disco de escrita inteiro.
+
+**Consequências.** O smoke passou de 15 para 19 checagens, com duas novas que valem como
+documentação executável: "tabuleiro inteiro numa mensagem não revela o mapa (60 de 660)" — antes
+dava 660 de 660 — e "rajada acima do limite é descartada em silêncio", seguida de "o limite não
+trava o jogador para sempre". Verificado também de fora, pela URL do túnel: 19/19. E o handshake de
+mesma origem respondeu 200 para a origem própria e 403 para uma estranha, tanto pelo túnel quanto
+local.
+
+O que continua em aberto, de propósito: **jogador ainda entra sem senha** (o `GM_KEY` protege só o
+papel de mestre), a identidade segue sendo o id do socket, e não há visão por jogador — todos
+recebem todos os atores. Esses três são RBAC e Fase 3, não descuido.
