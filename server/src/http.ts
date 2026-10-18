@@ -1,9 +1,10 @@
 /**
- * Rotas HTTP do servidor (ADR #16).
+ * Rotas HTTP do servidor (ADR #16, #18 e #19).
  *
- * Por enquanto só autenticação: entrar, sair e "quem sou eu". O jogo em si não
- * passa por aqui — continua no Socket.IO. A divisão é deliberada: tempo real e
- * CRUD em módulos separados, para trocar um sem encostar no outro.
+ * Duas famílias: **auth** (entrar, sair, quem sou eu, criar conta) e
+ * **campanhas** (criar, listar e apagar missões). O jogo em si não passa por
+ * aqui — continua no Socket.IO. A divisão é deliberada: tempo real e CRUD em
+ * módulos separados, para trocar um sem encostar no outro.
  *
  * O cookie é o ponto todo: como o Socket.IO lê os cookies do handshake, a
  * identidade chega na conexão sem inventar mensagem nova.
@@ -22,7 +23,7 @@ import {
   signSession,
   verifyPassword,
 } from "./auth.js";
-import { findAccountByName } from "./accounts.js";
+import { createAccount, findAccountByName } from "./accounts.js";
 import { normalizeCode } from "./selo.js";
 import {
   createCampaign,
@@ -35,7 +36,18 @@ import type { Session } from "./auth.js";
 /** Teto do corpo de uma requisição de auth. Nome e senha não passam de 200 bytes. */
 const MAX_BODY = 4 * 1024;
 
-// ── Limite de tentativas de login ────────────────────────────────────────────
+/**
+ * Cadastro aberto? `REGISTRATION=closed` fecha a porta (ADR #19).
+ *
+ * Existe porque cadastro aberto é decisão de agora, não para sempre: quando o
+ * grupo todo tiver conta, fechar é uma variável de ambiente e um restart. A
+ * alternativa — tela de administração para aprovar conta — seria muito mais
+ * código para um problema que dura uma tarde.
+ */
+export const registrationOpen =
+  (process.env.REGISTRATION ?? "open").trim().toLowerCase() !== "closed";
+
+// ── Limites de tentativas ────────────────────────────────────────────────────
 //
 // Global, e não por IP, por um motivo concreto: atrás do túnel e do Docker,
 // TODO mundo chega com o mesmo IP de origem (o gateway do compose). Um limite
@@ -45,19 +57,34 @@ const MAX_BODY = 4 * 1024;
 // Serve para o que importa aqui: `scrypt` é caro de propósito (~50 ms), e o
 // mesmo processo serve a partida. Sem teto, um cliente em loop de login
 // entupiria o pool de threads e a mesa sentiria.
-const LOGIN_PER_MINUTE = Number(process.env.LOGIN_PER_MINUTE ?? 20);
-let windowStart = Date.now();
-let windowCount = 0;
-
-function loginAllowed(): boolean {
-  const now = Date.now();
-  if (now - windowStart >= 60_000) {
-    windowStart = now;
-    windowCount = 0;
-  }
-  windowCount += 1;
-  return windowCount <= LOGIN_PER_MINUTE;
+//
+// São **dois baldes separados** (entrar e criar conta) de propósito: uma rajada
+// de cadastros não pode trancar o login de quem só quer jogar.
+function rateLimiter(perMinute: number): () => boolean {
+  let start = Date.now();
+  let count = 0;
+  return () => {
+    const now = Date.now();
+    if (now - start >= 60_000) {
+      start = now;
+      count = 0;
+    }
+    count += 1;
+    return count <= perMinute;
+  };
 }
+
+const loginAllowed = rateLimiter(Number(process.env.LOGIN_PER_MINUTE ?? 20));
+
+/**
+ * Cadastros por minuto (padrão: 10).
+ *
+ * Folgado o bastante para o grupo se cadastrando junto numa chamada, e o que um
+ * abuso consegue com isto é criar contas **que não abrem mesa nenhuma**: entrar
+ * ainda exige o Selo, e papel de mestre ainda exige vínculo. O freio é contra
+ * entupir o `scrypt`, não contra invasão.
+ */
+const registerAllowed = rateLimiter(Number(process.env.REGISTER_PER_MINUTE ?? 10));
 
 /**
  * Hash descartável, conferido quando a conta NÃO existe.
@@ -128,6 +155,34 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown> |
   }
 }
 
+// ── Validação do cadastro (ADR #19) ──────────────────────────────────────────
+//
+// Devolvem a frase que o lobby mostra, ou `null` se estiver tudo bem. Ficam
+// aqui, e não no banco, porque são regra de entrada — o banco não deve ter
+// opinião sobre o que é um nome aceitável.
+
+/** Nome de conta: precisa dar para chamar a pessoa, e nada de caractere invisível. */
+function nameProblem(name: string): string | null {
+  if (name.length < 2) return "O nome precisa de pelo menos 2 caracteres.";
+  if (name.length > 24) return "O nome pode ter no máximo 24 caracteres.";
+  if (/[\u0000-\u001f\u007f]/.test(name)) return "O nome não pode ter caracteres de controle.";
+  return null;
+}
+
+/**
+ * Senha: mínimo 6 (a do mestre-semente tem 6) e teto de 200.
+ *
+ * O teto existe porque `scrypt` é caro e roda nesta mesma thread: uma senha de
+ * megabytes por requisição é negação de serviço de graça. Não há exigência de
+ * símbolo nem de maiúscula — o que protege a conta aqui é o `scrypt`, não a
+ * criatividade de quem digita.
+ */
+function passwordProblem(password: string): string | null {
+  if (password.length < 6) return "A senha precisa de pelo menos 6 caracteres.";
+  if (password.length > 200) return "A senha pode ter no máximo 200 caracteres.";
+  return null;
+}
+
 // ── Rotas ────────────────────────────────────────────────────────────────────
 
 function sessionOf(req: IncomingMessage): Session | null {
@@ -161,11 +216,17 @@ export async function handleHttp(
 
   if (path === "/auth/me" && method === "GET") {
     const session = sessionOf(req);
+    // `signup` vai junto de propósito: o lobby precisa saber se pode oferecer
+    // "criar conta" ANTES de a pessoa preencher o formulário (ADR #19).
     if (!session) {
-      send(res, 200, { ok: false });
+      send(res, 200, { ok: false, signup: registrationOpen });
       return true;
     }
-    send(res, 200, { ok: true, account: { id: session.accountId, name: session.name } });
+    send(res, 200, {
+      ok: true,
+      account: { id: session.accountId, name: session.name },
+      signup: registrationOpen,
+    });
     return true;
   }
 
@@ -174,6 +235,54 @@ export async function handleHttp(
     // revogar uma sessão específica exigiria tabela, e não vale o preço agora.
     header(res, clearSessionCookie(secure));
     send(res, 200, { ok: true });
+    return true;
+  }
+
+  // ── Criar conta (ADR #19) ──
+  //
+  // Quem cria já sai logado: o cadastro termina com a mesma sessão do login, e
+  // não existe tela de "agora entre com o que você acabou de digitar".
+  if (path === "/accounts" && method === "POST") {
+    if (!sessionEnabled) {
+      send(res, 503, { ok: false, error: "Sessão desligada neste servidor." });
+      return true;
+    }
+    if (!registrationOpen) {
+      send(res, 403, { ok: false, error: "Cadastro fechado neste servidor." });
+      return true;
+    }
+    if (!registerAllowed()) {
+      send(res, 429, { ok: false, error: "Cadastros demais agora. Espere um minuto." });
+      return true;
+    }
+
+    const body = await readJson(req);
+    const name = typeof body?.name === "string" ? body.name.trim().slice(0, 24) : "";
+    const password = typeof body?.password === "string" ? body.password : "";
+    const problem = nameProblem(name) ?? passwordProblem(password);
+    if (problem) {
+      send(res, 400, { ok: false, error: problem });
+      return true;
+    }
+
+    const created = await createAccount(name, password);
+    if (created === null) {
+      send(res, 503, { ok: false, error: "Banco indisponível: não deu para criar a conta." });
+      return true;
+    }
+    if (created === "taken") {
+      // Aqui o nome repetido é dito na cara, e é a exceção entre as rotas de
+      // conta: no login a resposta é cega para não entregar quem existe. Não dá
+      // para esconder no cadastro — o `unique` recusaria de qualquer forma, e
+      // uma mensagem genérica só faria a pessoa tentar de novo à toa.
+      console.log(`[conta] nome ja tomado: ${name}`);
+      send(res, 409, { ok: false, error: "Esse nome já tem dono. Escolha outro." });
+      return true;
+    }
+
+    header(res, sessionCookie(signSession(created), secure));
+    console.log(`[conta] criada: ${created.name}`);
+    send(res, 201, { ok: true, account: { id: created.id, name: created.name } });
     return true;
   }
 

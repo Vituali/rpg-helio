@@ -24,7 +24,7 @@ import type { Actor, Cell, Role } from "@helio/shared";
 import { touchMembership } from "./accounts.js";
 import { SESSION_COOKIE, cookieValue, readSession, sessionEnabled } from "./auth.js";
 import { dbEnabled } from "./db.js";
-import { handleHttp } from "./http.js";
+import { handleHttp, registrationOpen } from "./http.js";
 import { migrate } from "./migrate.js";
 import { createRoom, publicState, type Player, type Room } from "./room.js";
 import { normalizeCode } from "./selo.js";
@@ -109,7 +109,7 @@ async function getOrCreateRoom(key: string, campaign: CampaignRef | null): Promi
   if (inFlight) return inFlight;
 
   const task = (async () => {
-    const room = createRoom(key, campaign?.id ?? null, campaign?.gmAccountId ?? null, campaign?.name ?? key);
+    const room = createRoom(key, campaign?.id ?? null, campaign?.name ?? key);
     const saved = await loadScene(room.campaignId);
     if (saved) room.scene = saved;
     rooms.set(key, room);
@@ -361,7 +361,7 @@ io.on("connection", (socket) => {
      * não abre", que é justamente o que o ADR #17 proíbe. Só recusamos quando o
      * banco respondeu e disse que o selo não existe.
      */
-    const lookup = await findCampaign(key);
+    const lookup = await findCampaign(key, account?.accountId ?? null);
     if (lookup.checked && !lookup.campaign) {
       wrongSelos += 1;
       console.log(`[entrada] selo desconhecido: ${key} (${wrongSelos} nesta conexao)`);
@@ -381,18 +381,25 @@ io.on("connection", (socket) => {
     const room = await getOrCreateRoom(key, lookup.campaign);
 
     /*
-     * Duas formas de ser mestre, durante a migração (ADR #16):
-     *   - ser a CONTA dona da campanha — o caminho novo, sem senha nenhuma;
-     *   - saber o GM_KEY — o bootstrap, que sai quando o RBAC chegar.
+     * Mestre é quem tem **vínculo de mestre** com a missão (ADR #19).
+     *
+     * Antes o critério era ser a conta dona da campanha. Dava no mesmo enquanto
+     * só existia uma conta — e travava um co-mestre, que precisaria de outra
+     * campanha ou da senha compartilhada. O vínculo é o quadro de quem manda
+     * nesta mesa, e é lá que o papel mora.
+     *
+     * O `GM_KEY` continua valendo como escapatória. Ele não promove ninguém em
+     * definitivo (não escreve vínculo), e sai quando existir recuperação de
+     * senha: hoje, sem ela, tirá-lo trancaria o grupo de fora se o mestre
+     * esquecesse a senha.
      *
      * Recusamos a entrada em vez de rebaixar em silêncio, senão a pessoa fica
      * sem entender por que não consegue mexer no mapa.
      */
-    const isOwner =
-      !!account && !!room.gmAccountId && room.gmAccountId === account.accountId;
-    if (wantsGm && !isOwner && !gmKeyMatches(String(m.key ?? ""))) {
+    const isGmMember = lookup.campaign?.memberRole === "gm";
+    if (wantsGm && !isGmMember && !gmKeyMatches(String(m.key ?? ""))) {
       console.log(
-        `[entrada] mestre recusado em ${room.code}: ${account ? `conta ${account.name} nao e dona` : "sem conta"} (${socket.id})`,
+        `[entrada] mestre recusado em ${room.code}: ${account ? `conta ${account.name} sem vinculo de mestre` : "sem conta"} (${socket.id})`,
       );
       dropIfEmpty(room);
       if (typeof ack === "function") {
@@ -401,7 +408,7 @@ io.on("connection", (socket) => {
           // Diz qual dos dois caminhos falhou: "senha errada" para quem está
           // logado manda procurar o problema no lugar errado.
           error: account
-            ? "Esta conta não é a dona desta campanha. Entre com a senha de mestre, ou peça ao mestre."
+            ? "Esta conta não é mestra desta missão. Peça ao mestre, ou use a senha de mestre."
             : "Senha de mestre incorreta.",
         });
       }
@@ -432,9 +439,9 @@ io.on("connection", (socket) => {
       player.actorId = actor.id;
     }
 
-    // Registra que esta conta passou por esta campanha (ADR #17). Sem await: é
+    // Registra que esta conta passou por esta campanha (ADR #19). Sem await: é
     // livro-caixa, e a partida não espera por ele.
-    if (account) void touchMembership(account.accountId, room.campaignId, role);
+    if (account) void touchMembership(account.accountId, room.campaignId);
 
     console.log(`[${room.code}] ${name} entrou como ${role}`);
     if (typeof ack === "function") {
@@ -731,8 +738,13 @@ async function main(): Promise<void> {
     );
     console.log(
       GM_KEY
-        ? "  entrada: jogador entra livre; MESTRE por conta (dona da campanha) ou GM_KEY"
-        : "  entrada: SEM senha de mestre - so a conta dona da campanha vira mestre",
+        ? "  entrada: jogador entra livre; MESTRE pelo vinculo com a missao (ou GM_KEY, legado)"
+        : "  entrada: SEM GM_KEY - so o vinculo com a missao da papel de mestre",
+    );
+    console.log(
+      registrationOpen
+        ? "  cadastro: aberto - qualquer um cria conta (REGISTRATION=closed fecha)"
+        : "  cadastro: FECHADO - so entram contas que ja existem",
     );
   });
 }

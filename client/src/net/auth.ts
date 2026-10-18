@@ -1,10 +1,11 @@
 /**
- * A API do servidor — contas e missões (docs/DECISOES.md #16 e #18).
+ * A API do servidor — contas e missões (docs/DECISOES.md #16, #18 e #19).
  *
  * Tudo vive sob `/api` (o Caddy manda o prefixo inteiro para o app), e as duas
  * famílias são:
  *
  *   /api/auth/*       entrar, sair e "quem sou eu" (ADR #16)
+ *   /api/accounts     criar conta (ADR #19)
  *   /api/campaigns    criar, listar e apagar missões (ADR #18)
  *
  * O cookie de sessão vai e volta sozinho (mesma origem), e é ele que o Socket.IO
@@ -16,6 +17,7 @@
  * JavaScript não enxerga de propósito.
  */
 
+import type { Role } from "@helio/shared";
 import { useNetStore } from "../state/netStore";
 
 export interface Account {
@@ -28,6 +30,10 @@ export interface Campaign {
   code: string;
   name: string;
   createdAt?: string;
+  /** O papel desta conta na missão, pelo vínculo (ADR #19). */
+  role?: Role;
+  /** Só o dono apaga a missão. */
+  owner?: boolean;
 }
 
 export interface AuthResult {
@@ -41,6 +47,13 @@ export interface CampaignsResult {
   campaigns?: Campaign[];
   campaign?: Campaign;
   error?: string;
+}
+
+/** Quem é este navegador, e o que o servidor deixa fazer sem conta (ADR #19). */
+export interface SessionInfo {
+  account: Account | null;
+  /** Se este servidor aceita cadastro novo. Com `false`, o lobby nem oferece. */
+  signup: boolean;
 }
 
 /**
@@ -74,12 +87,17 @@ async function request(
   }
 }
 
-/** Quem está logado neste navegador, se alguém estiver. */
-export async function refreshAccount(): Promise<Account | null> {
+/**
+ * Quem está logado neste navegador, e se o servidor aceita cadastro novo.
+ *
+ * As duas respostas vêm de uma rota só (`/api/auth/me`) porque as duas perguntas
+ * são feitas no mesmo instante, quando o lobby abre (ADR #19).
+ */
+export async function loadSession(): Promise<SessionInfo> {
   const body = await request("/api/auth/me");
-  if (!body?.ok) return null;
-  const account = body.account as Account | undefined;
-  return account ?? null;
+  if (!body) return { account: null, signup: false };
+  const account = body.ok ? ((body.account as Account | undefined) ?? null) : null;
+  return { account, signup: body.signup === true };
 }
 
 export async function login(name: string, password: string): Promise<AuthResult> {
@@ -90,6 +108,22 @@ export async function login(name: string, password: string): Promise<AuthResult>
   if (!body) return { ok: false, error: "Servidor não respondeu." };
   if (!body.ok) {
     return { ok: false, error: String(body.error ?? "Não foi possível entrar.") };
+  }
+  return { ok: true, account: body.account as Account };
+}
+
+/**
+ * Cria a conta e já sai logada — o servidor manda o cookie na resposta, igual ao
+ * login. A senha não fica em nenhum lugar do cliente.
+ */
+export async function createAccount(name: string, password: string): Promise<AuthResult> {
+  const body = await request("/api/accounts", {
+    method: "POST",
+    body: JSON.stringify({ name, password }),
+  });
+  if (!body) return { ok: false, error: "Servidor não respondeu." };
+  if (!body.ok) {
+    return { ok: false, error: String(body.error ?? "Não foi possível criar a conta.") };
   }
   return { ok: true, account: body.account as Account };
 }

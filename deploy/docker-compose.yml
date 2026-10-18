@@ -39,6 +39,10 @@ services:
       # a campanha ter um dono antes de existir tela de cadastro. Trocar depois.
       - SEED_MASTER_USER=${SEED_MASTER_USER:-}
       - SEED_MASTER_PASS=${SEED_MASTER_PASS:-}
+      # Cadastro de conta (ADR #19). "closed" fecha a porta: o lobby para de
+      # oferecer "criar conta" e o servidor recusa. O teto é global, por minuto.
+      - REGISTRATION=${REGISTRATION:-open}
+      - REGISTER_PER_MINUTE=${REGISTER_PER_MINUTE:-10}
       # Limite de taxa por conexão (eventos por segundo e rajada). Os padrões
       # são ~15x o uso legítimo; só mexa se tiver motivo. Ver ADR #15.
       - RATE_PER_SEC=${RATE_PER_SEC:-60}

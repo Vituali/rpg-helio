@@ -56,8 +56,6 @@ export interface Room {
    * `null` quando não há banco configurado, e aí a sala vive só em memória.
    */
   campaignId: string | null;
-  /** Conta dona da campanha: vira mestre sem precisar de `GM_KEY`. */
-  gmAccountId: string | null;
   scene: ServerScene;
   players: Map<string, Player>;
   /**
@@ -87,14 +85,12 @@ export function createScene(): ServerScene {
 export function createRoom(
   code: string,
   campaignId: string | null = null,
-  gmAccountId: string | null = null,
   name: string = code,
 ): Room {
   return {
     code,
     name,
     campaignId,
-    gmAccountId,
     scene: createScene(),
     players: new Map(),
     pcActors: new Set(),

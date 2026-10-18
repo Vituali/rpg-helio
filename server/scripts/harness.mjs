@@ -12,8 +12,20 @@
  * ADR #17.
  */
 
+import { execFileSync } from "node:child_process";
+
 const USER = process.env.SEED_MASTER_USER ?? "helio";
 const PASS = process.env.SEED_MASTER_PASS ?? "123456";
+
+/**
+ * Nome da conta descartável dos testes de vínculo (ADR #19).
+ *
+ * É fixo, e não sorteado, porque não existe rota para apagar conta: uma conta
+ * nova por execução encheria a tabela para sempre. Com nome fixo, no máximo uma
+ * conta de teste existe — e `deleteTestAccount` tira ela no fim.
+ */
+export const TEST_ACCOUNT = "agente-teste";
+export const TEST_ACCOUNT_PASS = "teste-123456";
 
 export async function api(base, method, path, { body, cookie } = {}) {
   const res = await fetch(`${base}${path}`, {
@@ -76,4 +88,64 @@ export async function testCampaign(base, label) {
       await api(base, "DELETE", `/api/campaigns/${code}`, { cookie });
     },
   };
+}
+
+/**
+ * Cria a conta de teste, ou entra nela se já existir de uma execução anterior.
+ *
+ * Devolve o cookie. Assim o teste é idempotente sem depender de o banco estar
+ * limpo — e o `deleteTestAccount` no fim mantém a tabela limpa.
+ */
+export async function testAccount(base) {
+  const created = await api(base, "POST", "/api/accounts", {
+    body: { name: TEST_ACCOUNT, password: TEST_ACCOUNT_PASS },
+  });
+  if (created.status === 201) return { cookie: cookieOf(created.res), created: true };
+
+  // 409 = o nome já existe (execução anterior que não limpou). Entra nela.
+  const login = await api(base, "POST", "/api/auth/login", {
+    body: { name: TEST_ACCOUNT, password: TEST_ACCOUNT_PASS },
+  });
+  if (login.body?.ok) return { cookie: cookieOf(login.res), created: false };
+
+  return { cookie: null, created: false, error: created.body?.error ?? "sem conta" };
+}
+
+/**
+ * Apaga a conta de teste pelo banco — e, com ela, os vínculos (cascade).
+ *
+ * É o único ponto dos testes que fala com o banco em vez de falar HTTP, e o
+ * motivo é honesto: **não existe rota para apagar conta**. Cadastro entrou na
+ * entrega 4, e apagar conta é coisa que mexe em campanha órfã — não se faz de
+ * improviso. Quando essa rota existir, isto vira uma chamada HTTP.
+ *
+ * Falha em silêncio: rodar o teste de outra máquina não pode quebrar por isto. O
+ * pior caso é sobrar uma conta chamada `agente-teste`.
+ */
+export function deleteTestAccount(name = TEST_ACCOUNT) {
+  if (!/^[A-Za-z0-9_-]+$/.test(name)) return;
+  const user = process.env.POSTGRES_USER ?? "helio";
+  const db = process.env.POSTGRES_DB ?? "helio";
+  try {
+    execFileSync(
+      "docker",
+      [
+        "exec",
+        "helio-postgres",
+        "psql",
+        "-U",
+        user,
+        "-d",
+        db,
+        "-t",
+        "-c",
+        `delete from account where lower(name) = lower('${name}') returning name`,
+      ],
+      { stdio: "ignore" },
+    );
+  } catch {
+    console.log(
+      `  nota: não deu para apagar a conta de teste "${name}" pelo banco; ela ficou`,
+    );
+  }
 }

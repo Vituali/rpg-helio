@@ -2,12 +2,13 @@ import { useEffect, useState } from "react";
 import type { Role } from "@helio/shared";
 import { connect } from "../net/socket";
 import {
+  createAccount,
   createCampaign,
   deleteCampaign,
   listCampaigns,
+  loadSession,
   login,
   logout,
-  refreshAccount,
   type Account,
   type Campaign,
 } from "../net/auth";
@@ -59,19 +60,26 @@ export default function Lobby({ onLocal }: { onLocal: () => void }) {
 
   // ── Conta (opcional) ───────────────────────────────────────────────────────
   // Entrar é opcional de propósito: convidado digita o nome e joga. A conta
-  // serve para o mestre (não precisa de senha se for o dono da campanha) e para
-  // não redigitar o nome a cada sessão.
+  // serve para não redigitar o nome a cada sessão e para o papel de mestre vir
+  // do vínculo com a missão (ADR #19).
   const [account, setAccount] = useState<Account | null>(null);
   const [user, setUser] = useState("");
   const [password, setPassword] = useState("");
+  /** Cadastro usa o mesmo cartão do login, em dois modos (ADR #19). */
+  const [authMode, setAuthMode] = useState<"entrar" | "criar">("entrar");
+  const [password2, setPassword2] = useState("");
+  /** O servidor aceita cadastro? Vem junto de `/api/auth/me` (ADR #19). */
+  const [signupOpen, setSignupOpen] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState("");
 
   useEffect(() => {
     // O cookie pode já estar no navegador de uma visita anterior.
     let alive = true;
-    void refreshAccount().then((a) => {
-      if (alive && a) setAccount(a);
+    void loadSession().then((s) => {
+      if (!alive) return;
+      if (s.account) setAccount(s.account);
+      setSignupOpen(s.signup);
     });
     return () => {
       alive = false;
@@ -93,6 +101,14 @@ export default function Lobby({ onLocal }: { onLocal: () => void }) {
   }, [account]);
 
   const reloadCampaigns = async () => setCampaigns(await listCampaigns());
+
+  /**
+   * A missão que está no campo do selo. Serve para avisar quando esta conta já é
+   * mestra dela — o papel vem do vínculo (ADR #19), e quem escolhe "AGENTE" por
+   * engano não mexe no mapa e não entende por quê.
+   */
+  const missaoDoCampo = campaigns.find((c) => c.code === code.trim().toUpperCase());
+  const souMestreAqui = account !== null && missaoDoCampo?.role === "gm";
 
   const criarMissao = async () => {
     if (missaoBusy) return;
@@ -126,18 +142,42 @@ export default function Lobby({ onLocal }: { onLocal: () => void }) {
     await reloadCampaigns();
   };
 
+  /** Servidor aceitou: a conta entra e as senhas saem da tela. */
+  const aceitarConta = (a: Account) => {
+    setAccount(a);
+    setPassword("");
+    setPassword2("");
+    setAuthError("");
+    setAuthMode("entrar");
+  };
+
   const signIn = async () => {
     if (authBusy) return;
     setAuthBusy(true);
     setAuthError("");
     const result = await login(user.trim(), password);
     setAuthBusy(false);
-    if (result.ok && result.account) {
-      setAccount(result.account);
-      setPassword(""); // a senha não fica na tela depois de usada
-    } else {
-      setAuthError(result.error ?? "Não foi possível entrar.");
+    if (result.ok && result.account) aceitarConta(result.account);
+    else setAuthError(result.error ?? "Não foi possível entrar.");
+  };
+
+  /*
+   * Criar conta (ADR #19). A conferência das duas senhas é do cliente, e existe
+   * por um motivo concreto: **não há recuperação de senha** — quem erra digita a
+   * senha errada para sempre. O servidor nem vê a segunda senha.
+   */
+  const criarConta = async () => {
+    if (authBusy) return;
+    if (password !== password2) {
+      setAuthError("As duas senhas não são iguais.");
+      return;
     }
+    setAuthBusy(true);
+    setAuthError("");
+    const result = await createAccount(user.trim(), password);
+    setAuthBusy(false);
+    if (result.ok && result.account) aceitarConta(result.account);
+    else setAuthError(result.error ?? "Não foi possível criar a conta.");
   };
 
   const signOut = async () => {
@@ -145,7 +185,9 @@ export default function Lobby({ onLocal }: { onLocal: () => void }) {
     setAccount(null);
     setUser("");
     setPassword("");
+    setPassword2("");
     setAuthError("");
+    setAuthMode("entrar");
   };
 
   const connecting = status === "connecting";
@@ -314,7 +356,7 @@ export default function Lobby({ onLocal }: { onLocal: () => void }) {
                   {account.name}
                 </div>
                 <div style={{ fontSize: 10, color: "#7e6ea8" }}>
-                  Conta reconhecida · nome e papel vêm daqui
+                  Conta reconhecida · o papel vem do vínculo com a missão
                 </div>
               </div>
               <button
@@ -328,10 +370,11 @@ export default function Lobby({ onLocal }: { onLocal: () => void }) {
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <IconEye size={14} style={{ color: "#a78bfa" }} />
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <IconEye size={14} style={{ color: "#a78bfa", flexShrink: 0 }} />
                 <span
                   style={{
+                    flex: 1,
                     fontSize: 11,
                     fontWeight: 600,
                     letterSpacing: "0.08em",
@@ -339,9 +382,32 @@ export default function Lobby({ onLocal }: { onLocal: () => void }) {
                     color: "#d8cef0",
                   }}
                 >
-                  Entrar com conta
+                  {authMode === "criar" ? "Criar conta" : "Entrar com conta"}
                 </span>
+                {/* Sem cadastro aberto no servidor, este botão não existe: o
+                    lobby não oferece o que o servidor vai recusar (ADR #19). */}
+                {signupOpen && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthMode(authMode === "criar" ? "entrar" : "criar");
+                      setAuthError("");
+                    }}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      padding: 0,
+                      color: "#a78bfa",
+                      fontSize: 11,
+                      textDecoration: "underline",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {authMode === "criar" ? "Já tenho conta" : "Criar conta"}
+                  </button>
+                )}
               </div>
+
               <div style={{ display: "flex", gap: 8 }}>
                 <input
                   className="occult-input"
@@ -351,6 +417,14 @@ export default function Lobby({ onLocal }: { onLocal: () => void }) {
                   maxLength={24}
                   autoComplete="username"
                   onChange={(e) => setUser(e.target.value)}
+                  onKeyDown={(e) => {
+                    // Enter aqui entra na conta, e não envia o formulário
+                    // inteiro (que tentaria conectar na mesa).
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void (authMode === "criar" ? criarConta() : signIn());
+                    }
+                  }}
                 />
                 <input
                   className="occult-input"
@@ -358,34 +432,71 @@ export default function Lobby({ onLocal }: { onLocal: () => void }) {
                   type="password"
                   value={password}
                   placeholder="Senha"
-                  maxLength={128}
-                  autoComplete="current-password"
+                  maxLength={200}
+                  autoComplete={authMode === "criar" ? "new-password" : "current-password"}
                   onChange={(e) => setPassword(e.target.value)}
                   onKeyDown={(e) => {
-                    // Enter no campo de senha entra na conta, e não envia o
-                    // formulário inteiro (que tentaria conectar na mesa).
                     if (e.key === "Enter") {
                       e.preventDefault();
-                      void signIn();
+                      void (authMode === "criar" ? criarConta() : signIn());
                     }
                   }}
                 />
-                <button
-                  type="button"
-                  className="occult-btn"
-                  style={{ padding: "8px 14px", fontSize: 12, flexShrink: 0 }}
-                  disabled={authBusy || user.trim() === "" || password === ""}
-                  onClick={() => void signIn()}
-                >
-                  {authBusy ? "..." : "Entrar"}
-                </button>
               </div>
+
+              {authMode === "criar" && (
+                <>
+                  <input
+                    className="occult-input"
+                    style={{ padding: "8px 10px", fontSize: 12 }}
+                    type="password"
+                    value={password2}
+                    placeholder="Repita a senha"
+                    maxLength={200}
+                    autoComplete="new-password"
+                    onChange={(e) => setPassword2(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        void criarConta();
+                      }
+                    }}
+                  />
+                  {password !== "" && password2 !== "" && password !== password2 && (
+                    <div style={{ fontSize: 11, color: "#fca5a5" }}>
+                      As duas senhas não são iguais.
+                    </div>
+                  )}
+                </>
+              )}
+
+              <button
+                type="button"
+                className="occult-btn"
+                style={{ padding: "8px 14px", fontSize: 12 }}
+                disabled={
+                  authBusy ||
+                  user.trim() === "" ||
+                  password === "" ||
+                  (authMode === "criar" && password2 === "")
+                }
+                onClick={() => void (authMode === "criar" ? criarConta() : signIn())}
+              >
+                {authBusy ? "..." : authMode === "criar" ? "Criar conta e entrar" : "Entrar"}
+              </button>
+
               {authError ? (
                 <div style={{ fontSize: 11, color: "#fca5a5" }}>{authError}</div>
+              ) : authMode === "criar" ? (
+                <div style={{ fontSize: 10, color: "#7e6ea8", lineHeight: 1.4 }}>
+                  Entra já logado. <strong>Não há recuperação de senha</strong> — o
+                  mestre não vê nem troca a sua senha, então anote.
+                </div>
               ) : (
                 <div style={{ fontSize: 10, color: "#7e6ea8", lineHeight: 1.4 }}>
-                  Opcional — agente entra só com o nome. Senha temporária: ainda
-                  não existe recuperação de senha nem troca de senha.
+                  Opcional — agente entra só com o nome. A conta serve para não
+                  redigitar o nome e para o papel de mestre vir do vínculo com a
+                  missão.
                 </div>
               )}
             </div>
@@ -465,15 +576,40 @@ export default function Lobby({ onLocal }: { onLocal: () => void }) {
                         }}
                       >
                         <div
-                          style={{
-                            fontSize: 11,
-                            color: "#d8cef0",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
+                          style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}
                         >
-                          {c.name}
+                          <span
+                            style={{
+                              fontSize: 11,
+                              color: "#d8cef0",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {c.name}
+                          </span>
+                          {/* O papel vem do vínculo (ADR #19): a mesma lista
+                              serve ao mestre e ao agente, e o rótulo diz quem é
+                              quem nesta missão. */}
+                          <span
+                            style={{
+                              flexShrink: 0,
+                              fontSize: 9,
+                              textTransform: "uppercase",
+                              letterSpacing: "0.06em",
+                              color: c.role === "gm" ? "#fbbf24" : "#a78bfa",
+                              border: `1px solid ${
+                                c.role === "gm"
+                                  ? "rgba(245, 158, 11, 0.45)"
+                                  : "rgba(167, 139, 250, 0.45)"
+                              }`,
+                              borderRadius: 4,
+                              padding: "0 4px",
+                            }}
+                          >
+                            {c.role === "gm" ? "mestre" : "agente"}
+                          </span>
                         </div>
                         <div
                           style={{
@@ -486,23 +622,28 @@ export default function Lobby({ onLocal }: { onLocal: () => void }) {
                           {c.code}
                         </div>
                       </button>
-                      <button
-                        type="button"
-                        title="Apagar missão"
-                        onClick={() => void apagarMissao(c)}
-                        style={{
-                          flexShrink: 0,
-                          background: "none",
-                          border: "none",
-                          color: "#a78bfa",
-                          cursor: "pointer",
-                          fontSize: 15,
-                          lineHeight: 1,
-                          padding: "2px 4px",
-                        }}
-                      >
-                        ×
-                      </button>
+                      {/* Apagar é do dono, e só ele vê o botão. Não é o que
+                          protege a missão: o servidor confere de novo e
+                          responde 404 para quem não é dono (ADR #18). */}
+                      {c.owner && (
+                        <button
+                          type="button"
+                          title="Apagar missão"
+                          onClick={() => void apagarMissao(c)}
+                          style={{
+                            flexShrink: 0,
+                            background: "none",
+                            border: "none",
+                            color: "#a78bfa",
+                            cursor: "pointer",
+                            fontSize: 15,
+                            lineHeight: 1,
+                            padding: "2px 4px",
+                          }}
+                        >
+                          ×
+                        </button>
+                      )}
                     </div>
                   );
                 })}
@@ -718,6 +859,12 @@ export default function Lobby({ onLocal }: { onLocal: () => void }) {
               <span style={{ fontSize: 10, opacity: 0.75 }}>Jogador · Token</span>
             </button>
           </div>
+          {souMestreAqui && (
+            <div style={{ fontSize: 11, color: "#fde68a", marginTop: 6, lineHeight: 1.4 }}>
+              Esta conta é <strong>mestra</strong> em {missaoDoCampo?.name}. Escolha
+              MESTRE para comandar o mapa — sem conta, só com a senha de mestre.
+            </div>
+          )}
         </div>
 
         {/* Senha de Mestre */}
@@ -747,8 +894,8 @@ export default function Lobby({ onLocal }: { onLocal: () => void }) {
             />
             <div style={{ fontSize: 11, color: "#7e6ea8", marginTop: 4 }}>
               {account
-                ? `Logado como ${account.name}. Só é preciso se essa conta não for a dona da campanha.`
-                : "Salva neste navegador. Agentes não precisam de chave."}
+                ? `Logado como ${account.name}. Só é preciso se esta conta não for mestra da missão.`
+                : "Caminho antigo, para quem não tem conta: com conta, o papel de mestre vem do vínculo com a missão."}
             </div>
           </div>
         )}

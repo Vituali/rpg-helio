@@ -11,7 +11,7 @@
  */
 
 import { FOG_NONE, clamp, resizeGrid, uid } from "@helio/shared";
-import type { Actor, Facing, FogMode, FogValue, Sector } from "@helio/shared";
+import type { Actor, Facing, FogMode, FogValue, Role, Sector } from "@helio/shared";
 import { hashPassword } from "./auth.js";
 import { dbEnabled, tryQuery } from "./db.js";
 import { createScene, type Room, type ServerScene } from "./room.js";
@@ -36,13 +36,16 @@ export function setDefaultGmAccount(id: string | null): void {
 
 export interface CampaignRef {
   id: string;
-  /**
-   * Conta dona da campanha. É o que dá o papel de mestre **sem senha**: quem é
-   * dono não precisa saber segredo nenhum (ADR #16).
-   */
-  gmAccountId: string | null;
   /** Nome humano da missão. O selo é o convite; isto é o que se lê. */
   name: string;
+  /**
+   * O papel de quem está entrando, pelo **vínculo** com esta missão (ADR #19).
+   * `null` = não é membro (é o caso do convidado, e do banco fora).
+   *
+   * O papel deixou de ser "é a conta dona da campanha": o dono é o
+   * administrador (criar, apagar), e mestre é uma linha em `membership`.
+   */
+  memberRole: Role | null;
 }
 
 /**
@@ -60,21 +63,33 @@ export interface CampaignLookup {
 }
 
 /**
- * Procura a campanha pelo Selo. **Não cria nada**: selo desconhecido é selo
- * errado, e quem recusa é `room:join` (ADR #18).
+ * Procura a campanha pelo Selo, junto com o papel de quem está entrando.
+ * **Não cria nada**: selo desconhecido é selo errado, e quem recusa é
+ * `room:join` (ADR #18).
+ *
+ * O papel vem na mesma consulta de propósito: são a mesma pergunta ("esta
+ * pessoa pode entrar aqui, e como?"), e duas idas ao banco abririam uma janela
+ * em que a missão existe mas o vínculo ainda não chegou.
  */
-export async function findCampaign(code: string): Promise<CampaignLookup> {
+export async function findCampaign(
+  code: string,
+  accountId: string | null = null,
+): Promise<CampaignLookup> {
   if (!dbEnabled) return { campaign: null, checked: false };
-  const rows = await tryQuery<{ id: string; gm_account_id: string | null; name: string }>(
-    "select id, gm_account_id, name from campaign where code = $1",
-    [code],
+  const rows = await tryQuery<{ id: string; name: string; member_role: Role | null }>(
+    `select c.id, c.name, m.role as member_role
+       from campaign c
+       left join membership m
+         on m.campaign_id = c.id and m.account_id = $2
+      where c.code = $1`,
+    [code, accountId],
     `procurar campanha ${code}`,
   );
   if (rows === null) return { campaign: null, checked: false };
   const row = rows[0];
   if (!row) return { campaign: null, checked: true };
   return {
-    campaign: { id: row.id, gmAccountId: row.gm_account_id, name: row.name },
+    campaign: { id: row.id, name: row.name, memberRole: row.member_role },
     checked: true,
   };
 }
@@ -83,6 +98,14 @@ export interface CampaignInfo {
   code: string;
   name: string;
   createdAt: string;
+  /** O papel de quem pediu a lista, pelo vínculo (ADR #19). */
+  role: Role;
+  /**
+   * Se quem pediu é o **dono** da missão. Dono e mestre são coisas diferentes:
+   * o dono apaga a missão, o mestre comanda a mesa. Hoje só quem cria é dono,
+   * então o lobby só mostra o `×` para ele — e é o servidor quem confere.
+   */
+  owner: boolean;
 }
 
 /**
@@ -91,6 +114,12 @@ export interface CampaignInfo {
  * O selo é sorteado aqui e o `unique` do banco decide a corrida: se colidir,
  * sorteia de novo. Algumas tentativas e desiste, porque desistir é honesto —
  * insistir para sempre esconderia uma lista de palavras quebrada.
+ *
+ * **A criação e o vínculo de mestre são uma instrução só** (ADR #19). São duas
+ * linhas em tabelas diferentes, e se a segunda falhasse o dono ficaria sem o
+ * papel de mestre na própria missão — um erro silencioso e cruel. O CTE que
+ * escreve roda inteiro ou não roda: é o jeito de o banco garantir o que o
+ * código não teria como.
  */
 export async function createCampaign(
   name: string,
@@ -100,19 +129,35 @@ export async function createCampaign(
 
   for (let attempt = 1; attempt <= 5; attempt += 1) {
     const code = newSelo();
-    const rows = await tryQuery<{ code: string; name: string; created_at: Date }>(
-      `insert into campaign (id, code, name, gm_account_id)
-       values ($1, $2, $3, $4)
-       on conflict (code) do nothing
-       returning code, name, created_at`,
+    const rows = await tryQuery<{ code: string; name: string; created_at: Date; role: Role }>(
+      `with nova as (
+         insert into campaign (id, code, name, gm_account_id)
+         values ($1, $2, $3, $4)
+         on conflict (code) do nothing
+         returning id, code, name, created_at, gm_account_id
+       ), vinculo as (
+         -- Sem referência no select final, e mesmo assim executa: no Postgres,
+         -- CTE que escreve roda sempre (é o que faz as duas linhas serem juntas).
+         insert into membership (account_id, campaign_id, role)
+         select gm_account_id, id, 'gm' from nova
+          where gm_account_id is not null
+         on conflict (account_id, campaign_id) do update set role = 'gm'
+       )
+       select code, name, created_at, 'gm'::text as role from nova`,
       [uid("camp"), code, name, gmAccountId],
       `criar campanha ${code}`,
     );
     if (rows === null) return null; // banco fora
     const row = rows[0];
     if (row) {
-      console.log(`[campanha] criada: ${row.code} "${row.name}"`);
-      return { code: row.code, name: row.name, createdAt: row.created_at.toISOString() };
+      console.log(`[campanha] criada: ${row.code} "${row.name}" (mestre: conta ${gmAccountId})`);
+      return {
+        code: row.code,
+        name: row.name,
+        createdAt: row.created_at.toISOString(),
+        role: "gm",
+        owner: true,
+      };
     }
     console.warn(`[campanha] selo sorteado já existia (${code}), sorteando de novo`);
   }
@@ -121,21 +166,37 @@ export async function createCampaign(
   return null;
 }
 
-/** As missões de quem é dono. Perder o selo não pode ser perder a mesa. */
-export async function listCampaigns(gmAccountId: string): Promise<CampaignInfo[]> {
+/**
+ * As missões de quem está logado — as que criou **e as que é membro** (ADR #19).
+ *
+ * Antes era só "as do dono", e a lista era o lugar de reencontrar o selo
+ * perdido. Agora ela é também o caminho do agente: quem entrou numa mesa uma vez
+ * não precisa redigitar o selo na sessão seguinte.
+ */
+export async function listCampaigns(accountId: string): Promise<CampaignInfo[]> {
   if (!dbEnabled) return [];
-  const rows = await tryQuery<{ code: string; name: string; created_at: Date }>(
-    `select code, name, created_at from campaign
-     where gm_account_id = $1
-     order by created_at desc
-     limit 50`,
-    [gmAccountId],
+  const rows = await tryQuery<{
+    code: string;
+    name: string;
+    created_at: Date;
+    role: Role;
+    owner: boolean;
+  }>(
+    `select c.code, c.name, c.created_at, m.role, (c.gm_account_id = $1) as owner
+       from campaign c
+       join membership m
+         on m.campaign_id = c.id and m.account_id = $1
+      order by c.created_at desc
+      limit 50`,
+    [accountId],
     "listar campanhas",
   );
   return (rows ?? []).map((r) => ({
     code: r.code,
     name: r.name,
     createdAt: r.created_at.toISOString(),
+    role: r.role,
+    owner: r.owner,
   }));
 }
 
@@ -176,21 +237,28 @@ export async function deleteCampaign(
  * apagou a missão padrão e já tem outras, ela fica apagada. Um selo que ressuscita
  * a cada restart seria uma surpresa ruim.
  */
-export async function ensureDefaultCampaign(code: string): Promise<CampaignRef | null> {
-  if (!dbEnabled) return null;
-  const rows = await tryQuery<{ id: string; gm_account_id: string | null; name: string }>(
-    `insert into campaign (id, code, name, gm_account_id)
-     select $1, $2, $3, $4
-     where not exists (select 1 from campaign)
-     on conflict (code) do nothing
-     returning id, gm_account_id, name`,
+export async function ensureDefaultCampaign(code: string): Promise<void> {
+  if (!dbEnabled) return;
+  const rows = await tryQuery<{ id: string }>(
+    `with nova as (
+       insert into campaign (id, code, name, gm_account_id)
+       select $1, $2, $3, $4
+        where not exists (select 1 from campaign)
+       on conflict (code) do nothing
+       returning id, gm_account_id
+     ), vinculo as (
+       -- O mestre-semente também entra pelo vínculo, como qualquer criador
+       -- (ADR #19): a missão padrão não é um caso especial.
+       insert into membership (account_id, campaign_id, role)
+       select gm_account_id, id, 'gm' from nova
+        where gm_account_id is not null
+       on conflict (account_id, campaign_id) do update set role = 'gm'
+     )
+     select id from nova`,
     [uid("camp"), code, code, defaultGmAccountId],
     `garantir campanha padrao ${code}`,
   );
-  const row = rows?.[0];
-  if (!row) return null;
-  console.log(`[campanha] banco vazio: selo padrao criado (${code})`);
-  return { id: row.id, gmAccountId: row.gm_account_id, name: row.name };
+  if (rows?.[0]) console.log(`[campanha] banco vazio: selo padrao criado (${code})`);
 }
 
 // ── Serialização ─────────────────────────────────────────────────────────────
