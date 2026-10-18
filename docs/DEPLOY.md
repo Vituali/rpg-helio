@@ -178,7 +178,40 @@ Get-NetIPAddress -AddressFamily IPv6 |
   Select-Object IPAddress, InterfaceAlias
 ```
 
-## Caminho recomendado: Tailscale (se o grupo é fechado)
+## Caminho recomendado: Cloudflare Tunnel (sem abrir porta nenhuma)
+
+Se o objetivo é expor sem mexer no roteador e sem deixar o PC escutando na internet, é este. O
+`cloudflared` abre uma conexão de **saída** para a Cloudflare; o mundo entra por lá. Nada de port
+forwarding, funciona atrás de CGNAT, o seu IP de casa não aparece para quem visita, o HTTPS vem de
+graça (a Cloudflare termina o TLS na borda) e o jogador só clica no link — não instala nada.
+
+```powershell
+cd deploy
+docker compose --profile tunnel up -d
+docker compose logs cloudflared | Select-String trycloudflare
+```
+
+A última linha traz algo como `https://algo-aleatorio.trycloudflare.com`. É o seu link.
+
+Dois detalhes que importam:
+
+- **A URL troca quando o container reinicia.** No modo rápido (`--url`, sem conta e sem domínio) o
+  endereço é sorteado a cada subida. Ótimo para teste e apresentação; para uso contínuo, veja
+  "URL fixa" abaixo.
+- **Esse link não aparece no log de Certificate Transparency.** `trycloudflare.com` usa certificado
+  coringa, então o subdomínio sorteado não é catalogado — na prática é um link **não-listado**, que
+  não é achado por varredura. É a diferença de segurança mais importante em relação a um domínio
+  próprio, cujo nome vai para o `crt.sh` no minuto em que o certificado sai.
+
+### URL fixa (quando quiser deixar de ser sorteada)
+
+Precisa de um domínio (o mais barato serve) apontado para a Cloudflare; aí a URL passa a ser sua e
+permanente. Com o domínio lá, ligue o **Cloudflare Access** (grátis até 50 usuários): só quem você
+convidar consegue **chegar** no servidor, com login por e-mail. Isso resolve na borda o que o
+`GM_KEY` resolve dentro do jogo, e é o mais perto de um "login com autorização" de verdade sem
+escrever RBAC ainda.
+
+## Alternativa: Tailscale (se o grupo é fechado)
 
 Se quem vai jogar são pessoas conhecidas, **Tailscale** é de longe o menor atrito:
 

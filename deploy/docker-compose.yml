@@ -57,6 +57,35 @@ services:
     restart: unless-stopped
 
   # ───────────────────────────────────────────────────────────────────────────
+  # OPCIONAL — acesso público SEM abrir porta e SEM tocar no roteador.
+  #
+  # O cloudflared abre uma conexão de SAÍDA para a Cloudflare e o mundo entra
+  # por lá. Consequências, que são exatamente o que se quer:
+  #   - nenhuma porta de entrada aberta (o PC nunca fica escutando na internet);
+  #   - seu IP de casa não aparece para quem visita;
+  #   - funciona atrás de CGNAT e de roteador alheio — zero configuração;
+  #   - HTTPS de graça (a Cloudflare termina o TLS na borda);
+  #   - o jogador só clica no link, não instala nada.
+  #
+  # Modo rápido (sem conta, sem domínio): a URL é aleatória
+  # (https://algo-aleatorio.trycloudflare.com) e troca quando o container
+  # reinicia. Como é um subdomínio de certificado coringa, ele NÃO entra no log
+  # de Certificate Transparency — ou seja, é um link não-listado, que ninguém
+  # acha por varredura. Ótimo para teste e apresentação.
+  #
+  # Uso:  docker compose --profile tunnel up -d
+  #       docker compose logs cloudflared        # mostra a URL
+  # ───────────────────────────────────────────────────────────────────────────
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: helio-tunnel
+    profiles: ["tunnel"]
+    depends_on:
+      - caddy
+    command: tunnel --no-autoupdate --url http://caddy:80
+    restart: unless-stopped
+
+  # ───────────────────────────────────────────────────────────────────────────
   # OPCIONAL — atualizador de DDNS (só para a Opção A: DuckDNS + port forward).
   # O IP residencial muda; isto mantém o registro em dia.
   # ───────────────────────────────────────────────────────────────────────────

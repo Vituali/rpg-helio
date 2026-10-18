@@ -249,3 +249,36 @@ no log do Caddy com status 200; depois, erro de conexão e nada no log. `localho
 `192.168.1.69` seguem em 200, e o Socket.IO continua passando pelo Caddy. A lição generalizável:
 **em IPv6, expor é o padrão e proteger exige ação** — o oposto do IPv4, e a razão de isto não
 aparecer em tutorial nenhum de port forwarding.
+
+## #14 – Expor por Cloudflare Tunnel, em vez de port forwarding
+
+**Contexto.** Três restrições juntas apontaram para longe do port forwarding: (a) não expor portas
+do PC pessoal, (b) não depender de configuração de roteador, (c) jogadores sem acesso a
+configuração. O IPv6 parecia a saída fácil — "não tem NAT, não precisa de porta aberta" — e caiu
+pelos dados do próprio provedor: em 10 sessões PPPoE desde 31/08 o IPv4 ficou sempre
+`201.158.22.220`, mas o prefixo IPv6 delegado mudou **10 vezes**, duas delas no mesmo dia, a cada
+`Lost-Carrier`. Como o endereço IPv6 entra no nome (`...sslip.io`), a URL mudaria no meio da
+partida. O IPv4 fixo com port forwarding resolveria, mas exige mexer no roteador e deixa o PC
+escutando na internet.
+
+**Decisão.** Um serviço opcional `cloudflared` no `docker-compose.yml`, atrás do profile `tunnel`,
+apontando para `http://caddy:80`. Ele abre uma conexão de **saída** para a Cloudflare e publica o
+Caddy por ali: nenhuma porta de entrada, IP de casa escondido, HTTPS na borda, e o jogador só clica
+no link. O `profile` existe de propósito: o túnel **não sobe por acidente** com um `up -d` normal,
+e nada no caminho antigo (LAN, localhost, port forward) muda.
+
+**Consequências.** Verificado de ponta a ponta: o smoke passou **15/15 contra a URL pública**, o que
+exercita o Socket.IO e o WebSocket através da Cloudflare, e a página carrega por HTTPS. No modo
+rápido (`--url`, sem conta e sem domínio) a URL é sorteada e troca a cada reinício — aceitável para
+teste e apresentação — mas, por ser subdomínio de certificado coringa, **não entra no log de
+Certificate Transparency**: é um link não-listado, que não é achado por varredura. Isso importa
+porque um domínio próprio, ao contrário, aparece no `crt.sh` no minuto em que o certificado sai.
+
+O que continua em aberto, e é preciso dizer com todas as letras: **o túnel melhora o transporte, não
+o aplicativo.** Quem tiver o link ainda entra como jogador sem senha; o `fog:discover` continua sem
+validação no servidor, então qualquer jogador pode apagar o fog de guerra inteiro numa mensagem; não
+há limite de taxa, então um cliente em loop trava a mesa (cada evento transmite a cena toda); o
+container do `app` roda como root; e o CORS aceita qualquer origem. Nenhum desses é resolvido por
+IPv4, IPv6, túnel ou Tailscale — são correções de aplicação, e ficam como próximo passo.
+Para uso contínuo, o complemento natural é domínio na Cloudflare + Access (até 50 usuários grátis),
+que barra na borda e se aproxima de "login com autorização" sem escrever RBAC.
