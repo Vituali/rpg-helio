@@ -1,0 +1,15 @@
+# Tudo que NÃO precisa entrar na imagem Docker.
+# Sem isto, `node_modules` (centenas de MB) é copiado no build.
+
+**/node_modules
+**/dist
+
+.git
+.gitignore
+docs
+server
+"RPG GRID"
+Maze.jpg
+*.md
+deploy/data
+deploy/.env

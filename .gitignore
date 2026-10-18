@@ -1,0 +1,35 @@
+# Dependências
+node_modules/
+
+# Build
+dist/
+build/
+
+# Ambiente — NUNCA versionar
+.env
+.env.local
+*.env.local
+
+# ── Assets pesados (NÃO versionar) ────────────────────────────────────────────
+# `img/` tem ~230 MB de arte em altíssima resolução (tokens 3000x3400, mapas
+# 36 MB). Binário grande em git incha o repositório e trava clones/pushes.
+# Os originais ficam no disco; as versões otimizadas para a web (pequenas)
+# vão em client/public/ e ESSAS sim são versionadas.
+img/
+Maze.jpg
+
+# Projeto anterior (referência) — tem repositório git próprio
+arquivos temporarios/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor / SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Docker
+deploy/data/

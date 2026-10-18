@@ -1,0 +1,57 @@
+# Caddyfile — front estático + (Fase 2) proxy do WebSocket
+#
+# Hoje: só serve o front buildado (client/dist) em /srv.
+# Fase 2: quando existir o `app` (Node + Socket.IO), descomente o bloco
+#         `handle /socket.io/*` abaixo. Nada mais muda.
+
+# ── Opção A: acesso público com DuckDNS (HTTPS automático) ──────────────────
+# Troque helio.duckdns.org pelo seu subdomínio. Precisa das portas 80 e 443
+# abertas no roteador e de IP público (sem CGNAT).
+helio.duckdns.org {
+	encode zstd gzip
+
+	# Fase 2 — WebSocket do jogo:
+	# handle /socket.io/* {
+	# 	reverse_proxy app:3000
+	# }
+
+	handle {
+		root * /srv
+		try_files {path} /index.html   # SPA: qualquer rota cai no index
+		file_server
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
+
+# ── Opção B: Tailscale (rede privada, sem abrir porta) ──────────────────────
+# Comente o bloco acima e use este. O hostname é o nome da máquina na tailnet,
+# ex.: helio-pc.tailXXXX.ts.net . O TLS sai via `tailscale cert`.
+# helio-pc.tailXXXX.ts.net {
+# 	encode zstd gzip
+# 	handle {
+# 		root * /srv
+# 		try_files {path} /index.html
+# 		file_server
+# 	}
+# }
+
+# ── Opção C: HTTP puro no IP (sem HTTPS, sem domínio) ───────────────────────
+# Funciona pro jogo, mas quebra voz/WebRTC depois (getUserMedia exige HTTPS).
+# :80 {
+# 	root * /srv
+# 	try_files {path} /index.html
+# 	file_server
+# }
+
+# ── Desafio ACME (Let's Encrypt) num IP pelado: não é possível ──────────────
+# Por isso as opções acima usam domínio (DuckDNS/Tailscale) ou HTTP puro.
