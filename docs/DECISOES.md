@@ -327,3 +327,86 @@ local.
 O que continua em aberto, de propósito: **jogador ainda entra sem senha** (o `GM_KEY` protege só o
 papel de mestre), a identidade segue sendo o id do socket, e não há visão por jogador — todos
 recebem todos os atores. Esses três são RBAC e Fase 3, não descuido.
+
+## #16 – Identidade: conta, sessão assinada e o fim do `GM_KEY`
+
+**Contexto.** A identidade hoje é o id do socket: existe enquanto a conexão existir. Três
+consequências caem todas no mesmo lugar. Recarregar a página te transforma em um estranho (o
+servidor não tem como saber que você é o mesmo de antes). O papel de mestre é um **segredo
+compartilhado** (`GM_KEY`), então "ser mestre" é uma coisa que se sabe, não uma coisa que se é —
+não dá para ter dois mestres diferentes, nem revogar o acesso de um sem trocar a senha de todos.
+E não existe "seu": nada que o servidor guardar tem dono. RBAC e persistência, portanto, são
+ambos reféns disto — e por isso vêm juntos (ADR #17).
+
+**Decisão.**
+
+- **Conta** na tabela `account`. Senha com **`scrypt` do `node:crypto`**: sem bcrypt, sem
+  dependência nova, ~5 linhas. Formato `scrypt$N$r$p$salt$hash`, salt aleatório por conta,
+  comparação de tempo constante. Senha em texto puro **nunca**, nem em teste.
+- **Sessão assinada**, sem estado no servidor: `HMAC-SHA256` sobre `{accountId, iat, exp}` com a
+  chave em `SESSION_SECRET`. Sem tabela de sessões significa que reiniciar o container **não
+  desloga ninguém**.
+- O token viaja num cookie **`HttpOnly`**, `SameSite=Lax`, `Path=/`, validade de 30 dias, e
+  `Secure` sempre que houver HTTPS.
+- **O ganho de graça:** o Socket.IO envia os cookies do mesmo domínio no handshake. A identidade
+  chega na conexão **sem inventar mensagem nova** — `socket.data.accountId` é resolvido uma vez,
+  ali. É o argumento técnico que faz o desenho ficar simples em vez de esperto.
+- **Papel vem do vínculo** com a campanha (`membership.role`), não de uma senha. O `GM_KEY`
+  continua aceito como caminho de bootstrap enquanto o resto migra, e depois sai — o ADR #12
+  fica superado.
+- **Mestre exige conta.** Jogador pode entrar como **convidado** (só nome); aí a identidade é do
+  socket, como hoje, e isso é dito com todas as letras em vez de parecer que não é.
+
+**Consequências.** `room:join` deixa de receber `role`/`key` como fonte de verdade (viram legado
+tolerado por um tempo). Surge `SESSION_SECRET` no ambiente, gerado com
+`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. Como não há estado de
+sessão, **não existe logout no servidor**: sair apaga o cookie. Revogar uma sessão específica
+exigiria tabela, e isso fica anotado como limite conhecido em vez de ser vendido como completo. O
+lobby avisa que a senha é temporária — recuperação de senha e RBAC ainda não existem. Em `:80`
+local o cookie **não** é `Secure`, porque não há HTTPS; é a exceção consciente. Contra CSRF, o que
+protege é o conjunto: `SameSite=Lax`, só mesma origem (o handshake já recusa `Origin` estranho) e
+rotas de autenticação serem `POST`.
+
+## #17 – Persistência: Postgres, campanha com Selo da Missão e cena em JSONB
+
+**Contexto.** As salas vivem em memória e nada é escrito em disco — decisão explícita do ADR #15,
+que comprou segurança (`read_only`, sem root) ao preço de esquecer tudo. Reiniciar o container
+apaga a mesa; e não existe lugar nenhum para guardar conta, campanha ou ficha. Além disso, o
+`ROOM_CODE` é um valor fixo do `.env`: uma mesa só, com um código que todo mundo conhece.
+
+**Decisão.**
+
+- **Postgres** como serviço do `docker-compose.yml`, com volume nomeado e `healthcheck`. Driver
+  **`pg`** — **não Prisma**: o Prisma carrega um binário de engine que quer escrever em runtime, e
+  o `app` roda `read_only` e sem root. SQL tipado com `pg` não tem esse problema.
+- A porta é publicada **só no loopback** (`127.0.0.1:5432:5432`), para desenvolvimento. Nunca em
+  `0.0.0.0` — mesma lição do ADR #13, agora para um banco com senha.
+- **Migrations em SQL numerado** (`001_init.sql`, ...) com um runner pequeno que aplica em
+  transação e registra o que já rodou em `schema_migrations`. Sem framework; dá para ler tudo.
+- **Esquema:**
+  - `account (id, name unique, password_hash, created_at)`
+  - `campaign (id, code unique /* Selo da Missão */, name, gm_account_id → account, created_at)`
+  - `membership (account_id, campaign_id, role, created_at)` — chave primária composta
+  - `scene (campaign_id PK → campaign, data jsonb, updated_at)`
+- **Selo da Missão** é `campaign.code`, gerado com alfabeto **sem caracteres ambíguos** (sem
+  `0/O`, `1/I/L` — porque isso vai ser lido em voz alta no grupo). Substitui o `ROOM_CODE` fixo:
+  cada mesa tem o próprio selo, e o `ROOM_CODE` vira só a conveniência padrão.
+- **Cena em JSONB**, com `schemaVersion` dentro. As regras do sistema ainda não estão fixadas — a
+  ficha vai ser inventada na mesa —, então coluna rígida brigaria com o autor. JSONB + versão
+  deixa evoluir sem migration de esquema. A ficha segue o mesmo princípio quando chegar.
+- Gravação **com debounce**: alguns segundos depois da última mudança, mais um flush quando o
+  último jogador sai. A cena viva continua em memória (rápida, como hoje) e o banco é a cópia
+  durável. Gravar a cada evento seria amplificação de escrita por nada.
+- **`ownerId` do ator é um socket e não é persistido como está.** Ao gravar, vira
+  `ownerAccountId` — ou `null` quando o dono é convidado. Socket id não sobrevive a um restart;
+  gravá-lo seria gravar lixo.
+- **Degradação, não queda:** se o banco estiver fora, o servidor **sobe**, registra o erro e a
+  mesa funciona em memória como hoje. Derrubar a partida por causa do banco seria pior do que não
+  ter banco.
+
+**Consequências.** Surge `DATABASE_URL`. Subir a stack passa a subir o Postgres; rodar o servidor
+fora do Docker (para desenvolvimento) precisa apontar para o Postgres do próprio compose, que é o
+motivo de ele estar publicado no loopback. Backup deixa de ser opcional e vira responsabilidade:
+`pg_dump` do volume entra no `DEPLOY.md`. E fica dito que isto **não** é compressão: `walls` e
+`fogExplored` continuam indo como arrays, na rede e no banco; bitset/RLE segue sendo assunto
+separado, de propósito.
