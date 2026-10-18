@@ -161,6 +161,72 @@ em memória. Perder a partida por causa do banco seria pior do que não ter banc
 
 ---
 
+## Contas e sessão (ADR #16, entrega 2)
+
+O login passa por **HTTP**, não pelo socket. Três rotas, e só:
+
+| Rota | O que faz |
+|---|---|
+| `POST /auth/login` | `{ name, password }` → confere o `scrypt` e devolve o cookie de sessão |
+| `POST /auth/logout` | Apaga o cookie no cliente |
+| `GET /auth/me` | `{ ok, account }` — quem este navegador é, se alguém for |
+
+O jogo continua inteiro no Socket.IO. A divisão é deliberada: tempo real e CRUD são módulos
+separados, para trocar um sem encostar no outro (`server/src/http.ts`).
+
+**A parte que faz tudo caber:** o Socket.IO manda os cookies da mesma origem **no handshake**. Então
+a identidade chega junto com a conexão — não existe mensagem para "autenticar", e por isso não há
+como esquecer de autenticar um evento novo:
+
+```
+POST /auth/login ─▶ cookie assinado (HMAC-SHA256, HttpOnly, SameSite=Lax, Secure)
+                          │
+                          ▼
+navegador abre o socket ─▶ handshake leva o cookie ─▶ servidor sabe QUEM é, antes de qualquer evento
+                          │
+                          ▼
+room:join ─▶ nome vem da conta; papel vem do vínculo com a campanha
+```
+
+O cookie é **stateless**: carrega `{accountId, name, iat, exp}` e a assinatura. Sem tabela de
+sessões no banco. O preço está anotado: **não existe revogação** — sair só faz o navegador esquecer o
+cookie, e um cookie copiado continua válido até expirar (30 dias). Trocar `SESSION_SECRET` derruba
+todas as sessões de uma vez, o que é o botão de pânico suficiente por agora.
+
+Sem `SESSION_SECRET` configurado, o login fica **desligado** e o servidor avisa no log: só convidado
+entra. É melhor isso do que assinar sessão com uma chave inventada.
+
+### Duas formas de ser mestre (durante a migração)
+
+| Caminho | Como | Situação |
+|---|---|---|
+| **Conta dona da campanha** | Login. `campaign.gm_account_id` bate com a conta da sessão | O caminho novo — **sem senha nenhuma** |
+| `GM_KEY` | Senha compartilhada digitada no lobby | Bootstrap. Sai na entrega 4, quando o vínculo virar papel |
+
+Recusar em vez de rebaixar em silêncio é de propósito: quem digitou a senha errada precisa entender
+por que não manda no mapa. O `ack` diz qual dos dois caminhos falhou — "senha incorreta" para quem
+está logado mandaria procurar o problema no lugar errado.
+
+**Convidado continua convidado:** sem conta, o nome é digitado (até 24 caracteres) e a identidade é o
+id do socket, como sempre foi. A conta é um upgrade, não um pedágio — o grupo entra sem cadastro.
+
+### Detalhes que doem se errados
+
+- **A resposta não entrega quais nomes existem.** Login com usuário inexistente confere um hash
+  descartável antes de recusar, para gastar o mesmo tempo de um `scrypt` de verdade. Sem isso, o
+  relógio diria "esse usuário existe" e o ataque de força bruta começaria pela lista de nomes certos.
+- **O limite de tentativas é global, não por IP.** Atrás do túnel e do Docker, todo mundo chega com o
+  mesmo IP de origem; um limite por IP seria um limite compartilhado, e o primeiro a abusar travaria o
+  grupo inteiro. O teto global serve para o que importa: `scrypt` é caro de propósito, e o mesmo
+  processo serve a partida.
+- **`Secure` não vem do `X-Forwarded-Proto`.** O Caddy termina o TLS e repassa HTTP puro, então esse
+  cabeçalho diz `http` mesmo numa visita HTTPS. Quem sabe a verdade é a borda da Cloudflare, que marca
+  a requisição; o acesso direto na LAN não tem marca e continua funcionando sem `Secure`.
+- **O `/auth/*` precisa de rota no Caddy.** Sem ela, `POST /auth/login` cai no `try_files` da SPA e
+  devolve o `index.html` com status 200 — um erro que parece sucesso.
+
+---
+
 ## Fluxo de uma ação (ex.: mover)
 
 ```
@@ -221,7 +287,7 @@ Cliente → Servidor
 
 | Evento | Payload | Quem pode |
 |---|---|---|
-| `room:join` | `{ code, name, role, key }` + ack | todos — `role: "gm"` exige `key` |
+| `room:join` | `{ code, name, role, key }` + ack | todos — `role: "gm"` exige a conta dona da campanha **ou** `key` |
 | `actor:intent-move` | `{ actorId, row, col }` | dono do ator ou GM |
 | `fog:discover` | `{ cells: [{row, col}] }` | todos — o servidor só aceita célula que algum ator enxerga |
 | `map:walls` | `{ op: "set" \| "clear", cells }` | GM |
@@ -254,18 +320,25 @@ delta entra **atrás do mesmo adapter** — o resto do sistema não muda.
 então quem entra usa o ack como primeiro estado; sem isso a tela fica vazia por um instante.
 
 O ack também é o canal de recusa: `{ ok: false, error }`. Hoje só um motivo usa isso — entrar como
-mestre com `key` errada — e o cliente volta para o lobby mostrando o motivo, em vez de ficar
-conectado sem estar na sala.
+mestre sem ser a conta dona da campanha e com `key` errada — e o cliente volta para o lobby mostrando
+o motivo, em vez de ficar conectado sem estar na sala. A recusa também **descarta a sala** se ela
+tiver ficado vazia: a sala foi carregada só para decidir o papel, e sem isso ela ficaria para sempre
+em memória, vazia e invisível.
+
+As rotas HTTP de autenticação são o segundo caminho de entrada, e estão em "Contas e sessão".
 
 ### Quem é mestre
 
-`GM_KEY` no servidor é uma senha única para entrar como mestre; jogador não pede nada. Sem `GM_KEY`
-definida, qualquer um vira mestre (o que só é aceitável em rede local — o servidor avisa no log ao
-subir, e `deploy/check-publico.ps1` avisa de novo se as portas estiverem abertas para a internet).
+Duas formas convivem até a entrega 4 (ver "Contas e sessão"): **login com a conta dona da campanha**
+(o caminho novo, sem senha nenhuma) ou **`GM_KEY`**, a senha única compartilhada (o bootstrap).
 
-Isso **não** é autenticação: não há conta, sessão assinada nem identidade estável (a identidade
-continua sendo o id do socket). O papel é decidido uma vez, na entrada, e vale para a conexão
-inteira. Ver `DECISOES.md` #12.
+Sem `GM_KEY` definida e sem conta, qualquer um vira mestre — o que só é aceitável em rede local: o
+servidor avisa no log ao subir, e `deploy/check-publico.ps1` avisa de novo se as portas estiverem
+abertas para a internet.
+
+O papel é decidido **uma vez, na entrada**, e vale para a conexão inteira. Não existe promover ou
+rebaixar alguém com a mesa aberta: a identidade não muda no meio de uma partida, e um evento novo só
+precisa consultar o que já foi decidido. Ver `DECISOES.md` #12 e #16.
 
 ### O adapter de rede
 
@@ -367,21 +440,31 @@ Feito:
 - O serviço `app` não publica porta (só o Caddy fala com o mundo) e **não roda como root**:
   `USER node`, filesystem somente-leitura, `/tmp` em tmpfs, nenhuma capability,
   `no-new-privileges`.
-- Caddy na frente: TLS, headers, proxy do WebSocket.
+- Caddy na frente: TLS, headers, proxy do WebSocket **e do `/auth/*`**.
 - Sala por código, nome limitado a 24 caracteres.
+- **Conta e sessão (ADR #16):** senha com `scrypt` (`node:crypto`, sem dependência nova), nunca em
+  texto puro nem no log; cookie `HttpOnly` + `SameSite=Lax` + `Secure` quando a visita é HTTPS, e
+  assinado com HMAC-SHA256. Resposta de login igual para usuário inexistente e senha errada — inclusive
+  no tempo. Limite global de tentativas de login, porque `scrypt` é caro e o mesmo processo serve a
+  partida.
+- **A identidade chega no handshake**, pelo cookie: não existe evento de "autenticar" que alguém possa
+  esquecer de chamar.
 
 Ainda não feito (anotado no ROADMAP):
 
-- **Login e sessão assinada.** A tabela `account` já existe e a senha é guardada com **`scrypt`**
-  (a conta-semente `helio` nasce no primeiro boot, ADR #16 e #17), mas ainda não há rota de login nem
-  leitura do cookie no `room:join`. Enquanto isso a identidade segue sendo o id do socket, e quem cai
-  e volta não é reconhecido como a mesma pessoa.
 - **RBAC de verdade:** papéis e permissão por token. Hoje existem **duas** formas de virar mestre — o
   `GM_KEY`, que é segredo compartilhado e portanto não responde "quem é quem", e a conta dona da
-  campanha, que ainda não está ligada ao `room:join`.
+  campanha. A segunda já está ligada ao `room:join`; falta o `GM_KEY` sair (entrega 4) e o papel do
+  jogador vir do vínculo.
+- **Sem revogação de sessão e sem recuperação de senha.** O cookie é stateless: sair só o apaga no
+  navegador, e um cookie copiado vale até expirar. Trocar `SESSION_SECRET` derruba todas as sessões.
+  Quem esquecer a senha depende do mestre (a senha de mestre é temporária e está avisada no lobby).
 - **Jogador entra sem senha.** O `GM_KEY` protege só o papel de mestre. O plano mudou de um `JOIN_KEY`
   separado para o **vínculo com a campanha** (ADR #16): quem controla a entrada é pertencer à mesa,
   não saber uma segunda senha.
+- **Qualquer código novo cria uma campanha.** Enquanto não existe tela de criar campanha (entrega 3),
+  entrar com um selo desconhecido cria a linha na hora — quem tem a URL cria campanhas sem limite. A
+  correção é a própria entrega 3: criar campanha de propósito e recusar selo desconhecido.
 - Visão por jogador (`visibleNow`): hoje `fogExplored` é compartilhado e o cliente recebe **todos**
   os atores, então um jogador vê o raio de visão dos outros tokens, não só o do dele.
 - `ROOM_CODE` não é segredo: quem tem o endereço e o código entra como jogador. Ser mestre exige a

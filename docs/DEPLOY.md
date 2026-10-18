@@ -348,13 +348,20 @@ docker compose down               # derruba (os dados ficam no volume)
 docker compose down -v            # derruba e apaga o banco — a campanha vai junto!
 ```
 
+> **Mexeu no `Caddyfile` ou no front?** Rebuilde o `caddy` (`docker compose up -d --build caddy`).
+> Ele é quem serve o front e quem roteia `/socket.io/*` e `/auth/*` para o app — e é a imagem mais
+> fácil de esquecer, porque o serviço `app` é o que aparece nos logs do jogo.
+>
+> **Mexeu só no servidor?** `docker compose up -d --build app` basta, e o túnel não é recriado (a URL
+> pública continua a mesma). Rebuildar o `cloudflared` sorteia URL nova.
+
 ## Arquivos
 
 | Arquivo | Papel |
 |---|---|
 | `deploy/docker-compose.yml` | define os serviços `app`, `caddy` e `postgres` |
 | `deploy/Dockerfile` | build multi-stage: compila o front e serve com Caddy |
-| `deploy/Caddyfile` | serve o front estático + proxy do WebSocket + TLS; o endereço vem de `SITE_ADDRESS` |
+| `deploy/Caddyfile` | serve o front estático + proxy do WebSocket **e do `/auth/*`** + TLS; o endereço vem de `SITE_ADDRESS` |
 | `deploy/install.ps1` | instala Docker (se preciso) e sobe o stack |
 | `deploy/check-publico.ps1` | testa, de fora para dentro, se a internet já alcança o servidor |
 | `deploy/.env.example` | modelo das variáveis (endereço, `GM_KEY`, banco, sessão) |

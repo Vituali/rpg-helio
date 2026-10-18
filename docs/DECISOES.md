@@ -367,6 +367,24 @@ local o cookie **não** é `Secure`, porque não há HTTPS; é a exceção consc
 protege é o conjunto: `SameSite=Lax`, só mesma origem (o handshake já recusa `Origin` estranho) e
 rotas de autenticação serem `POST`.
 
+**Emenda (entrega 2, o que a prática corrigiu).**
+
+- **O `Secure` não pode sair do `X-Forwarded-Proto`.** O Caddy termina o TLS do túnel e repassa a
+  requisição em HTTP puro, então esse cabeçalho diz `http` **mesmo numa visita HTTPS** — a sessão
+  pública estava saindo sem `Secure`, que é o cenário clássico de roubo de cookie. Quem sabe a verdade
+  é a borda da Cloudflare (ADR #14), que marca a requisição; a marca é o que o servidor passa a
+  olhar. Isso acopla o `Secure` ao caminho de exposição atual, e é um acoplamento aceito: errar para o
+  lado do `Secure` só restringe, e o acesso direto na LAN não tem marca nenhuma e segue funcionando.
+- **O limite de tentativas de login é global, não por IP.** Atrás do túnel e do Docker todo mundo
+  chega com o mesmo IP de origem (o gateway do compose): um limite por IP seria um limite
+  compartilhado, e o primeiro a abusar travaria o grupo inteiro. O teto global protege o que importa —
+  `scrypt` é caro de propósito e o mesmo processo está servindo a partida.
+- **A conta é lida uma vez por conexão, no escopo da conexão**, e não guardada em `socket.data`. Mesma
+  promessa (resolvida no handshake, sem mensagem nova), sem espalhar estado mutável pelo socket.
+- **`/auth/*` entrou no Caddyfile.** Sem a rota, `POST /auth/login` caía no `try_files` da SPA e
+  devolvia o `index.html` com 200: um erro que se disfarça de sucesso. Rota nova em `handle` de
+  servidor é coisa que precisa de teste, não de olho.
+
 ## #17 – Persistência: Postgres, campanha com Selo da Missão e cena em JSONB
 
 **Contexto.** As salas vivem em memória e nada é escrito em disco — decisão explícita do ADR #15,
