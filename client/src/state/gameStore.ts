@@ -373,6 +373,7 @@ export const useGameStore = create<GameState>()((set, get) => ({
   },
 
   clearActorPath: (id) => {
+    if (isOnline()) send("actor:cancel-move", { actorId: id });
     set((s) => ({
       actors: s.actors.map((a) => (a.id === id ? { ...a, path: [] } : a)),
     }));

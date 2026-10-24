@@ -204,6 +204,7 @@ function discoverableCells(room: Room): Set<string> {
       a.vision ?? 5,
       s.rows,
       s.cols,
+      s.edgeWalls,
     );
     for (const c of seen) out.add(`${c.row},${c.col}`);
   }
@@ -475,8 +476,18 @@ io.on("connection", (socket) => {
     socket.join(room.code);
 
     if (role === "player") {
-      const actor = spawnActor(room, player);
-      player.actorId = actor.id;
+      // Reutiliza token existente deste jogador se o nome coincidir, evitando duplicatas no F5
+      const existing = room.scene.actors.find(
+        (a) => a.name.toLowerCase() === player.name.toLowerCase(),
+      );
+      if (existing) {
+        existing.ownerId = player.id;
+        player.actorId = existing.id;
+        room.pcActors.add(existing.id);
+      } else {
+        const actor = spawnActor(room, player);
+        player.actorId = actor.id;
+      }
     }
 
     // Registra que esta conta passou por esta campanha (ADR #19). Sem await: é
@@ -515,6 +526,17 @@ io.on("connection", (socket) => {
     actor.facing = facingBetween({ row: actor.row, col: actor.col }, to);
     actor.row = to.row;
     actor.col = to.col;
+    bump(m.room);
+  });
+
+  socket.on("actor:cancel-move", (msg) => {
+    const m = me();
+    if (!m) return;
+    const actorId = String((msg as { actorId?: unknown })?.actorId ?? "");
+    const actor = m.room.scene.actors.find((a) => a.id === actorId);
+    if (!actor) return;
+    if (m.player.role !== "gm" && actor.ownerId !== m.player.id) return;
+    actor.path = [];
     bump(m.room);
   });
 

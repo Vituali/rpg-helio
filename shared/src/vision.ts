@@ -23,7 +23,7 @@ function segmentsIntersect(
   const s = (-s1y * (p0x - p2x) + s1x * (p0y - p2y)) / denom;
   const t = (s2x * (p0y - p2y) - s2y * (p0x - p2x)) / denom;
 
-  return s > 0.001 && s < 0.999 && t > 0.001 && t < 0.999;
+  return s > 0.001 && s < 1.001 && t >= -0.001 && t <= 1.001;
 }
 
 function edgeIntersectsRay(

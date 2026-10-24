@@ -490,6 +490,7 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
             myActors,
             nr,
             nc,
+            ew,
           );
         }
       }
@@ -739,11 +740,17 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
       if (
         tool === "pan" ||
         e.button === 1 ||
-        e.button === 2 ||
         (e.button === 0 && e.altKey)
       ) {
         panStart.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
         dragTool.current = "pan";
+        return;
+      }
+
+      // Clique com botão direito cancela o movimento/caminho atual
+      if (e.button === 2) {
+        const st = useGameStore.getState();
+        if (st.activeActorId) st.clearActorPath(st.activeActorId);
         return;
       }
 
@@ -920,6 +927,10 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
         st.setFogMode(st.fogMode === "soft" ? "hard" : "soft");
       }
       if (k === "0") fitView();
+      if (k === "escape") {
+        const st = useGameStore.getState();
+        if (st.activeActorId) st.clearActorPath(st.activeActorId);
+      }
 
       const dirs: Record<string, [number, number]> = {
         arrowup: [-1, 0],
@@ -1459,6 +1470,32 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
               >
                 <IconMove size={13} />
               </button>
+              {(() => {
+                const active = actors.find((a) => a.id === activeActorId);
+                if (!active || active.path.length === 0) return null;
+                return (
+                  <button
+                    type="button"
+                    className="vtt-zoom-btn"
+                    onClick={() => {
+                      if (activeActorId) useGameStore.getState().clearActorPath(activeActorId);
+                    }}
+                    title="Cancelar deslocamento em andamento [Esc / Botão Direito]"
+                    style={{
+                      color: "#ef4444",
+                      background: "rgba(239, 68, 68, 0.18)",
+                      border: "1px solid rgba(239, 68, 68, 0.4)",
+                      padding: "0 6px",
+                      borderRadius: 4,
+                      fontSize: 10,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Parar Passo
+                  </button>
+                );
+              })()}
             </div>
 
             {showMinimap && (

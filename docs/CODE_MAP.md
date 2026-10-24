@@ -1,6 +1,6 @@
 # CODE_MAP.MD — MAPA AUTOMATIZADO DO CÓDIGO (HELIO)
 
-> Gerado automaticamente por `tools/docgen.mjs` em: **2026-10-24T22:11:21.740Z**.
+> Gerado automaticamente por `tools/docgen.mjs` em: **2026-10-24T22:28:20.089Z**.
 > Não edite manualmente. Para atualizar este arquivo, execute: `node tools/docgen.mjs`.
 
 ## Pacote: Shared (`shared/src`)
