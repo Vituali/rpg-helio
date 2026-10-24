@@ -308,6 +308,7 @@ Três variáveis novas no `.env` (detalhe em `.env.example`):
 | `SEED_MASTER_USER` / `SEED_MASTER_PASS` | conta de mestre criada no primeiro boot, se não existir |
 | `GM_KEY` | escapatória de mestre, opcional; **vazia = nenhuma escapatória** (ADR #20) |
 | `REGISTRATION` / `REGISTER_PER_MINUTE` | cadastro de conta aberto ou fechado, e o teto por minuto (ADR #19) |
+| `ADMIN_ACCOUNT` | nome da conta que abre `/admin` e troca senha (ADR #23); padrão `admin`, vazio desliga |
 
 A porta 5432 é publicada **só no loopback** (`127.0.0.1`): dá para abrir um cliente de banco nesta
 máquina, mas nada na rede alcança. É de propósito — um banco com senha não é lugar para repetir a
@@ -338,6 +339,7 @@ A entrada tem duas telas (ADR #21), e cada uma faz uma pergunta:
 |---|---|---|
 | `/entrar` | *quem é você?* | entrar ou criar conta; endereço do servidor em "opções avançadas"; link do modo local |
 | `/mesa` | *em qual missão?* | a conta (e **Sair**), as missões com criar/escolher/apagar, a "Identificação na Ordem" só leitura, o selo e **Ingressar** |
+| `/admin` | *cuidar das contas* | lista de contas e troca de senha — **só a conta `ADMIN_ACCOUNT`** (ADR #23) |
 | `/` | *a mesa* | o mapa, só com conexão viva |
 | `/local` | *preparar sozinho* | o mapa sem servidor |
 
@@ -383,6 +385,30 @@ Entrar continua funcionando; só criar conta nova é que para. **Desde a entrega
 fechar a porta para gente nova**: quem ainda não tem conta não tem como entrar. Se alguém novo chegar
 depois, reabra, deixe a pessoa se cadastrar e feche de novo. Fechar o cadastro **não** protege a mesa
 (quem protege é o selo), mas corta a única porta que um estranho com a URL pode usar sem convite.
+
+### Senha esquecida: o painel do administrador (ADR #23)
+
+Não existe "esqueci minha senha" automático. O caminho de volta é **`/admin`**, aberto **só para a conta
+cujo nome é `ADMIN_ACCOUNT`** (padrão `admin`):
+
+1. Entre em `/entrar` com a conta `admin` (a que você criou).
+2. Em `/mesa`, clique em **Painel** (o cadeado ao lado de *Sair*) — ou vá direto a `/admin`.
+3. Escolha a conta na lista, digite a senha nova duas vezes e confirme.
+
+A lista mostra nome, data de criação, quantas missões a conta possui e em quantas tem vínculo — o
+suficiente para não trocar a senha da pessoa errada. Trocar a senha **não derruba quem já está
+conectado**: o cookie é assinado e não consulta o banco (ADR #16). Para derrubar todo mundo de uma vez,
+troque `SESSION_SECRET` no `deploy/.env` e reinicie o `app`.
+
+**A conta `admin` é a mais valiosa do servidor** — ela define a senha de todas as outras. Duas
+consequências:
+
+- **Ela manda, não joga:** o painel não dá poder na mesa. Ser mestre continua vindo do vínculo com a
+  missão (ADR #19/#22), não deste nome.
+- **Quem criar a conta primeiro, é o administrador.** Se o cadastro estiver aberto e ninguém tiver essa
+  conta ainda, um estranho com a URL pode criá-la. Por isso: cadastre-a agora, use uma senha boa e feche
+  o cadastro quando o grupo todo tiver conta (`REGISTRATION=closed`). Se quiser outro nome, defina
+  `ADMIN_ACCOUNT` no `deploy/.env`; vazio desliga o painel.
 
 ### Backup
 

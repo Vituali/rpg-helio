@@ -683,3 +683,38 @@ aceito de propósito, com o dono como limite. A rota revela a um mestre se um no
 não encontrada") — o mestre já conhece o grupo, e o login continua cego para o resto do mundo. O papel deixou
 de ser "decidido uma vez na entrada" apenas neste caminho controlado; a documentação da arquitetura passou a
 dizer isso com essas palavras.
+
+## #23 – O painel do administrador é uma conta, não um papel
+
+**Contexto.** Não existe recuperação de senha: o ADR #16 aceitou isso de olhos abertos, e o ADR #17 só
+resolve a cena, não a conta. Na prática, quem esquecesse a senha ficava sem identidade — e sem os vínculos —
+até alguém abrir o `psql`. O pedido foi pequeno e honesto: *"criar um painel admin. para poder trocar a senha
+e etc. só pra facilitar. pode ser bem simples e só libera pra conta admin"*.
+
+**Decisão.**
+
+- **O administrador é o nome da conta**, definido em `ADMIN_ACCOUNT` (padrão `admin`; vazio desliga). Não é
+  um papel novo, não mora em `membership`, não entra no modelo de vínculo e não dá poder na mesa. Um papel
+  exigiria coluna, migration, rota para outorgar e uma tela — para uma tarefa que é rara e técnica.
+- **Duas rotas, e nada mais:** `GET /api/admin/accounts` (nome, data de criação, quantas missões a conta
+  possui e em quantas tem vínculo) e `POST /api/admin/accounts/:nome/password` (`{ password }`). O alvo é o
+  **nome**, pelo mesmo motivo do ADR #22: é o que a tela mostra, e o `unique` de `lower(name)` garante que
+  aponta para uma conta só. Senha fora de 6–200 é 400; conta inexistente é 404.
+- **A checagem é no servidor, em cada rota**, contra o nome do cookie assinado. A página `/admin` só
+  esconde o link e redireciona quem não é — conveniência, não permissão. Quem não é administrador recebe
+  **403**, não 404: o painel não é um segredo, a porta é.
+- **Trocar a senha não derruba sessões.** O cookie é assinado e não consulta o banco (ADR #16); a senha nova
+  vale no próximo login, e quem já estava conectado continua. A tela diz isso, e a saída em massa continua
+  sendo trocar `SESSION_SECRET`. É a limitação mais visível desta entrega, e é dita em vez de escondida.
+- **Nada de apagar conta.** Apagar deixaria missão órfã (o dono some e ninguém pode apagá-la), então fica
+  fora até existir uma regra de sucessão. O painel não lista o que não pode fazer.
+- **O boot anuncia quem é o administrador** (`admin: painel em /admin - so a conta "admin"`). Sem isso, um
+  `ADMIN_ACCOUNT` configurado com um nome que ninguém tem deixaria o painel inalcançável em silêncio.
+
+**Consequências.** O risco mais caro desta fase — "esqueci a senha, perdi os vínculos" — passou a ter
+conserto caseiro: o administrador define uma senha nova e a pessoa entra. Com isso, a conta `admin` vira a
+mais valiosa do servidor: ela manda em todas as outras. A recomendação no DEPLOY é explícita — senha boa e
+`REGISTRATION=closed` quando o grupo todo tiver conta, porque **quem criar a conta com esse nome primeiro é o
+administrador**. Como é nome e não papel, renomear a conta (que não existe) não quebra nada, e trocar
+`ADMIN_ACCOUNT` troca o dono do painel sem migration. O `GM_KEY` continua onde estava: a recuperação agora
+existe, mas ainda não é self-service, e o ADR #16 já tinha dito que ele sai quando as duas coisas existirem.

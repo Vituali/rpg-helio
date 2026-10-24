@@ -175,6 +175,11 @@ O login passa por **HTTP**, não pelo socket. Quatro rotas, e só:
 | `POST /api/auth/logout` | Apaga o cookie no cliente |
 | `GET /api/auth/me` | `{ ok, account, signup }` — quem este navegador é, e se o servidor aceita cadastro novo |
 
+Além dessas, o **painel do administrador** (ADR #23): `GET /api/admin/accounts` lista as contas e
+`POST /api/admin/accounts/:nome/password` define a senha de uma delas. As duas exigem a conta cujo
+nome é `ADMIN_ACCOUNT` (padrão `admin`) — **é nome, não papel**, e o servidor confere em cada
+chamada. A página `/admin` é só a tela; esconder o link não é permissão.
+
 O jogo continua inteiro no Socket.IO. A divisão é deliberada: tempo real e CRUD são módulos
 separados, para trocar um sem encostar no outro (`server/src/http.ts`).
 
@@ -561,6 +566,11 @@ Feito:
   a página de entrada parar de oferecer o formulário). O que um cadastro entrega a um estranho é pouco:
   entrar ainda exige o selo, e mestre ainda exige vínculo. **Desde a entrega 5, fechar o cadastro fecha a
   porta de entrada de gente nova**: sem conta não se entra, e não há como criar uma.
+- **Painel do administrador (ADR #23):** uma conta, escolhida pelo **nome** (`ADMIN_ACCOUNT`, padrão
+  `admin`), lista as contas e troca a senha de qualquer uma em `/admin`. É o substituto da recuperação
+  de senha que não existe, e não é um papel: não entra no modelo de vínculo, não dá poder na mesa e
+  não muda o papel de ninguém. A senha nova **não derruba sessões abertas** — para isso, troque
+  `SESSION_SECRET`.
 - **A identidade chega no handshake**, pelo cookie: não existe evento de "autenticar" que alguém possa
   esquecer de chamar. **E ela é obrigatória**: sem sessão válida, `room:join` recusa (ADR #20).
 - **Criar e apagar missão exigem conta** (ADR #18): quem cria é o dono, e apagar é do dono. Quem não é
@@ -572,13 +582,15 @@ Ainda não feito (anotado no ROADMAP):
 
 - **RBAC de verdade:** papéis e permissão por token. O papel do jogador **já vem do vínculo**
   (`membership.role`), o mestre **já outorga** o papel (ADR #22), e o `GM_KEY` virou legado explícito. Ele
-  só sai quando existirem recuperação de senha e revogação de sessão — antes disso, tirá-lo trancaria o
-  grupo de fora se o mestre esquecesse a senha. Falta: ler o vínculo para além de mestre/jogador
-  (permissão por token, por exemplo).
-- **Sem revogação de sessão e sem recuperação de senha.** O cookie é stateless: sair só o apaga no
-  navegador, e um cookie copiado vale até expirar. Trocar `SESSION_SECRET` derruba todas as sessões.
-  **Não existe "esqueci minha senha"**, e nem o mestre troca a senha de ninguém: quem esquece cria outra
-  conta — outra identidade, sem os vínculos antigos. É o risco mais caro desta fase.
+  só sai quando existirem recuperação de senha **self-service** e revogação de sessão — o administrador
+  já troca senha em `/admin` (ADR #23), mas isso ainda é alguém abrindo a porta por você. Antes disso,
+  tirá-lo trancaria o grupo de fora se o mestre esquecesse a senha. Falta: ler o vínculo para além de
+  mestre/jogador (permissão por token, por exemplo).
+- **Sem revogação de sessão, e a senha só o administrador troca.** O cookie é stateless: sair só o apaga
+  no navegador, e um cookie copiado vale até expirar. Trocar `SESSION_SECRET` derruba todas as sessões.
+  **Não existe "esqueci minha senha" automático:** quem esquece pede ao administrador, que define uma
+  nova em `/admin` (ADR #23). A troca resolve o login seguinte, não o presente — a sessão antiga
+  continua valendo até expirar.
 - **Jogador entra sem senha.** O `GM_KEY` protege só o papel de mestre. O plano mudou de um `JOIN_KEY`
   separado para o **vínculo com a campanha** (ADR #16): quem controla a entrada é pertencer à mesa,
   não saber uma segunda senha. Hoje o vínculo é **gravado na entrada**, não exigido para entrar: com o

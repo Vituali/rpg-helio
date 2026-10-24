@@ -105,6 +105,13 @@ mas a rota funciona para qualquer conta da missão — quem foi promovido descon
 próxima sessão. A tela não tem como listar contas que nunca entraram, e inventar uma lista de contas
 seria pior do que a limitação.
 
+**Fora do slice, pedido no meio do caminho: o painel do administrador (ADR #23).** Não havia
+recuperação de senha — quem esquecesse ficava sem identidade até alguém abrir o `psql`. Agora a conta
+`admin` (`ADMIN_ACCOUNT`) lista as contas e define senha em `/admin`; é **nome, não papel**, não dá poder
+na mesa e não derruba sessões abertas. Duas rotas (`GET /api/admin/accounts`,
+`POST /api/admin/accounts/:nome/password`), uma tela, nenhuma migration. Apagar conta ficou fora: deixaria
+missão órfã.
+
 ---
 
 ## Pronto para começar (núcleo)
