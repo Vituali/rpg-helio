@@ -96,16 +96,15 @@ série (dois NATs), WAN diferente do IP fixo, ou bloqueio da operadora nas porta
 > porta fechada, o Caddy tenta o certificado a cada poucos minutos, e o Let's Encrypt bloqueia quem
 > falha 5 vezes na mesma hora — o certificado atrasaria justamente quando você está testando.
 
-**Antes de abrir a porta, defina `GM_KEY` e `SESSION_SECRET` no `deploy/.env`.** Sem sessão, o login
-fica desligado e ninguém cria conta: só convidado entra. Sem `GM_KEY`, qualquer um que chegar na URL
-entra como mestre e assume a mesa — e o endereço não é secreto: o hostname vai para o log público de
-certificados (`crt.sh`) assim que o HTTPS sobe. O `check-publico.ps1` avisa se você esquecer, e o log do
-servidor também.
+**Antes de abrir a porta, defina `SESSION_SECRET` no `deploy/.env`.** Sem ele o login fica desligado e
+**ninguém entra na mesa** — desde a entrega 5 a conta é obrigatória, e o boot avisa em maiúsculas. Defina
+também um `GM_KEY` se quiser a escapatória: **sem `GM_KEY`, ninguém entra como mestre sem vínculo com a
+missão** (antes, vazio significava "qualquer um é mestre"; essa porta fechou).
 
-Desde a entrega 4 cada pessoa **cria a própria conta** no lobby, e o papel de mestre vem do **vínculo**
-com a missão — sem senha compartilhada (ADR #19). O `GM_KEY` virou escapatória: ele continua definido e
-funcionando, e sai quando existir recuperação de senha. Enquanto isso, trate-o como a chave que abre o
-porão — e **feche o cadastro** quando o grupo todo tiver conta (ver "O cadastro de conta").
+Desde a entrega 4 cada pessoa **cria a própria conta** na página de entrada, e o papel de mestre vem do
+**vínculo** com a missão — sem senha compartilhada (ADR #19). O `GM_KEY` virou escapatória: ele continua
+definido e funcionando, e sai quando existir recuperação de senha. Enquanto isso, trate-o como a chave que
+abre o porão — e **feche o cadastro** quando o grupo todo tiver conta (ver "O cadastro de conta").
 
 ---
 
@@ -305,15 +304,17 @@ Três variáveis novas no `.env` (detalhe em `.env.example`):
 | Variável | Para que |
 |---|---|
 | `POSTGRES_PASSWORD` | senha do banco; troque por uma sua |
-| `SESSION_SECRET` | assina o cookie de sessão (ADR #16) |
+| `SESSION_SECRET` | assina o cookie de sessão (ADR #16) — **sem ela ninguém entra** |
 | `SEED_MASTER_USER` / `SEED_MASTER_PASS` | conta de mestre criada no primeiro boot, se não existir |
+| `GM_KEY` | escapatória de mestre, opcional; **vazia = nenhuma escapatória** (ADR #20) |
 | `REGISTRATION` / `REGISTER_PER_MINUTE` | cadastro de conta aberto ou fechado, e o teto por minuto (ADR #19) |
 
 A porta 5432 é publicada **só no loopback** (`127.0.0.1`): dá para abrir um cliente de banco nesta
 máquina, mas nada na rede alcança. É de propósito — um banco com senha não é lugar para repetir a
 lição do IPv6 (pegadinha #4).
 
-**Se o banco estiver fora, a mesa abre do mesmo jeito**, em memória, e o log avisa:
+**Se o banco estiver fora, o servidor sobe e a mesa que já está aberta continua** — em memória, e o log
+avisa:
 
 ```
 [banco] tentativa 6/6 falhou: getaddrinfo ENOTFOUND postgres — seguindo em memória
@@ -322,37 +323,51 @@ lição do IPv6 (pegadinha #4).
 Nesse modo nada é gravado: dá para jogar a sessão inteira, mas ela não sobrevive a um restart. Isso é
 de propósito. Derrubar a mesa por causa do banco seria pior do que não ter banco.
 
+**O que o banco fora impede é entrar**: a conta e o selo moram nele. Quem já está logado tem sessão
+assinada (não consulta o banco) e continua; quem tenta entrar agora não passa do login.
+
 ### O Selo da Missão (como o grupo entra)
 
 Cada missão tem um **selo** — `CORVO-AMBAR-VEU-74`, três palavras e dois dígitos, sorteado pelo
-servidor (ADR #18). É o convite: quem tem o endereço **e** o selo entra como jogador, sem conta.
+servidor (ADR #18). É o convite: quem tem o endereço **e** o selo, **e uma conta**, entra como agente
+(ADR #20).
+
+A entrada tem duas telas (ADR #21), e cada uma faz uma pergunta:
+
+| Endereço | Pergunta | O que tem |
+|---|---|---|
+| `/entrar` | *quem é você?* | entrar ou criar conta; endereço do servidor em "opções avançadas"; link do modo local |
+| `/mesa` | *em qual missão?* | a conta (e **Sair**), as missões com criar/escolher/apagar, a "Identificação na Ordem" só leitura, o selo e **Ingressar** |
+| `/` | *a mesa* | o mapa, só com conexão viva |
+| `/local` | *preparar sozinho* | o mapa sem servidor |
 
 | Quem | O que faz |
 |---|---|
-| Mestre | Entra com a conta (`SEED_MASTER_USER`/`SEED_MASTER_PASS`), cria a missão no lobby e **dita o selo** para o grupo |
-| Jogador | Abre o endereço, digita o selo uma vez (fica guardado no navegador) e escolhe o nome |
-| Com conta | Em vez de redigitar o nome toda sessão, **cria a própria conta** no lobby — e o papel de mestre passa a vir do vínculo com a missão |
+| Mestre | Entra com a conta (`SEED_MASTER_USER`/`SEED_MASTER_PASS`), cria a missão em `/mesa` (ele já é mestre dela) e **dita o selo** para o grupo |
+| Agente | Cria a própria conta em `/entrar`, recebe o selo do mestre e entra por ele — o nome na mesa é o da conta |
+| Promover | Dentro da mesa, o mestre clica no **olho** ao lado de um agente: ele vira mestre **na hora**, e continua mestre nas próximas sessões (ADR #22) |
 
 Três consequências práticas:
 
 - **Selo errado não abre a mesa**, e não cria nada — a mensagem diz para conferir com o mestre. Errar
   20 vezes na mesma conexão derruba a conexão.
-- **Perdeu o selo?** Ele está na lista *Missões de \<conta\>* do lobby, para quem está logado.
+- **Perdeu o selo?** Ele está na lista *Missões de \<conta\>* em `/mesa`, para quem está logado.
 - **`ROOM_CODE` é só o selo sugerido.** Ele é criado no boot **quando o banco está vazio** (primeiro
   boot), para o grupo não precisar criar a missão antes de entrar. Com outras missões já existindo,
   apagar a padrão funciona e ela não volta.
 
-### O cadastro de conta (entrega 4)
+### O cadastro de conta (entregas 4 e 5)
 
-Quem joga por aqui cria a própria conta no lobby (`POST /api/accounts`, ADR #19), e o cadastro já deixa
-a pessoa logada. Com conta, o nome não é redigitado a cada sessão e o **papel de mestre vem do vínculo
-com a missão** — sem a senha compartilhada.
+Quem joga por aqui cria a própria conta em `/entrar` (`POST /api/accounts`, ADR #19), e o cadastro já
+deixa a pessoa logada. Com conta, o nome não é redigitado a cada sessão e o **papel de mestre vem do
+vínculo com a missão** — sem a senha compartilhada. **Sem conta não se entra**: o caminho do convidado
+foi fechado (ADR #20).
 
 O cadastro nasce **aberto**, com teto de tentativas e um interruptor:
 
 | Variável | Padrão | Para que |
 |---|---|---|
-| `REGISTRATION` | `open` | `closed` fecha o cadastro: o lobby para de oferecer "criar conta" e o servidor responde 403 |
+| `REGISTRATION` | `open` | `closed` fecha o cadastro: `/entrar` para de oferecer "criar conta" e o servidor responde 403 |
 | `REGISTER_PER_MINUTE` | `10` | teto global de cadastros por minuto (contra entupir o `scrypt`) |
 
 **Quando o grupo todo tiver conta, feche a porta** — é uma linha no `deploy/.env` e um restart:
@@ -364,7 +379,9 @@ REGISTRATION=closed
 docker compose up -d app     # o log deve dizer: cadastro: FECHADO
 ```
 
-Entrar continua funcionando; só criar conta nova é que para. Fechar o cadastro **não** protege a mesa
+Entrar continua funcionando; só criar conta nova é que para. **Desde a entrega 5, fechar o cadastro é
+fechar a porta para gente nova**: quem ainda não tem conta não tem como entrar. Se alguém novo chegar
+depois, reabra, deixe a pessoa se cadastrar e feche de novo. Fechar o cadastro **não** protege a mesa
 (quem protege é o selo), mas corta a única porta que um estranho com a URL pode usar sem convite.
 
 ### Backup

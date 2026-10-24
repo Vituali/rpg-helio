@@ -48,8 +48,11 @@ Portado para o projeto de verdade:
 - **Multiplayer**: servidor autoritativo em `server/` (Node + Socket.IO), salas por **Selo da Missão**,
   papéis (mestre/jogador), permissão de movimento liberada pelo mestre, fog explorado compartilhado.
 - **Conta e persistência**: Postgres guarda conta, missão e cena — o F5 e o restart do container não
-  apagam a mesa. Quem tem conta não redigita o nome toda sessão, e o papel de mestre vem do **vínculo**
-  com a missão (`GM_KEY` é legado, mantido até existir recuperação de senha).
+  apagam a mesa. A **conta é obrigatória** (não existe convidado), o nome na mesa é o da conta e o papel
+  de mestre vem do **vínculo** com a missão — e o mestre pode **promover** um agente na hora. `GM_KEY` é
+  legado, mantido até existir recuperação de senha.
+- **Páginas de verdade**: `/entrar` (conta), `/mesa` (missão), `/` (a mesa) e `/local` (preparar sem
+  servidor) — cada uma com URL própria e uma pergunta só.
 
 O que ainda falta está em [`docs/ROADMAP.md`](docs/ROADMAP.md), e o quadro do momento em
 [`docs/KANBAN.md`](docs/KANBAN.md). O próximo item é o fog por jogador (Fase 3).
@@ -73,15 +76,16 @@ seletores de token e de mapa no painel lateral. O manifesto do mapa guarda tamb�
 altura** da imagem: com isso o botão `⊞` ao lado do mapa ajusta a grade ao formato dele — sem isso
 a imagem aparece esticada.
 
-O servidor multiplayer existe, e persistência, conta e Selo da Missão também (as quatro entregas do
-slice "a sessão que sobrevive"). O próximo passo é a visão por jogador (Fase 3).
+O servidor multiplayer existe, e persistência, conta, Selo da Missão, entrada em páginas e promoção a
+mestre também (as seis entregas do slice "a sessão que sobrevive"). O próximo passo é a visão por
+jogador (Fase 3).
 
 ## Rodando
 
 ### Só o cliente (modo local)
 
-Serve para o mestre preparar o mapa sozinho, sem servidor. Na tela de entrada, escolha
-**"Preparar o mapa sozinho"**.
+Serve para o mestre preparar o mapa sozinho, sem servidor. Em `/entrar`, escolha
+**"Preparar o Mapa Sozinho (Modo Local)"** (ou abra `/local` direto).
 
 ```bash
 cd client
@@ -111,22 +115,23 @@ npm run dev          # http://localhost:5173
 O cliente em dev manda `/socket.io` para `localhost:3000` pelo proxy do Vite — é o mesmo caminho
 que o Caddy usa em produção, então não há surpresa ao subir.
 
-**Como entrar:** todos abrem a mesma página. O mestre cria uma **missão** no lobby (nome + selo
-sorteado, ex.: `CORVO-AMBAR-VEU-74`) e **dita o selo** para o grupo: quem tem o selo entra. Cada um
-escolhe *Jogador* e recebe um token próprio. Quem **cria conta** no lobby não redigita o nome toda
-sessão — e é **mestre** nas missões em que tem vínculo de mestre (hoje: as que criou).
+**Como entrar:** todos abrem a mesma página e **criam a própria conta** em `/entrar` (não existe convidado
+— ADR #20). Em `/mesa`, o mestre cria a **missão** (nome + selo sorteado, ex.: `CORVO-AMBAR-VEU-74`) e
+**dita o selo** para o grupo: quem tem conta e selo entra como agente e recebe um token próprio. O nome na
+mesa é o da conta, e o papel vem do **vínculo** com a missão: quem criou é mestre dela. Dentro da mesa, o
+mestre pode **promover um agente a mestre** pelo painel 👥 MESA — vale na hora, sem F5.
 
 A senha de mestre (`GM_KEY`, no `deploy/.env` ou no ambiente do servidor) continua valendo como
-escapatória — sem ela definida, qualquer um vira mestre, o que só é aceitável em rede local; o servidor
-avisa no log quando sobe assim. O mestre libera o movimento pelo painel 👥 MESA, no painel lateral.
+escapatória — mas, desde a entrega 5, **vazia significa nenhuma escapatória** (antes, vazia entregava a
+mesa a qualquer um). O mestre libera o movimento pelo painel 👥 MESA, no painel lateral.
 
 Testes rápidos, com o servidor no ar:
 
 ```bash
 cd server
-npm run smoke        # 19 verificações: permissão, parede, fog, selo e saída
-npm run selo         # 25: formato do selo e normalização
-npm run auth         # 34: conta, cadastro, vínculo e sessão
+npm run smoke        # 21: conta, permissão, parede, fog, selo e saída
+npm run selo         # 25: formato do selo, normalização e o convite
+npm run auth         # 40: conta, cadastro, vínculo, recusa sem conta e promoção
 ```
 
 ### Em produção (Docker)
@@ -174,13 +179,15 @@ HELIO/
 │   │   ├── maps/            # mapas otimizados + manifest.json
 │   │   └── sprites/         # spritesheets de caminhada (opcional)
 │   └── src/
-│       ├── state/           # stores: jogo (gameStore) e conexão (netStore)
-│       ├── net/             # adapter Socket.IO (bridge.ts + socket.ts)
+│       ├── screens/         # as páginas (Shell, Entrar, Mesa) — ADR #21
+│       ├── state/           # stores: jogo (gameStore), conexão (netStore) e sessão (sessionStore)
+│       ├── net/             # adapter Socket.IO (bridge.ts + socket.ts) e HTTP (auth.ts)
 │       ├── render/          # desenho no canvas (atores, sprites, imagens)
-│       └── components/      # UI React (FogWarMap, Lobby, PlayersPanel)
+│       └── components/      # UI React (FogWarMap, PlayersPanel, ...)
 ├── server/                  # servidor autoritativo Socket.IO
 │   ├── src/                 # index.ts (socket), room.ts (estado), validate.ts (regras),
-│   │                        #   http.ts (rotas /api), store.ts + accounts.ts (banco), auth.ts, selo.ts
+│   │                        #   http.ts (rotas /api), live.ts (ponte HTTP→mesa), store.ts,
+│   │                        #   accounts.ts (banco), auth.ts, selo.ts
 │   ├── migrations/          # SQL numerado (001_init.sql, 002_vinculo_gm.sql)
 │   ├── scripts/             # smoke, selo, auth, persist (+ harness) — rodam do host
 │   └── Dockerfile

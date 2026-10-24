@@ -391,6 +391,10 @@ rotas de autenticação serem `POST`.
   para o app e o resto é arquivo estático: rota nova dentro do prefixo não tem como ser esquecida, e
   rota que falta vira 404 de verdade.
 
+**Emenda da entrega 5 (ADR #20).** A conta deixou de ser um upgrade e virou a porta: sem sessão válida,
+`room:join` recusa, e o cliente parou de mandar nome e papel. Sem `SESSION_SECRET` não há login — e
+portanto não há mesa.
+
 ## #17 – Persistência: Postgres, campanha com Selo da Missão e cena em JSONB
 
 **Contexto.** As salas vivem em memória e nada é escrito em disco — decisão explícita do ADR #15,
@@ -486,6 +490,10 @@ no fim** (com a degradação para selo aleatório, para continuarem rodando com 
 modo que a mesa precisa suportar). `GM_KEY` continua valendo como bootstrap — o caminho de mestre por
 conta e o legado convivem (na entrega 4 o papel passou a vir do vínculo; ver ADR #19).
 
+**Emenda da entrega 5 (ADRs #20 e #21).** O convidado saiu: quem entra pelo selo é uma conta, e a mesa
+mostra o nome dela. A lista de missões e o campo do selo moraram para a página `/mesa`, junto do papel
+que o servidor vai dar — o selo continua guardado no navegador, e o resto da mecânica não mudou.
+
 ## #19 – A conta do agente: cadastro com freio, e o papel de mestre vem do vínculo
 
 **Contexto.** A entrega 3 fechou o selo, mas deixou um buraco que só apareceu ao usar: **só existe uma
@@ -539,3 +547,139 @@ trocado, o que desloga todo mundo de uma vez. Ele virou legado explícito (o boo
 quando existir recuperação de senha, não antes. Ficam pendentes, de propósito: promover um agente a
 mestre (a linha existe, falta o botão), apagar a própria conta (mexe em campanha órfã) e renomear
 missão.
+
+**Emendas das entregas 5 e 6 (ADRs #20 e #22).** O botão chegou — e a promoção vale **na hora**, por uma
+ponte entre o HTTP e a mesa viva. O cliente parou de mandar `role`: entrar como agente sem vínculo não é
+mais possível, e quem é mestre entra como mestre sem digitar nada. "Entrar como agente" deixou de
+significar "sem vínculo".
+
+---
+
+## #20 – A conta é a porta: sem sessão não se entra, e o papel não se pede
+
+**Contexto.** A entrega 4 fez o papel vir do vínculo e o nome vir da conta — e deixou o convidado de pé. Ele
+não sobreviveu ao uso: sem conta não há vínculo (logo, não há como ser promovido), não há nome estável (o
+nome morria com o socket) e não há linha em `membership` (logo, a lista de missões nunca o encontraria). Pior:
+o cliente **ainda mandava `role: "gm"`** no `room:join`. O servidor já ignorava o valor e decidia pelo
+vínculo, mas o campo continuava ali, uma mentira esperando alguém confiar nela. Enquanto o nome e o papel
+eram digitados, "a mesa exige conta" não passava de uma boa intenção.
+
+**Decisão (1): sem conta não se entra.**
+
+- **`room:join` recusa sem sessão válida** — `{ ok: false, error: "Entre com a sua conta para jogar." }` — e
+  recusa **antes** de olhar o selo: selo nenhum é consultado, sala nenhuma é criada. O caminho do convidado
+  não virou exceção; virou erro.
+- **A recusa é a mesma sem `SESSION_SECRET`.** Sem a variável não existe login, e a mesa **não abre no
+  escuro**: um servidor que aceita qualquer um porque a sessão está desligada é um servidor que ninguém sabe
+  que está desligado. O boot grita sobre a variável que falta (e o teste de fumaça falha dizendo o mesmo).
+- **O que o ADR #17 promete continua valendo**: a sessão é assinada e **não mora no banco**, então banco fora
+  não derruba quem já está logado. O que morre com o banco é o selo (que precisa ser julgado) — e o
+  `CampaignLookup` continua distinguindo "não existe" de "não deu para saber".
+
+**Decisão (2): o cliente manda o convite, o servidor decide quem você é.**
+
+- **O payload é `{ code, key }`.** Nome e papel saíram. O nome é o **da conta** (`MAX_NAME` e o campo de nome
+  foram embora junto), e o papel é calculado no servidor:
+  `memberRole === "gm" || chave certa ? "gm" : "player"`.
+- **A chave continua sendo uma declaração de intenção, e só isso.** Vazia não declara nada: você entra como
+  agente, mesmo sendo mestre (um mestre pode querer jogar). Digitada, ela diz "quero entrar como mestre" — e
+  se a conta não tem vínculo e a chave está errada, a resposta é **"Senha de mestre incorreta."**, não um
+  rebaixamento silencioso. Quem **tem** vínculo ignora a chave errada: a identidade vence o acidente de
+  digitação.
+- **`GM_KEY` vazia agora fecha a escapatória.** Antes, vazio significava "sem senha — qualquer um é mestre", o
+  que só era aceitável numa rede local sem contas. Com conta obrigatória, "sem senha" seria entregar a mesa a
+  qualquer conta que digitasse qualquer coisa: vazio passou a significar **nenhuma escapatória**, e o vínculo é
+  o único caminho. Quem precisa de escapatória configura uma.
+
+**Consequências.** O convidado saiu dos docs, dos testes e do código (`selo.mjs` passou a entrar com a conta
+de teste; `auth.mjs` ganhou a recusa explícita). O custo de entrada virou um nome e uma senha — e, se o
+cadastro estiver fechado, **não há como criar conta**: fechar `REGISTRATION` agora é uma porta que se fecha
+para sempre até reabrir (ver `DEPLOY.md`). Ficam pendentes, e agora mais visíveis: **não existe recuperação
+de senha** (esquecer a senha = criar outra conta = outra identidade, sem os vínculos) e **não existe apagar
+conta**.
+
+---
+
+## #21 – Páginas: cada tela faz uma pergunta
+
+**Contexto.** A entrada era **uma** tela com o endereço do servidor, o formulário de conta, a "Identificação
+na Ordem" (nome + *mestre/agente*), a lista de missões, o selo, a senha de mestre e o link do modo local.
+Dois desses campos não faziam o que pareciam: `role` era ignorado pelo servidor (o vínculo decidia) e o nome
+era ignorado para quem tinha conta. Uma tela que pergunta sete coisas e ignora duas ensina a pessoa a
+desconfiar do formulário inteiro. O pedido foi direto: *"1 pro login e cadastro, 1 pra selecionar a
+campanha"*.
+
+**Decisão.** React Router (v7), com URLs de verdade — porque "página" sem endereço não é página, é etapa de
+assistente que ninguém consegue mandar por link:
+
+| Rota | Pergunta | O que tem |
+|---|---|---|
+| `/entrar` | *quem é você?* | entrar ou criar conta (a aba de criar só existe se o servidor aceitar, `signup`); endereço do servidor em "opções avançadas"; link para o modo local |
+| `/mesa` | *em qual missão?* | a conta (e **Sair**), as missões com criar/escolher/apagar, a "Identificação na Ordem" **somente leitura**, o selo, a senha de mestre escondida, **Ingressar** |
+| `/` | *a mesa* | o mapa, e só com `status === "online"` |
+| `/local` | *a mesa sem servidor* | o mapa de preparação, com saída no topo |
+| `*` | — | volta para `/` |
+
+- **A cadeia de guardas resolve o resto**: `/` sem conexão manda para `/mesa`; `/mesa` sem conta manda para
+  `/entrar`; `/entrar` com conta manda para `/mesa`. Ninguém precisa decorar a ordem.
+- **`ready` existe por causa do piscar.** A sessão vive num cookie `HttpOnly`: o cliente **pergunta** quem é
+  (`GET /api/auth/me`). Sem um "já perguntei", toda visita a `/mesa` mostraria o formulário por um instante
+  para quem já estava logado. `sessionStore.ready` é essa resposta, e as guardas esperam por ela.
+- **A identidade é a pessoa, não o personagem.** "Identificação na Ordem" mostra **o nome da conta** e o papel
+  que o servidor vai dar, em vez de pedir os dois. Ficha de agente, quando existir, é outra tela e outro nome.
+- **O endereço do servidor mudou de lado.** Ele fica em `/entrar` porque vale para `/api` e para o socket ao
+  mesmo tempo (ADR #16) — quem digita ali espera entrar **naquele** servidor, e não num para a conta e noutro
+  para o jogo.
+- **O que sobrevive ao F5 fica no navegador**: o último selo e a última chave de mestre (nunca a senha). O
+  resto vive nos stores (zustand), não na página.
+
+**Consequências.** O `Lobby.tsx` (1025 linhas) virou três arquivos com um só assunto cada: `screens/Shell.tsx`
+(a moldura e a trilha *1 Conta · 2 Missão*), `screens/Entrar.tsx` e `screens/Mesa.tsx`. O Caddy **não mudou**:
+o `try_files {path} /index.html` da entrega 2 já servia link fundo. Sair da mesa passou a existir de verdade
+— no modo local é só navegar, e na mesa **desconecta** (o servidor solta o token, como fechar a aba), o que
+também permite trocar de missão sem F5. Recarregar o `/` perde a conexão e cai em `/mesa`: é honesto (o socket
+morreu), e o selo guardado deixa a volta a dois cliques. **Reentrar automático não foi feito** — ele
+escolheria uma missão pela pessoa.
+
+---
+
+## #22 – O mestre outorga o papel, e a promoção vale na hora
+
+**Contexto.** O ADR #19 deixou a linha de `membership` pronta e o botão faltando. O pedido foi exatamente
+esse: *"mestre pode dar a permissao ou dar o lider do ato. q ai vira mestre"*. A pergunta boa não era "como
+gravar" (é um `upsert`), e sim **como fazer valer numa mesa que já está aberta** — a pessoa promovida está
+conectada, e esperar o próximo F5 é o mesmo que não ter promovido.
+
+**Decisão.**
+
+- **`POST /api/campaigns/:selo/role`** com `{ name, role: "gm" | "player" }`, exigindo conta. Pode outorgar
+  **quem já é mestre ali**: o dono ou qualquer conta com `membership.role = 'gm'` naquela missão — um
+  co-mestre precisa montar a própria equipe. Quem não é recebe **404**, a mesma resposta de "selo não
+  existe", para não entregar quais selos existem nem quem manda em quê.
+- **O alvo é o nome da conta**, não o id: é o nome que o painel mostra, e o `unique` de `lower(name)` garante
+  que ele aponta para uma conta só.
+- **A permissão, o alvo e a gravação são uma instrução só** (um CTE que escreve: `pode`, `alvo`, `gravado`).
+  Se o vínculo de quem outorga sumir no meio do caminho, nada é escrito — a checagem e o efeito não podem
+  morar em transações diferentes.
+- **O dono nunca é rebaixado** (400). Ele administra a missão (apaga, aparece como dono na lista); tirar o
+  papel dele deixaria a caneta com uma pessoa e o volante com outra. Todo o resto é rebaixável, inclusive
+  quem promoveu — o dono é a rede de segurança.
+- **O efeito é imediato, e por isso existe `server/src/live.ts`.** A rota grava o vínculo e chama
+  `roleChanged()`; `index.ts` — o único módulo que tem o `io` e o mapa de salas — registra um ouvinte que
+  atualiza `room.players` e faz `broadcast(room)`. A ponte tem **uma** função e existe para os dois lados não
+  se conhecerem: `http.ts` não importa o servidor de sockets, e `index.ts` não importa rotas. Trocar um por
+  outro não move esta peça.
+- **Promover não tira nada; rebaixar dá o que falta.** Um mestre não tem token; ao virar agente, ganha um
+  token (e isso é cena, então é gravado). Promover mantém o token que a pessoa já tinha — ela só passou a
+  poder tudo.
+- **Na tela**, o painel da mesa (`PlayersPanel`) mostra para o mestre um botão por jogador: **olho** dá o
+  papel de mestre, **espadas** devolve a agente. O servidor confere de novo; o botão é conveniência.
+
+**Consequências.** Promover é **durável** (vínculo no banco, vale no próximo boot) **e imediato** (a sessão
+aberta muda sem F5) — as duas coisas, porque uma sem a outra é uma promessa pela metade. Funciona também para
+quem **não está conectado**: a rota grava o vínculo e a pessoa entra como mestre na próxima vez (a tela só
+oferece o botão para quem está na sala). Um mestre pode rebaixar outro mestre, inclusive o que o promoveu:
+aceito de propósito, com o dono como limite. A rota revela a um mestre se um nome de conta existe (400 "Conta
+não encontrada") — o mestre já conhece o grupo, e o login continua cego para o resto do mundo. O papel deixou
+de ser "decidido uma vez na entrada" apenas neste caminho controlado; a documentação da arquitetura passou a
+dizer isso com essas palavras.

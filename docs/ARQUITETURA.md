@@ -19,10 +19,13 @@ snapshot. Não vale a complexidade de delta ainda.
 ## Camadas do cliente
 
 ```
-client/src/components/   UI React (FogWarMap, Lobby, PlayersPanel)
+client/src/screens/      as páginas (Entrar, Mesa, Shell) — ADR #21
+        │  monta
+        ▼
+client/src/components/   UI React (FogWarMap, PlayersPanel, ...)
         │  lê/escreve via ações
         ▼
-client/src/state/        gameStore + netStore (Zustand)
+client/src/state/        gameStore + netStore + sessionStore (Zustand)
         │  │
         │  └─▶ net/      adapter de transporte (Socket.IO) — o ÚNICO lugar que fala socket
         │          ▲
@@ -161,7 +164,7 @@ em memória. Perder a partida por causa do banco seria pior do que não ter banc
 
 ---
 
-## Contas e sessão (ADRs #16 e #19, entregas 2 e 4)
+## Contas e sessão (ADRs #16, #19 e #20 — entregas 2, 4 e 5)
 
 O login passa por **HTTP**, não pelo socket. Quatro rotas, e só:
 
@@ -194,6 +197,7 @@ navegador abre o socket ─▶ handshake leva o cookie ─▶ servidor sabe QUEM
                           │
                           ▼
 room:join ─▶ nome vem da conta; papel vem do vínculo com a missão
+             sem sessão válida, recusa — e nada é criado (ADR #20)
 ```
 
 O cookie é **stateless**: carrega `{accountId, name, iat, exp}` e a assinatura. Sem tabela de
@@ -201,8 +205,9 @@ sessões no banco. O preço está anotado: **não existe revogação** — sair 
 cookie, e um cookie copiado continua válido até expirar (30 dias). Trocar `SESSION_SECRET` derruba
 todas as sessões de uma vez, o que é o botão de pânico suficiente por agora.
 
-Sem `SESSION_SECRET` configurado, o login fica **desligado** e o servidor avisa no log: só convidado
-entra. É melhor isso do que assinar sessão com uma chave inventada.
+Sem `SESSION_SECRET` configurado, o login fica **desligado** — e, desde a entrega 5, **ninguém entra na
+mesa**: exigir conta com o login desligado é a única regra coerente, e o boot avisa em letras grandes. É
+melhor isso do que assinar sessão com uma chave inventada ou abrir a mesa sem conta nenhuma.
 
 ### Cadastro: aberto, com freio e interruptor (ADR #19)
 
@@ -210,13 +215,13 @@ Criar conta é `POST /api/accounts`: nome de 2 a 24 caracteres, senha de 6 a 200
 devolve o cookie — quem se cadastra entra, sem tela de "agora digite de novo o que você acabou de
 digitar".
 
-**O cadastro é aberto por padrão.** `REGISTRATION=closed` fecha a porta (o lobby para de oferecer
+**O cadastro é aberto por padrão.** `REGISTRATION=closed` fecha a porta (a página de entrada para de oferecer
 "criar conta", o servidor responde 403 e o boot avisa), e `REGISTER_PER_MINUTE` (padrão 10) limita a
 rajada. O freio é modesto porque o que um cadastro entrega a um estranho é pouco: **entrar ainda exige
 o Selo da Missão, e ser mestre ainda exige vínculo**. A conta sozinha não abre mesa nenhuma — o limite
 existe para não entupir o `scrypt`, que é caro de propósito e roda na mesma thread da partida.
 
-`GET /api/auth/me` devolve `signup` junto de "quem sou eu": o lobby precisa saber se pode oferecer o
+`GET /api/auth/me` devolve `signup` junto de "quem sou eu": a página de entrada precisa saber se pode oferecer o
 formulário antes de a pessoa preencher.
 
 **Nome repetido é dito na cara aqui — no login, não.** É a única assimetria, e é inevitável: o índice
@@ -228,7 +233,7 @@ No login a resposta continua cega, porque ali não custa nada ser cego (e evita 
 | Caminho | Como | Situação |
 |---|---|---|
 | **Vínculo de mestre** | `membership.role = 'gm'` para aquela missão | O caminho de verdade — **sem senha nenhuma** |
-| `GM_KEY` | Senha compartilhada digitada no lobby | **Legado**, mantido por não existir recuperação de senha |
+| `GM_KEY` | Senha compartilhada digitada em *opções avançadas*, na página da missão | **Legado**, mantido por não existir recuperação de senha; **não escreve vínculo** |
 
 `campaign.gm_account_id` continua existindo, mas virou o **dono**: quem administra (apaga a missão,
 aparece como dono na lista). Quem criou a missão recebe um vínculo `gm` **na mesma instrução** que a
@@ -236,15 +241,16 @@ cria — um CTE que escreve, e no Postgres ele roda inteiro ou não roda. Se as 
 separar, o dono ficaria sem o papel de mestre na própria missão, em silêncio.
 
 **Estar na mesa é ser agente dela; ser mestre é outorga explícita.** Entrar grava vínculo de jogador, e
-o conflito não rebaixa ninguém: um mestre pode querer jogar como agente numa sessão. Sem essa regra,
-entrar com a `GM_KEY` — uma senha compartilhada — promoveria a pessoa para sempre, em silêncio.
+o conflito não rebaixa ninguém. Quem é mestre **entra como mestre**: o cliente não pede papel (ADR #20), e
+o único jeito de deixar de ser mestre é alguém com poder rebaixar — o que também vale na hora (ADR #22).
 
 Recusar em vez de rebaixar em silêncio é de propósito: quem digitou a senha errada precisa entender por
-que não manda no mapa. O `ack` diz qual dos dois caminhos falhou — "senha incorreta" para quem está
-logado mandaria procurar o problema no lugar errado.
+que não manda no mapa. Desde a entrega 5 a recusa é uma só — **"Senha de mestre incorreta."** — porque a
+chave só pode significar uma coisa: "quero entrar como mestre". Quem tem vínculo ignora a chave errada.
 
-**Convidado continua convidado:** sem conta, o nome é digitado (até 24 caracteres) e a identidade é o
-id do socket, como sempre foi. A conta é um upgrade, não um pedágio — o grupo entra sem cadastro.
+**Não existe mais convidado (ADR #20).** Sem conta não se entra: o nome vem da conta, o papel vem do
+vínculo e o cadastro é a porta. A conta deixou de ser um upgrade e virou pedágio consciente — é o preço
+do nome estável, de ser encontrado na lista de membros e de poder ser promovido.
 
 ### Detalhes que doem se errados
 
@@ -263,8 +269,8 @@ id do socket, como sempre foi. A conta é um upgrade, não um pedágio — o gru
 
 ## Selo da Missão (ADR #18, entrega 3)
 
-O selo é o **convite do convidado**: quem não tem conta entra por ele, então ele é a única coisa entre
-um estranho que achou a URL e a sua mesa. Por isso ele é **gerado**, legível e não escolhido:
+O selo é o **convite do agente**: quem tem conta entra por ele, então ele é a única coisa entre um
+estranho que achou a URL e a sua mesa. Por isso ele é **gerado**, legível e não escolhido:
 
 ```
 CORVO-AMBAR-VEU-74      três palavras (de 165, sem acento) + dois dígitos ≈ 28 bits
@@ -280,6 +286,7 @@ A campanha passou a ser criada **de propósito**, e não de carona:
 |---|---|---|
 | `POST /api/campaigns` | conta | Cria a missão (nome + selo sorteado), torna a conta **dona** e **mestra** |
 | `GET /api/campaigns` | conta | **Minhas mesas**: as que criei e as que entrei, com o papel de cada uma |
+| `POST /api/campaigns/:selo/role` | mestre da missão | Dá ou tira o papel de mestre de uma conta (ADR #22) |
 | `DELETE /api/campaigns/:selo` | dona | Apaga a missão, a cena e os vínculos junto |
 
 Antes, entrar com um selo novo criava a linha na hora: qualquer um com a URL criava campanha sem
@@ -306,13 +313,14 @@ Errar o selo tem preço: a conexão guarda um contador e é derrubada ao passar 
 um selo é a única porta que depende de palpite, e sem contador uma conexão varre selos na velocidade do
 limite de pacotes.
 
-### Onde o selo mora na tela
+### Onde o selo mora na tela (ADR #21)
 
 | Momento | O que aparece |
 |---|---|
-| Logado, no lobby | Lista **Missões de \<conta\>**, com **mestre** ou **agente** em cada uma — clicar preenche o selo; o `×`, que só o dono vê, apaga com confirmação |
+| `/mesa`, com conta | Lista **Missões de \<conta\>**, com **mestre** ou **agente** em cada uma — clicar preenche o selo; o `×`, que só o dono vê, apaga com confirmação |
 | Recém-criada | O selo é destacado e já cai no campo: é o que o mestre dita para o grupo |
-| Convidado | Digita o selo uma vez; fica guardado no navegador para a próxima |
+| Agente | Digita o selo uma vez; fica guardado no navegador para a próxima |
+| Sem conta | Não passa de `/entrar`: a mesa não é uma tela pública |
 | Na mesa | O cabeçalho mostra o **nome** da missão; o selo continua à mão do mestre |
 
 O nome (\"A Maldição de Veríssimo\") é para ler; o selo é para entrar. **Os dois não se derivam**:
@@ -413,12 +421,12 @@ delta entra **atrás do mesmo adapter** — o resto do sistema não muda.
 `room:join` recebe um ack com o estado inicial. O broadcast `room:state` chega **depois** do ack,
 então quem entra usa o ack como primeiro estado; sem isso a tela fica vazia por um instante.
 
-O ack também é o canal de recusa: `{ ok: false, error }`. **Dois** motivos usam isso hoje — o **selo
-desconhecido** (ADR #18) e entrar como mestre sem vínculo de mestre na missão e com `key` errada. Nos
-dois casos o cliente volta para o lobby mostrando o motivo, em vez de ficar conectado sem estar na
-sala. A recusa de mestre também **descarta a sala** se ela tiver ficado vazia: a sala foi carregada só
-para decidir o papel, e sem isso ela ficaria para sempre em memória, vazia e invisível. A recusa de
-selo nem chega a criar sala.
+O ack também é o canal de recusa: `{ ok: false, error }`. **Três** motivos usam isso hoje — **sem conta**
+(ADR #20), o **selo desconhecido** (ADR #18) e **chave de mestre errada** por quem não tem vínculo. Nos
+três casos o cliente volta à página da missão mostrando o motivo, em vez de ficar conectado sem estar na
+sala. A recusa de chave também **descarta a sala** se ela tiver ficado vazia: a sala foi carregada só para
+decidir o papel, e sem isso ela ficaria para sempre em memória, vazia e invisível. A recusa de conta acontece
+antes de qualquer consulta, e a de selo nem chega a criar sala.
 
 As rotas HTTP (`/api/auth/*` e `/api/campaigns`) são o outro caminho de entrada, e estão em "Contas e
 sessão" e em "Selo da Missão".
@@ -429,13 +437,15 @@ Quem decide é o **vínculo com a missão**: `membership.role = 'gm'`. Quem cria
 vínculo (e é também o **dono**, que é quem apaga). O `GM_KEY` continua valendo como escapatória — é
 legado, e sai quando existir recuperação de senha (ver "Quem é mestre: o vínculo, não a posse").
 
-Sem `GM_KEY` definida, ela não recusa ninguém: qualquer um entra como mestre. O que só é aceitável em
-rede local — o servidor avisa no log ao subir, e `deploy/check-publico.ps1` avisa de novo se as portas
-estiverem abertas para a internet.
+**Sem `GM_KEY` definida, não existe escapatória.** Até a entrega 4, chave vazia significava "sem senha —
+qualquer um é mestre", o que só era aceitável em rede local sem contas. Com conta obrigatória isso seria
+entregar a mesa a qualquer conta que digitasse qualquer coisa: agora vazio = nenhum caminho além do
+vínculo.
 
-O papel é decidido **uma vez, na entrada**, e vale para a conexão inteira. Não existe promover ou
-rebaixar alguém com a mesa aberta: a identidade não muda no meio de uma partida, e um evento novo só
-precisa consultar o que já foi decidido. Ver `DECISOES.md` #12, #16 e #19.
+O papel é decidido **na entrada** — e muda **de propósito** com a mesa aberta, por um caminho só: a rota
+de papel (ADR #22). Ela grava o vínculo e avisa a mesa viva por `server/src/live.ts`; o servidor atualiza
+`room.players` e reenvia o snapshot, e a pessoa promovida comanda o mapa sem F5. Fora desse caminho, a
+identidade não muda no meio de uma partida.
 
 ### O adapter de rede
 
@@ -548,28 +558,31 @@ Feito:
   partida.
 - **Cadastro de conta (ADR #19):** `POST /api/accounts` cria a conta e já devolve a sessão. Aberto por
   padrão, com teto global (`REGISTER_PER_MINUTE`) e interruptor (`REGISTRATION=closed`, que também faz
-  o lobby parar de oferecer o formulário). O que um cadastro entrega a um estranho é pouco: entrar
-  ainda exige o selo, e mestre ainda exige vínculo.
+  a página de entrada parar de oferecer o formulário). O que um cadastro entrega a um estranho é pouco:
+  entrar ainda exige o selo, e mestre ainda exige vínculo. **Desde a entrega 5, fechar o cadastro fecha a
+  porta de entrada de gente nova**: sem conta não se entra, e não há como criar uma.
 - **A identidade chega no handshake**, pelo cookie: não existe evento de "autenticar" que alguém possa
-  esquecer de chamar.
+  esquecer de chamar. **E ela é obrigatória**: sem sessão válida, `room:join` recusa (ADR #20).
 - **Criar e apagar missão exigem conta** (ADR #18): quem cria é o dono, e apagar é do dono. Quem não é
   dono recebe 404 e não descobre nem quais selos existem. O papel de **mestre na mesa** vem do
-  **vínculo** (`membership.role`), não da posse (ADR #19).
+  **vínculo** (`membership.role`), não da posse (ADR #19), e pode ser **outorgado** por quem já é mestre
+  — na hora, sem F5 (ADR #22). O dono nunca é rebaixado.
 
 Ainda não feito (anotado no ROADMAP):
 
 - **RBAC de verdade:** papéis e permissão por token. O papel do jogador **já vem do vínculo**
-  (`membership.role`), e o `GM_KEY` virou legado explícito. Ele só sai quando existirem recuperação de
-  senha e revogação de sessão — antes disso, tirá-lo trancaria o grupo de fora se o mestre esquecesse a
-  senha. Falta: promover um agente a mestre (a linha existe, falta o botão) e ler o vínculo para além
-  de mestre/jogador.
+  (`membership.role`), o mestre **já outorga** o papel (ADR #22), e o `GM_KEY` virou legado explícito. Ele
+  só sai quando existirem recuperação de senha e revogação de sessão — antes disso, tirá-lo trancaria o
+  grupo de fora se o mestre esquecesse a senha. Falta: ler o vínculo para além de mestre/jogador
+  (permissão por token, por exemplo).
 - **Sem revogação de sessão e sem recuperação de senha.** O cookie é stateless: sair só o apaga no
   navegador, e um cookie copiado vale até expirar. Trocar `SESSION_SECRET` derruba todas as sessões.
-  Quem esquecer a senha depende do mestre (a senha de mestre é temporária e está avisada no lobby).
+  **Não existe "esqueci minha senha"**, e nem o mestre troca a senha de ninguém: quem esquece cria outra
+  conta — outra identidade, sem os vínculos antigos. É o risco mais caro desta fase.
 - **Jogador entra sem senha.** O `GM_KEY` protege só o papel de mestre. O plano mudou de um `JOIN_KEY`
   separado para o **vínculo com a campanha** (ADR #16): quem controla a entrada é pertencer à mesa,
   não saber uma segunda senha. Hoje o vínculo é **gravado na entrada**, não exigido para entrar: com o
-  selo, já se entra e já se vira membro.
+  selo, já se entra e já se vira membro — e quem foi promovido continua membro.
 - **Apagar a própria conta não existe**, e mexeria em campanha órfã: a campanha pertence ao dono, e o
   dono pode querer ir embora. Enquanto isso, o teste de vínculo limpa a conta de teste pelo banco (ver
   `server/scripts/harness.mjs`) — é o único ponto da suíte que fala com o banco em vez de falar HTTP.

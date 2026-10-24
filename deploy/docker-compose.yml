@@ -27,20 +27,22 @@ services:
       - PORT=3000
       - ROOM_CODE=${ROOM_CODE:-HELIO}    # sala padrão
       - ORIGIN=${ORIGIN:-*}              # CORS; "*" basta pois tudo passa pelo Caddy
-      # Senha para entrar como MESTRE. Vazio = qualquer um vira mestre, o que só
-      # é aceitável em rede local. Ponha uma senha antes de expor à internet.
+      # Senha de mestre (escapatória, legado). O caminho de verdade é o vínculo
+      # com a missão; vazio = NENHUMA escapatória (ADR #20).
       - GM_KEY=${GM_KEY:-}
       # Banco (ADR #17). Vazio = salas só em memória, nada persiste.
       - DATABASE_URL=${DATABASE_URL:-postgres://${POSTGRES_USER:-helio}:${POSTGRES_PASSWORD:-helio}@postgres:5432/${POSTGRES_DB:-helio}}
-      # Assinatura da sessão (ADR #16). Vazio = sessão desligada.
+      # Assinatura da sessão (ADR #16). Vazio = login desligado — e sem login
+      # ninguém entra na mesa (ADR #20).
       # Gere com: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
       - SESSION_SECRET=${SESSION_SECRET:-}
-      # Conta de mestre criada no primeiro boot, se ainda não existir. Serve para
-      # a campanha ter um dono antes de existir tela de cadastro. Trocar depois.
+      # Conta de mestre criada no primeiro boot, se ainda não existir. É o pé de
+      # apoio do primeiro acesso; as demais contas se criam em /entrar (ADR #19).
       - SEED_MASTER_USER=${SEED_MASTER_USER:-}
       - SEED_MASTER_PASS=${SEED_MASTER_PASS:-}
-      # Cadastro de conta (ADR #19). "closed" fecha a porta: o lobby para de
-      # oferecer "criar conta" e o servidor recusa. O teto é global, por minuto.
+      # Cadastro de conta (ADR #19). "closed" fecha a porta: a página de entrada
+      # para de oferecer "criar conta" e o servidor recusa. Com conta obrigatória
+      # (ADR #20), isso também bloqueia gente nova. O teto é global, por minuto.
       - REGISTRATION=${REGISTRATION:-open}
       - REGISTER_PER_MINUTE=${REGISTER_PER_MINUTE:-10}
       # Limite de taxa por conexão (eventos por segundo e rajada). Os padrões

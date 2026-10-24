@@ -28,27 +28,48 @@ a mexer vai perder.
 
 ## Em andamento (WIP = 1)
 
-🔵 **Slice "a sessão que sobrevive"** — persistência + conta + identidade (ADRs #16, #17 e #19). É um
-assunto só: sem identidade, "salvar" não tem dono. Quatro entregas, cada uma utilizável sozinha.
+🔵 **Slice "a sessão que sobrevive"** — persistência + conta + identidade (ADRs #16 a #22). É um
+assunto só: sem identidade, "salvar" não tem dono. Seis entregas, cada uma utilizável sozinha.
 
 | # | Entrega | Estado |
 |---|---|---|
 | 1 | Postgres + migrations + cena que sobrevive ao restart | ✅ (commit `6873327`) |
 | 2 | Login + sessão assinada em cookie (a conta já nasce no banco) | ✅ (commit `7691266`) |
 | 3 | Selo da Missão: campanha criada de propósito, selo gerado, selo desconhecido recusado | ✅ (commit `cd4b3c8`) |
-| 4 | Papel pelo vínculo com a campanha; `GM_KEY` vira legado; cadastro com freio e interruptor | ✅ (entrega 4) |
+| 4 | Papel pelo vínculo com a campanha; `GM_KEY` vira legado; cadastro com freio e interruptor | ✅ (commit `9297862`) |
+| 5 | Conta obrigatória, papel derivado no servidor, e a entrada em páginas (`/entrar`, `/mesa`) | ✅ (commit `c09f960`) |
+| 6 | O mestre outorga o papel, e a promoção vale na hora | ✅ (commit `c09f960`) |
 
 **Entrega 4 fechada.** O papel de mestre deixou de ser "é a conta dona da campanha" e passou a ser uma
 linha no vínculo (`membership.role`). O dono virou o **administrador** (apaga a missão), e quem cria
 recebe o vínculo `gm` **na mesma instrução** que cria a campanha — um CTE que escreve, porque duas
 tabelas que podem se separar deixariam o dono sem o papel na própria missão, em silêncio. Junto veio o
 **cadastro**: `POST /api/accounts`, aberto por padrão, com teto (`REGISTER_PER_MINUTE`) e interruptor
-(`REGISTRATION=closed`, que também esconde o botão no lobby). O que um cadastro entrega a um estranho é
-pouco — entrar ainda exige o selo, e mestre ainda exige vínculo. O `GM_KEY` **não** saiu, e agora está
-dito por quê: sem recuperação de senha, tirá-lo trancaria o grupo de fora. É legado assumido, e sai
-quando a recuperação existir.
+(`REGISTRATION=closed`, que também esconde o botão na página de entrada). O que um cadastro entrega a um
+estranho é pouco — entrar ainda exige o selo, e mestre ainda exige vínculo. O `GM_KEY` **não** saiu, e
+agora está dito por quê: sem recuperação de senha, tirá-lo trancaria o grupo de fora. É legado assumido, e
+sai quando a recuperação existir.
 
-Três coisas que a prática corrigiu nesta entrega:
+**Entrega 5 fechada — a conta virou a porta (ADR #20).** O convidado não sobreviveu ao uso: sem conta não
+há vínculo (não há como ser promovido), não há nome estável e não há linha em `membership` — a lista de
+missões nunca o encontraria. Agora `room:join` **recusa sem sessão**, o cliente manda só `{ code, key }`
+(o nome é o da conta, o papel é calculado no servidor) e `GM_KEY` vazia deixou de significar "qualquer um
+é mestre": vazia é **nenhuma escapatória**. Sem `SESSION_SECRET` não há login — e portanto não há mesa; o
+boot grita em vez de abrir no escuro.
+
+**Entrega 5 também é a entrada em páginas (ADR #21).** O `Lobby.tsx` (1025 linhas, sete perguntas numa
+tela, duas delas ignoradas pelo servidor) virou quatro rotas: `/entrar` (conta), `/mesa` (missão),
+`/` (a mesa) e `/local` (preparação sem servidor). Cada página faz **uma** pergunta, as guardas encadeiam
+sozinhas e "Identificação na Ordem" passou a ser **somente leitura**: é a pessoa, não o personagem.
+
+**Entrega 6 fechada — o mestre outorga o papel (ADR #22).** `POST /api/campaigns/:selo/role` grava o
+vínculo, e `server/src/live.ts` avisa a mesa que já está aberta: a pessoa promovida comanda o mapa
+**sem F5**, e o que foi gravado vale no próximo boot. O dono nunca é rebaixado; qualquer outro mestre
+pode ser. A prática corrigiu duas coisas: a permissão, o alvo e a gravação viraram **um CTE só** (checar e
+escrever em transações diferentes é uma janela para nada ser gravado), e **rebaixar dá token** — um mestre
+não tem token, e um agente sem token não tem o que mover.
+
+Três coisas que a prática corrigiu na entrega 4:
 
 - **A lista virou "minhas mesas", não "minhas campanhas".** Quem entra numa missão passa a vê-la na
   lista, com o papel à mostra (`mestre` / `agente`) — é o caminho do agente para não redigitar o selo.
@@ -77,7 +98,12 @@ Duas coisas que a prática corrigiu, e uma delas vale para sempre:
 **Fog por jogador (Fase 3) fica fora deste slice**, de propósito: é lógica de jogo, não persistência,
 e entraria só para inflar o WIP.
 
-**Slice fechado, 4 de 4.** O próximo WIP não está escolhido; o caminho natural é a **Fase 3**.
+**Slice fechado, 6 de 6.** O próximo WIP não está escolhido; o caminho natural é a **Fase 3**.
+
+O que a entrega 6 deixou de fora, de propósito: o painel só oferece promoção para quem está **na sala**,
+mas a rota funciona para qualquer conta da missão — quem foi promovido desconectado entra como mestre na
+próxima sessão. A tela não tem como listar contas que nunca entraram, e inventar uma lista de contas
+seria pior do que a limitação.
 
 ---
 

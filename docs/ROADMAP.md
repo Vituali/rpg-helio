@@ -53,15 +53,35 @@ Servidor autoritativo com salas. Ver e mover tokens em conjunto.
 - ✅ `actor:intent-move` validado no servidor (1 casa, ortogonal, sem parede, dentro do grid)
 - ✅ Predição local + correção: passo negado cancela o caminho e volta o token
 - ✅ Presença: lista de jogadores e painel da mesa no sidebar
-- ✅ Lobby de entrada (endereço, código, nome, papel) + modo local sem servidor
+- ✅ Entrada em **páginas** (`/entrar`, `/mesa`, `/`, `/local`) + modo local sem servidor — ADR #21
 - ✅ `fogExplored` compartilhado e `fog:discover`
-- ✅ Teste de fumaça (`server/scripts/smoke.mjs`, 15 verificações com `GM_KEY` — inclui recusar senha
-  de mestre errada — e 13 sem ela) passando local, via proxy do
+- ✅ Teste de fumaça (`server/scripts/smoke.mjs`, 21 verificações) passando local, via proxy do
   Vite e contra o container de produção
 - ✅ `deploy/`: serviço `app` + proxy `/socket.io` no Caddy; imagens buildam e sobem
 - ⬜ Comprimir walls/fog na rede (bitset + RLE) — **só se incomodar na prática**
 
 **Pronto quando:** duas abas do browser entram na mesma sala e veem o token da outra andando. ✅
+
+---
+
+## Fase 2.5 — A sessão que sobrevive ✅ (entregas 1–6)
+
+Não estava no roadmap: nasceu de um pedido concreto ("não quero redigitar tudo toda sessão") e virou a
+metade do projeto que o site vai herdar. **A conta é a mesma na mesa e no site.**
+
+- ✅ **Persistência** (ADR #17): Postgres, migrations em SQL numerado, cena em JSONB, escrita com
+  debounce — e o banco fora **nunca** derruba uma mesa aberta.
+- ✅ **Conta e sessão** (ADRs #16 e #19): `scrypt`, cookie `HttpOnly` assinado (stateless), cadastro
+  aberto com teto e interruptor.
+- ✅ **Selo da Missão** (ADR #18): `CORVO-AMBAR-VEU-74`, gerado, ditável, e selo desconhecido não entra.
+- ✅ **Papel pelo vínculo** (ADR #19): quem criou é mestre e dono; entrar grava vínculo de agente.
+- ✅ **Conta obrigatória** (ADR #20): sem sessão não se entra; o cliente não pede mais nome nem papel;
+  `GM_KEY` vazia = nenhuma escapatória.
+- ✅ **Páginas** (ADR #21): `/entrar`, `/mesa`, `/` e `/local`, cada uma com uma pergunta.
+- ✅ **Promoção a mestre** (ADR #22): o mestre outorga o papel pelo painel, **na hora**, sem F5.
+
+**Pronto quando:** cair, dar F5, trocar de aparelho ou voltar no dia seguinte não te transforma em outra
+pessoa. ✅
 
 ---
 
@@ -96,10 +116,10 @@ resultado.
 
 ## Fase 4 — Polimento ⬜
 
-- 🟡 **RBAC de verdade**: contas, sessão assinada e papel de mestre pelo **vínculo** com a missão já
-  existem (ADRs #16 e #19); falta a permissão por token e o `GM_KEY` sair — o que depende de
-  recuperação de senha e revogação de sessão. É o passo para virar
-  projeto e não só mesa de amigos; planejado para escalar.
+- 🟡 **RBAC de verdade**: contas, sessão assinada, papel de mestre pelo **vínculo** com a missão
+  (ADRs #16 e #19) e a **outorga do papel pelo próprio mestre** (ADR #22) já existem; falta a permissão
+  por token e o `GM_KEY` sair — o que depende de recuperação de senha e revogação de sessão. É o passo
+  para virar projeto e não só mesa de amigos; planejado para escalar.
 - ⬜ Voz (WebRTC) — Socket.IO já é a sinalização
 - ⬜ Rolagem de dados com histórico
 - ⬜ Fichas de personagem (Ordem Paranormal customizado)

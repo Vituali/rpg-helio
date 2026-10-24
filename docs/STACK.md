@@ -118,12 +118,12 @@ de um não encosta no outro, e a decisão continua aberta para sempre.
 | Estado | ✅ **Zustand** (`gameStore` + `netStore`), fora da árvore do React |
 | Desenho | ✅ **Canvas 2D** com loop em `requestAnimationFrame` |
 | Rede | ✅ **`socket.io-client`** atrás do adapter em `net/` |
-| Roteamento | ✅ **nenhum** — a mesa é uma tela. Um router só se houver mais de uma |
+| Roteamento | ✅ **React Router** — quatro páginas com URL de verdade (`/entrar`, `/mesa`, `/`, `/local`), ADR #21 |
 | SSR | ✅ **nenhum** |
 | Deploy | ✅ estático, servido pelo Caddy em `mesa.<domínio>` |
 
 **Por que não Next aqui:** o canvas não é o problema — canvas funciona em qualquer lugar. O problema é
-que SSR não tem o que renderizar (é uma tela interativa atrás de um lobby) e o WebSocket de vida longa
+que SSR não tem o que renderizar (é uma tela interativa atrás de um login) e o WebSocket de vida longa
 briga com o modelo do Next; você pagaria o Next sem usar o Next.
 
 **O que realmente importa num app de canvas já está resolvido:** loop de render fora do React, estado
@@ -179,10 +179,10 @@ fronteira que permite evoluir o banco sem tocar em `client/` nem em `shared/`.
 
 | Item | Hoje | Alvo |
 |---|---|---|
-| Quem é você | id do socket | ✅ **sessão assinada** (cookie `HttpOnly`, `SameSite=Lax`, `Secure` em HTTPS); convidado continua sendo o id do socket |
-| Entrar como mestre | `GM_KEY` (senha única) | ✅ **vínculo com a missão** (`membership.role`); o `GM_KEY` é legado e sai quando houver recuperação de senha |
-| Entrar como jogador | livre | ✅ livre como convidado; com conta, o **cadastro** é aberto com freio e interruptor |
-| Papéis | `gm` \| `player` | 🔜 **RBAC**: papel do vínculo já vale na mesa; falta permissão por token e promover um agente a mestre |
+| Quem é você | id do socket | ✅ **sessão assinada** (cookie `HttpOnly`, `SameSite=Lax`, `Secure` em HTTPS) — e **obrigatória**: sem conta não se entra (ADR #20) |
+| Entrar como mestre | `GM_KEY` (senha única) | ✅ **vínculo com a missão** (`membership.role`); o `GM_KEY` é legado e sai quando houver recuperação de senha; **vazio = nenhuma escapatória** |
+| Entrar como jogador | livre | ✅ conta em `/entrar`; o **cadastro** é aberto com freio e interruptor — fechá-lo fecha a porta de gente nova |
+| Papéis | `gm` \| `player` | ✅ papel do vínculo na mesa, e o mestre **outorga** o papel ao vivo (ADR #22); 🔜 permissão por token |
 | Regras de jogo | ✅ servidor decide | mantém |
 | Limite de taxa | ✅ token bucket | mantém |
 | Origem | ✅ só mesma origem | mantém |
@@ -206,7 +206,7 @@ escrito assumindo "socket id = identidade" terá de ser revisitado.
 | Onde | Como |
 |---|---|
 | `shared/` | ✅ `node:test` (zero dependência) — colisão, LOS, pathfinding, validação |
-| `server/` | ✅ smoke de ponta a ponta com Socket.IO real (`server/scripts/smoke.mjs`), 19 checagens, rodando local **e** contra a URL pública |
+| `server/` | ✅ smoke de ponta a ponta com Socket.IO real (`server/scripts/smoke.mjs`), 21 checagens, rodando local **e** contra a URL pública |
 | `client/` | ⏳ Vitest no store, se valer a pena |
 | CI | ⏳ GitHub Actions: typecheck + testes do `shared/` + smoke, quando o repo for para o GitHub |
 
