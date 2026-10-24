@@ -32,24 +32,31 @@ const PHASE = process.env.PHASE ?? "write";
 const GIVEN = (process.env.CODE ?? "").trim().toUpperCase();
 const DISPOSABLE = process.env.DISPOSABLE === "1";
 
+// A conta é a porta (ADR #20): sem sessão não se entra na mesa. O cookie vai no
+// handshake, e o papel vem do vínculo (ou da GM_KEY, como escapatória).
+const cookie = await masterCookie(URL);
+if (!cookie) {
+  console.error(
+    "não deu para entrar na conta-semente: o teste precisa de SESSION_SECRET e de SEED_MASTER_USER/PASS",
+  );
+  process.exit(1);
+}
+
 let CODE = GIVEN;
 if (CODE === "") {
   if (PHASE !== "write") {
     console.error("PHASE=check precisa de CODE=<o selo que a fase de escrita imprimiu>");
     process.exit(1);
   }
-  const cookie = await masterCookie(URL);
-  const created = cookie
-    ? await api(URL, "POST", "/api/campaigns", {
-        body: { name: "Teste de persistencia" },
-        cookie,
-      })
-    : null;
-  CODE = created?.body?.campaign?.code ?? "";
+  const created = await api(URL, "POST", "/api/campaigns", {
+    body: { name: "Teste de persistencia" },
+    cookie,
+  });
+  CODE = created.body?.campaign?.code ?? "";
   if (CODE === "") {
     console.error(
-      "não deu para criar a missão de teste (banco fora, ou falta a conta-semente).\n" +
-        "Passe CODE=<um selo que existe> se já tiver uma missão para isso.",
+      "não deu para criar a missão de teste (banco fora, ou cadastro/login desligado).\n" +
+        "Passe CODE=<um selo do qual você seja mestre> se já tiver uma missão para isso.",
     );
     process.exit(1);
   }
@@ -88,7 +95,10 @@ function marks(code) {
   };
 }
 
-const client = io(URL, { transports: ["websocket"] });
+const client = io(URL, {
+  transports: ["websocket"],
+  extraHeaders: { Cookie: cookie },
+});
 const state = { last: null, errors: [] };
 client.on("room:state", (st) => {
   state.last = st;
@@ -97,7 +107,7 @@ client.on("error", (e) => state.errors.push(e));
 
 const join = () =>
   new Promise((resolve) => {
-    client.emit("room:join", { code: CODE, name: "Mestre", role: "gm", key: GM_KEY }, (s) => {
+    client.emit("room:join", { code: CODE, key: GM_KEY }, (s) => {
       if (s?.ok) state.last = s;
       resolve(s);
     });
@@ -110,7 +120,14 @@ await new Promise((resolve, reject) => {
 
 const joined = await join();
 if (!joined?.ok) {
-  console.error(`não deu para entrar como mestre: ${joined?.error ?? "?"}`);
+  console.error(`não deu para entrar: ${joined?.error ?? "?"}`);
+  process.exit(1);
+}
+const eu = joined.players.find((p) => p.id === joined.you);
+if (eu?.role !== "gm") {
+  console.error(
+    `esta conta não é mestra de ${CODE} (e a GM_KEY não foi passada): sem papel de mestre o teste não escreve`,
+  );
   process.exit(1);
 }
 
@@ -173,8 +190,7 @@ client.disconnect();
 // A conferência é a última fase: se a missão foi criada para este teste, ela
 // vai embora agora (ADR #18 — teste não deixa lixo).
 if (DISPOSABLE) {
-  const cookie = await masterCookie(URL);
-  const gone = cookie ? await api(URL, "DELETE", `/api/campaigns/${CODE}`, { cookie }) : null;
+  const gone = await api(URL, "DELETE", `/api/campaigns/${CODE}`, { cookie });
   console.log(
     gone?.status === 200
       ? `missão de teste apagada: ${CODE}`

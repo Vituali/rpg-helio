@@ -12,9 +12,9 @@
 
 import { io, type Socket } from "socket.io-client";
 import { FOG_NONE, FOG_VIS } from "@helio/shared";
-import type { Cell, Role } from "@helio/shared";
+import type { Cell } from "@helio/shared";
 import { useGameStore, type ServerScene } from "../state/gameStore";
-import { useNetStore, type NetPlayer } from "../state/netStore";
+import { flashNotice, useNetStore, type NetPlayer } from "../state/netStore";
 import { setSender } from "./bridge";
 
 export interface ServerState {
@@ -38,24 +38,23 @@ const confirmed = new Map<string, Cell>();
 const reportedFog = new Set<string>();
 
 export interface JoinOptions {
-  /** vazio = mesma origem (proxy do Vite em dev, Caddy em produção). */
-  url: string;
   code: string;
-  name: string;
-  role: Role;
-  /** Senha de mestre. Só importa quando o servidor define `GM_KEY`. */
+  /**
+   * Senha de mestre — a escapatória legada (ADRs #19/#20). Só importa quando o
+   * servidor define `GM_KEY`; sem ela, o papel vem do vínculo e isto fica vazio.
+   */
   key: string;
 }
 
 export function connect(opts: JoinOptions): void {
   disconnect();
-  useNetStore.getState().setServerUrl(opts.url);
+  const url = useNetStore.getState().serverUrl;
 
   const net = () => useNetStore.getState();
   net().setStatus("connecting");
   net().setNotice(null);
 
-  const s = io(opts.url.trim() || undefined, {
+  const s = io(url.trim() || undefined, {
     transports: ["websocket", "polling"],
     // O cookie de sessão vai no handshake (ADR #16): é assim que o servidor já
     // sabe com quem está falando, sem mensagem de login no meio do jogo.
@@ -64,41 +63,37 @@ export function connect(opts: JoinOptions): void {
   socket = s;
 
   s.on("connect", () => {
-    s.emit(
-      "room:join",
-      { code: opts.code, name: opts.name, role: opts.role, key: opts.key },
-      (state: ServerState) => {
-        if (state?.ok) {
-          applyState(state);
-          return;
-        }
-        // Entrada recusada (ex.: senha de mestre errada): volta ao lobby com o
-        // motivo, em vez de ficar um cliente conectado que não está na sala.
-        net().setNotice(state?.error ?? "O servidor recusou a entrada.");
-        net().setStatus("offline");
-        disconnect();
-      },
-    );
+    // O cliente não pede papel nem manda nome: o servidor sabe quem entrou pelo
+    // cookie e decide o papel pelo vínculo (ADR #20).
+    s.emit("room:join", { code: opts.code, key: opts.key }, (state: ServerState) => {
+      if (state?.ok) {
+        applyState(state);
+        return;
+      }
+      // Entrada recusada (conta exigida, senha de mestre errada, selo
+      // desconhecido): volta à escolha da missão com o motivo, em vez de ficar
+      // um cliente conectado que não está na sala.
+      flashNotice(state?.error ?? "O servidor recusou a entrada.");
+      net().setStatus("offline");
+      disconnect();
+    });
   });
 
   s.on("connect_error", (err: Error) => {
     net().setStatus("offline");
-    net().setNotice(`Não foi possível conectar em "${opts.url || "mesma origem"}": ${err.message}`);
+    net().setNotice(
+      `Não foi possível conectar em "${url || "mesma origem"}": ${err.message}`,
+    );
   });
 
   s.on("room:state", (state: ServerState) => applyState(state));
 
   s.on("error", (e: { code?: string; msg?: string; actorId?: string }) => {
-    net().setNotice(e?.msg ?? "Ação recusada pelo servidor.");
+    flashNotice(e?.msg ?? "Ação recusada pelo servidor.");
     if (e?.code === "MOVE_DENIED" && e.actorId) {
       const at = confirmed.get(e.actorId) ?? null;
       useGameStore.getState().snapActorTo(e.actorId, at);
     }
-    window.setTimeout(() => {
-      if (useNetStore.getState().notice === (e?.msg ?? "Ação recusada pelo servidor.")) {
-        useNetStore.getState().setNotice(null);
-      }
-    }, 5000);
   });
 
   s.on("disconnect", () => {

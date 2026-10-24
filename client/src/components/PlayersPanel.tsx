@@ -1,6 +1,9 @@
+import { useState } from "react";
+import type { Role } from "@helio/shared";
+import { setMemberRole } from "../net/auth";
 import { send } from "../net/bridge";
 import { useGameStore } from "../state/gameStore";
-import { useNetStore } from "../state/netStore";
+import { flashNotice, useNetStore } from "../state/netStore";
 import {
   IconEye,
   IconLock,
@@ -24,6 +27,8 @@ export default function PlayersPanel() {
   const role = useNetStore((s) => s.role);
   const players = useNetStore((s) => s.players);
   const actors = useGameStore((s) => s.actors);
+  /** Nome da conta cujo papel está sendo gravado (para não clicar duas vezes). */
+  const [papelBusy, setPapelBusy] = useState<string | null>(null);
 
   if (status !== "online") {
     return (
@@ -63,6 +68,21 @@ export default function PlayersPanel() {
 
   const setPerm = (playerId: string, canMoveGlobal: boolean) =>
     send("perm:set", { playerId, canMoveGlobal });
+
+  /**
+   * Dá ou tira o papel de mestre de uma conta nesta missão (ADR #22).
+   *
+   * Vai por HTTP porque grava vínculo (é administração, não cena), e o servidor
+   * faz valer na hora: o painel do outro lado se atualiza pelo próximo
+   * `room:state`, sem F5.
+   */
+  const mudarPapel = async (name: string, next: Role) => {
+    if (!code || papelBusy !== null) return;
+    setPapelBusy(name);
+    const result = await setMemberRole(code, name, next);
+    setPapelBusy(null);
+    if (!result.ok) flashNotice(result.error ?? "Não foi possível mudar o papel.");
+  };
 
   return (
     <div className="vtt-section">
@@ -185,58 +205,102 @@ export default function PlayersPanel() {
                 )}
               </span>
 
-              {isGm && p.role === "player" ? (
-                <button
-                  type="button"
-                  title="Liberar ou travar o movimento deste agente"
-                  onClick={() => setPerm(p.id, !p.canMoveGlobal)}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 4,
-                    fontSize: 11,
-                    fontWeight: 600,
-                    padding: "4px 8px",
-                    borderRadius: 6,
-                    cursor: "pointer",
-                    border: `1px solid ${
-                      p.canMoveGlobal ? "rgba(34, 197, 94, 0.55)" : "rgba(220, 38, 38, 0.55)"
-                    }`,
-                    background: p.canMoveGlobal
-                      ? "rgba(5, 46, 22, 0.85)"
-                      : "rgba(69, 10, 10, 0.85)",
-                    color: p.canMoveGlobal ? "#86efac" : "#fca5a5",
-                    whiteSpace: "nowrap",
-                    transition: "all 0.15s ease",
-                  }}
-                >
-                  {p.canMoveGlobal ? <IconWalk size={13} /> : <IconLock size={12} />}
-                  {p.canMoveGlobal ? "Livre" : "Travado"}
-                </button>
-              ) : (
-                p.role === "player" && (
-                  <span
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 5,
+                  flexShrink: 0,
+                }}
+              >
+                {isGm && p.role === "player" ? (
+                  <button
+                    type="button"
+                    title="Liberar ou travar o movimento deste agente"
+                    onClick={() => setPerm(p.id, !p.canMoveGlobal)}
                     style={{
                       display: "inline-flex",
                       alignItems: "center",
                       gap: 4,
-                      fontSize: 10,
-                      padding: "2px 7px",
-                      borderRadius: 999,
+                      fontSize: 11,
+                      fontWeight: 600,
+                      padding: "4px 8px",
+                      borderRadius: 6,
+                      cursor: "pointer",
                       border: `1px solid ${
-                        p.canMoveGlobal ? "rgba(34, 197, 94, 0.45)" : "rgba(220, 38, 38, 0.45)"
+                        p.canMoveGlobal ? "rgba(34, 197, 94, 0.55)" : "rgba(220, 38, 38, 0.55)"
                       }`,
                       background: p.canMoveGlobal
-                        ? "rgba(5, 46, 22, 0.5)"
-                        : "rgba(69, 10, 10, 0.5)",
+                        ? "rgba(5, 46, 22, 0.85)"
+                        : "rgba(69, 10, 10, 0.85)",
                       color: p.canMoveGlobal ? "#86efac" : "#fca5a5",
+                      whiteSpace: "nowrap",
+                      transition: "all 0.15s ease",
                     }}
                   >
-                    {p.canMoveGlobal ? <IconWalk size={11} /> : <IconLock size={11} />}
-                    {p.canMoveGlobal ? "livre" : "travado"}
-                  </span>
-                )
-              )}
+                    {p.canMoveGlobal ? <IconWalk size={13} /> : <IconLock size={12} />}
+                    {p.canMoveGlobal ? "Livre" : "Travado"}
+                  </button>
+                ) : (
+                  p.role === "player" && (
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 4,
+                        fontSize: 10,
+                        padding: "2px 7px",
+                        borderRadius: 999,
+                        border: `1px solid ${
+                          p.canMoveGlobal
+                            ? "rgba(34, 197, 94, 0.45)"
+                            : "rgba(220, 38, 38, 0.45)"
+                        }`,
+                        background: p.canMoveGlobal
+                          ? "rgba(5, 46, 22, 0.5)"
+                          : "rgba(69, 10, 10, 0.5)",
+                        color: p.canMoveGlobal ? "#86efac" : "#fca5a5",
+                      }}
+                    >
+                      {p.canMoveGlobal ? <IconWalk size={11} /> : <IconLock size={11} />}
+                      {p.canMoveGlobal ? "livre" : "travado"}
+                    </span>
+                  )
+                )}
+
+                {/* Dar/tirar o papel de mestre (ADR #22). O ícone é o papel que
+                    o clique concede: olho = mestre, espadas = agente. */}
+                {isGm && !isMe && (
+                  <button
+                    type="button"
+                    title={
+                      p.role === "gm"
+                        ? "Voltar a agente nesta missão"
+                        : "Dar o papel de mestre nesta missão"
+                    }
+                    disabled={papelBusy === p.name}
+                    onClick={() =>
+                      void mudarPapel(p.name, p.role === "gm" ? "player" : "gm")
+                    }
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: 24,
+                      height: 24,
+                      padding: 0,
+                      borderRadius: 6,
+                      cursor: papelBusy === p.name ? "wait" : "pointer",
+                      border: "1px solid rgba(245, 158, 11, 0.35)",
+                      background: "rgba(12, 8, 24, 0.8)",
+                      color: p.role === "gm" ? "#a78bfa" : "#fbbf24",
+                      opacity: papelBusy === p.name ? 0.5 : 1,
+                    }}
+                  >
+                    {p.role === "gm" ? <IconSwords size={12} /> : <IconEye size={13} />}
+                  </button>
+                )}
+              </span>
             </div>
           );
         })}
@@ -261,6 +325,13 @@ export default function PlayersPanel() {
               <IconLock size={13} style={{ color: "#f87171" }} />
               Travar todos
             </button>
+          </div>
+        )}
+
+        {isGm && others.length > 0 && (
+          <div style={{ fontSize: 10, color: "#7e6ea8", lineHeight: 1.4 }}>
+            O olho ao lado de um agente o torna <b>mestre</b> desta missão — vale na
+            hora e nas próximas sessões.
           </div>
         )}
 

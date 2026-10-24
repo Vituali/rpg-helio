@@ -70,7 +70,17 @@ const TOOL_LIST: { id: UiTool; label: string; short: string; key: string; icon: 
   { id: TOOLS.SECTOR, label: "Setor", short: "Setor", key: "S", icon: <IconSector size={15} /> },
 ];
 
-export default function FogWarMap() {
+export interface FogWarMapProps {
+  /**
+   * Saída da mesa (ADR #21). No modo local a mesa ocupa a tela inteira, e sem
+   * isto a única volta seria o botão do navegador — que não existe para quem
+   * abriu `/local` direto. A navegação fica com quem monta a página: o mapa não
+   * conhece rotas.
+   */
+  onExit?: () => void;
+}
+
+export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
   // ── Estado de JOGO (store) ────────────────────────────────────────────────
   const cols = useGameStore((s) => s.cols);
   const rows = useGameStore((s) => s.rows);
@@ -954,6 +964,20 @@ export default function FogWarMap() {
           </div>
         </div>
 
+        {/* Volta da preparação local (ADR #21): só existe quando a página dá
+            uma saída. No modo local a mesa ocupa a tela inteira. */}
+        {onExit && (
+          <button
+            type="button"
+            className="occult-btn"
+            onClick={onExit}
+            title="Sair desta mesa"
+          >
+            <IconClose size={14} />
+            <span>Sair</span>
+          </button>
+        )}
+
         {/* Ferramentas no Desktop */}
         <div
           className="vtt-desktop-tools"
@@ -984,7 +1008,7 @@ export default function FogWarMap() {
           disabled={online}
           title={
             online
-              ? "Definido pelo servidor: quem criou a sala é o mestre"
+              ? "Definido pelo servidor: o papel vem do vínculo com a missão"
               : "[G] Visão do Mestre — tudo visível"
           }
         >

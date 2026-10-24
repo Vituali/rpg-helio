@@ -7,6 +7,7 @@
  *   /api/auth/*       entrar, sair e "quem sou eu" (ADR #16)
  *   /api/accounts     criar conta (ADR #19)
  *   /api/campaigns    criar, listar e apagar missões (ADR #18)
+ *   /api/campaigns/:selo/role   dar/tirar o papel de mestre (ADR #22)
  *
  * O cookie de sessão vai e volta sozinho (mesma origem), e é ele que o Socket.IO
  * lê no handshake — depois do login, o `connect()` não precisa saber de nada
@@ -158,6 +159,29 @@ export async function deleteCampaign(code: string): Promise<CampaignsResult> {
   if (!body) return { ok: false, error: "Servidor não respondeu." };
   if (!body.ok) {
     return { ok: false, error: String(body.error ?? "Não foi possível apagar a missão.") };
+  }
+  return { ok: true };
+}
+
+/**
+ * Dá ou tira o papel de mestre de uma conta nesta missão (ADR #22).
+ *
+ * O alvo é o **nome da conta** — é ele que o painel da mesa mostra e o que o
+ * servidor usa para achar o vínculo. Quem pode outorgar é quem já é mestre ali;
+ * o servidor confere de novo, e responde 404 para quem não é.
+ */
+export async function setMemberRole(
+  code: string,
+  name: string,
+  role: Role,
+): Promise<CampaignsResult> {
+  const body = await request(`/api/campaigns/${encodeURIComponent(code)}/role`, {
+    method: "POST",
+    body: JSON.stringify({ name, role }),
+  });
+  if (!body) return { ok: false, error: "Servidor não respondeu." };
+  if (!body.ok) {
+    return { ok: false, error: String(body.error ?? "Não foi possível mudar o papel.") };
   }
   return { ok: true };
 }

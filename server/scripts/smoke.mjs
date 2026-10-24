@@ -1,28 +1,41 @@
 /**
- * Teste de fumaça do servidor (Fase 2).
+ * Teste de fumaça do servidor (Fase 2 + ADR #20).
  *
  * Simula um mestre e um jogador reais e verifica as regras que só o servidor
- * decide: permissão de movimento, colisão com parede, e sincronia entre os dois.
+ * decide: entrada com conta, permissão de movimento, colisão com parede, e
+ * sincronia entre os dois.
  *
  *   npm start        (noutro terminal)
- *   npm run smoke
+ *   SEED_MASTER_USER=helio SEED_MASTER_PASS=123456 npm run smoke
  */
 
 import { io } from "socket.io-client";
-import { testCampaign } from "./harness.mjs";
+import { deleteTestAccount, masterCookie, testAccount, testCampaign } from "./harness.mjs";
 
 const URL = process.env.URL ?? "http://localhost:3100";
 /** Precisa ser igual ao GM_KEY do servidor que está sendo testado. */
 const GM_KEY = process.env.GM_KEY ?? "";
 
-// O selo da sala de teste: criado aqui e apagado no fim (ADR #18). Sem banco,
-// vem um selo inventado e o servidor não julga — a mesa abre em memória.
+// O selo da sala de teste: criado aqui e apagado no fim (ADR #18).
 const missao = await testCampaign(URL, "SMOKE");
 const ROOM = missao.code;
 
+// A conta é a porta (ADR #20): o teste entra logado dos dois lados. O mestre é a
+// conta-semente — dona da missão criada acima, portanto com vínculo de mestre;
+// o jogador é a conta descartável dos testes.
+const cookieMestre = await masterCookie(URL);
+const conta = await testAccount(URL);
+if (!cookieMestre || !conta.cookie) {
+  console.error(
+    "o smoke precisa de contas: sem login (SESSION_SECRET e conta-semente) ninguém entra na mesa",
+  );
+  await missao.cleanup();
+  process.exit(1);
+}
+
 let failures = 0;
 function check(ok, label) {
-  console.log(`${ok ? "  ok  " : " FALHA"}  ${label}`);
+  console.log(`${ok ? "  ok  " : "  FALHA"}  ${label}`);
   if (!ok) failures += 1;
 }
 
@@ -36,8 +49,12 @@ async function until(fn, label, tries = 80) {
   throw new Error(`timeout esperando: ${label}`);
 }
 
-function makeClient(name) {
-  const socket = io(URL, { transports: ["websocket"] });
+function makeClient(name, cookie) {
+  const socket = io(URL, {
+    transports: ["websocket"],
+    // O cookie de sessão vai no handshake: não existe mensagem de login.
+    extraHeaders: cookie ? { Cookie: cookie } : {},
+  });
   const client = { socket, name, last: null, errors: [] };
   socket.on("room:state", (st) => {
     client.last = st;
@@ -55,9 +72,10 @@ const joined = (c) =>
     c.socket.once("connect_error", reject);
   });
 
-const join = (c, role, key = "") =>
+// O cliente não manda nome nem papel: o servidor decide os dois (ADR #20).
+const join = (c, key = "") =>
   new Promise((resolve) => {
-    c.socket.emit("room:join", { code: ROOM, name: c.name, role, key }, (state) => {
+    c.socket.emit("room:join", { code: ROOM, key }, (state) => {
       // O ack chega antes do primeiro broadcast; usa ele como estado inicial.
       if (state?.ok) c.last = state;
       resolve(state);
@@ -72,30 +90,38 @@ const cellOf = (c, id) => {
 };
 
 // ── Roteiro ──────────────────────────────────────────────────────────────────
-const gm = makeClient("Mestre");
-const jogador = makeClient("Jogador");
-const intruso = makeClient("Intruso");
+const gm = makeClient("Mestre", cookieMestre);
+const jogador = makeClient("Jogador", conta.cookie);
+const visita = makeClient("Sem conta", null);
 
 await joined(gm);
 await joined(jogador);
-await joined(intruso);
+await joined(visita);
 
-// Senha de mestre: com GM_KEY definida no servidor, senha errada não entra.
+// 0) sem conta, a mesa não abre (ADR #20)
+const semConta = await join(visita);
+check(semConta?.ok === false, "sem conta não se entra na mesa");
+check(/conta/i.test(semConta?.error ?? ""), "e a recusa fala em conta");
+visita.socket.disconnect();
+
+// 1) a chave de mestre: errada é recusada; sem GM_KEY, nenhuma promove
 if (GM_KEY) {
-  const errada = await join(intruso, "gm", "senha-errada");
+  const errada = await join(jogador, "senha-errada");
   check(errada?.ok === false, "senha de mestre errada é recusada");
-  const vazia = await join(intruso, "gm", "");
-  check(vazia?.ok === false, "sem senha nenhuma também é recusada");
 } else {
-  console.log("  --    GM_KEY vazia neste servidor: pulando os testes de senha");
+  console.log("  --    GM_KEY vazia neste servidor: a chave não promove ninguém");
+  const qualquer = await join(jogador, "qualquer-chave");
+  check(qualquer?.ok === false, "chave inventada não promove");
 }
-intruso.socket.disconnect();
 
-await join(gm, "gm", GM_KEY);
-const jogState = await join(jogador, "player");
+// 2) o vínculo abre a mesa como mestre, sem chave nenhuma
+await join(gm);
+check(me(gm)?.role === "gm", "quem criou a missão entra como mestre (vínculo)");
 
-check(me(gm)?.role === "gm", "mestre entrou (com a senha)");
-check(jogState?.ok === true, "jogador entra sem senha");
+// 3) e o agente entra como agente
+const jogState = await join(jogador);
+check(jogState?.ok === true, "o agente entra com a própria conta");
+check(me(jogador)?.role === "player", "e o papel dele é agente");
 check(jogState.scene.actors.length === 1, "jogador recebeu um token próprio");
 
 const playerId = jogador.last.you;
@@ -108,7 +134,7 @@ await until(
   "o mestre vê o token do jogador",
 );
 
-// 1) sem permissão → negado
+// 4) sem permissão → negado
 jogador.errors.length = 0;
 jogador.socket.emit("actor:intent-move", {
   actorId: myActor.id,
@@ -125,7 +151,7 @@ check(
   "o token não saiu do lugar",
 );
 
-// 2) o mestre libera → anda
+// 5) o mestre libera → anda
 gm.socket.emit("perm:set", { playerId, canMoveGlobal: true });
 await until(
   () => me(jogador)?.canMoveGlobal === true,
@@ -146,7 +172,7 @@ check(
   `mestre e jogador concordam na posição (${cellOf(gm, myActor.id)})`,
 );
 
-// 3) parede bloqueia
+// 6) parede bloqueia
 const agora = actorOf(jogador, myActor.id);
 gm.socket.emit("map:walls", {
   op: "set",
@@ -173,7 +199,7 @@ check(
   "andar para dentro de uma parede é recusado",
 );
 
-// 4) o jogador não pode editar o mapa
+// 7) o jogador não pode editar o mapa
 jogador.errors.length = 0;
 jogador.socket.emit("map:walls", {
   op: "set",
@@ -185,7 +211,7 @@ check(
   "jogador não consegue editar o mapa",
 );
 
-// 5) fog descoberto é compartilhado
+// 8) fog descoberto é compartilhado
 const alvo = { row: agora.row, col: agora.col + 1 };
 jogador.socket.emit("fog:discover", { cells: [alvo] });
 await until(
@@ -194,7 +220,7 @@ await until(
 );
 check(true, "fog explorado pelo jogador é compartilhado");
 
-// 6) o servidor é dono da verdade do fog: célula longe da visão é recusada
+// 9) o servidor é dono da verdade do fog: célula longe da visão é recusada
 const longe = { row: 0, col: jogador.last.scene.cols - 1 };
 jogador.socket.emit("fog:discover", { cells: [longe] });
 await sleep(500);
@@ -220,7 +246,7 @@ check(
   `tabuleiro inteiro numa mensagem não revela o mapa (${vistas} de ${total})`,
 );
 
-// 7) limite de taxa: a rajada estoura o balde e o pacote é descartado
+// 10) limite de taxa: a rajada estoura o balde e o pacote é descartado
 const inerte = { row: alvo.row, col: alvo.col }; // já explorada: flood não muda estado
 const parado = cellOf(jogador, myActor.id);
 jogador.errors.length = 0;
@@ -239,7 +265,7 @@ check(
   "rajada acima do limite é descartada em silêncio",
 );
 
-// 8) e o limite não trava o jogador para sempre: o balde reenche
+// 11) e o limite não trava o jogador para sempre: o balde reenche
 await sleep(3000);
 jogador.socket.emit("actor:intent-move", {
   actorId: myActor.id,
@@ -252,7 +278,7 @@ await until(
 );
 check(true, "o limite de taxa não trava o jogador para sempre");
 
-// 9) sair limpa o dono do token
+// 12) sair limpa o dono do token
 jogador.socket.disconnect();
 await until(
   () =>
@@ -263,8 +289,9 @@ check(true, "ao sair, o token volta para as mãos do mestre");
 
 gm.socket.disconnect();
 
-// O teste não deixa missão órfã para trás (ADR #18).
+// O teste não deixa missão órfã para trás (ADR #18), nem conta de teste.
 await missao.cleanup();
+deleteTestAccount();
 
 console.log(
   `\n${failures === 0 ? "TUDO OK" : `${failures} FALHA(S)`} — sala ${ROOM}${

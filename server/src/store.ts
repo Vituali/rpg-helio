@@ -40,7 +40,7 @@ export interface CampaignRef {
   name: string;
   /**
    * O papel de quem está entrando, pelo **vínculo** com esta missão (ADR #19).
-   * `null` = não é membro (é o caso do convidado, e do banco fora).
+   * `null` = esta conta nunca entrou nesta mesa (e o banco pode estar fora).
    *
    * O papel deixou de ser "é a conta dona da campanha": o dono é o
    * administrador (criar, apagar), e mestre é uma linha em `membership`.
@@ -73,7 +73,7 @@ export interface CampaignLookup {
  */
 export async function findCampaign(
   code: string,
-  accountId: string | null = null,
+  accountId: string,
 ): Promise<CampaignLookup> {
   if (!dbEnabled) return { campaign: null, checked: false };
   const rows = await tryQuery<{ id: string; name: string; member_role: Role | null }>(
@@ -224,6 +224,84 @@ export async function deleteCampaign(
   if (rows === null) return "error";
   if (!rows[0]) return "notfound";
   console.log(`[campanha] apagada: ${code}`);
+  return "ok";
+}
+
+export type RoleResult = "ok" | "notfound" | "account" | "owner" | "error";
+
+/**
+ * Dá ou tira o papel de mestre de uma conta numa missão (ADR #22).
+ *
+ * É o "o mestre pode dar o líder do ato": quem já comanda a mesa outorga o
+ * comando a um agente. Quem pode outorgar é **quem é mestre da missão** (dono ou
+ * vínculo `gm`) — não é preciso ser o dono, senão um co-mestre não conseguiria
+ * montar a própria equipe.
+ *
+ * Dois limites, e os dois são regra, não esquecimento:
+ *
+ *  - **o dono nunca é rebaixado**: ele administra a missão (criar/apagar), e
+ *    tirar o papel dele o deixaria com a caneta e sem o volante;
+ *  - a checagem e a gravação são **uma instrução só**: se o vínculo de quem
+ *    outorga sumir no meio do caminho, nada é gravado.
+ *
+ * O alvo é procurado por nome de conta, e não por id, porque é o nome que a mesa
+ * vê no painel — e o `unique` de `lower(name)` garante que ele identifica um só.
+ */
+export async function setMemberRole(
+  code: string,
+  actorAccountId: string,
+  targetName: string,
+  role: Role,
+): Promise<RoleResult> {
+  if (!dbEnabled) return "error";
+  const rows = await tryQuery<{
+    campanha: string;
+    pode: string;
+    alvo: string;
+    dono: string;
+    gravado: string;
+  }>(
+    `with campanha as (
+       select c.id, c.gm_account_id
+         from campaign c
+        where c.code = $1
+     ), pode as (
+       -- Dono ou vínculo de mestre: os dois são "mestre desta missão".
+       select 1 as ok
+         from campanha c
+        where c.gm_account_id = $2
+           or exists (
+             select 1 from membership m
+              where m.campaign_id = c.id and m.account_id = $2 and m.role = 'gm'
+           )
+     ), alvo as (
+       select a.id, (a.id = c.gm_account_id) as dono
+         from campanha c, account a
+        where lower(a.name) = lower($3)
+     ), gravado as (
+       insert into membership (account_id, campaign_id, role)
+       select alvo.id, campanha.id, $4
+         from alvo, campanha, pode
+        where alvo.dono = false
+       on conflict (account_id, campaign_id) do update set role = excluded.role
+       returning account_id
+     )
+     select (select count(*) from campanha) as campanha,
+            (select count(*) from pode) as pode,
+            (select count(*) from alvo) as alvo,
+            (select count(*) from alvo where dono) as dono,
+            (select count(*) from gravado) as gravado`,
+    [code, actorAccountId, targetName, role],
+    `mudar papel em ${code}`,
+  );
+  if (rows === null) return "error";
+  const r = rows[0];
+  if (!r || Number(r.campanha) === 0 || Number(r.pode) === 0) return "notfound";
+  if (Number(r.alvo) === 0) return "account";
+  // Pedir "gm" para quem já é dono é idempotente: o dono é sempre mestre.
+  if (Number(r.dono) > 0) return role === "gm" ? "ok" : "owner";
+  if (Number(r.gravado) === 0) return "error";
+  console.log(`[campanha] ${targetName} agora é ${role} em ${code}`);
   return "ok";
 }
 

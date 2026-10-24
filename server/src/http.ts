@@ -24,11 +24,13 @@ import {
   verifyPassword,
 } from "./auth.js";
 import { createAccount, findAccountByName } from "./accounts.js";
+import { roleChanged } from "./live.js";
 import { normalizeCode } from "./selo.js";
 import {
   createCampaign,
   deleteCampaign,
   listCampaigns,
+  setMemberRole,
   type CampaignInfo,
 } from "./store.js";
 import type { Session } from "./auth.js";
@@ -216,16 +218,21 @@ export async function handleHttp(
 
   if (path === "/auth/me" && method === "GET") {
     const session = sessionOf(req);
-    // `signup` vai junto de propósito: o lobby precisa saber se pode oferecer
-    // "criar conta" ANTES de a pessoa preencher o formulário (ADR #19).
+    // `signup` vai junto de propósito: a página de entrada precisa saber se pode
+    // oferecer "criar conta" ANTES de a pessoa preencher o formulário (ADR #19).
+    //
+    // E o cadastro também depende de haver sessão: sem `SESSION_SECRET` a rota
+    // de contas responde 503, então oferecer o botão seria prometer o que o
+    // servidor recusa.
+    const signup = registrationOpen && sessionEnabled;
     if (!session) {
-      send(res, 200, { ok: false, signup: registrationOpen });
+      send(res, 200, { ok: false, signup });
       return true;
     }
     send(res, 200, {
       ok: true,
       account: { id: session.accountId, name: session.name },
-      signup: registrationOpen,
+      signup,
     });
     return true;
   }
@@ -334,6 +341,58 @@ export async function handleHttp(
       return true;
     }
     send(res, 200, { ok: true });
+    return true;
+  }
+
+  // ── Papel na missão: dar e tirar o mestre (ADR #22) ──
+  //
+  // A rota grava o vínculo e avisa a mesa viva (`roleChanged`): quem foi
+  // promovido comanda o mapa na hora, sem F5. Quem pode outorgar é quem já é
+  // mestre ali (dono ou vínculo) — ver `setMemberRole`.
+  if (path.startsWith("/campaigns/") && path.endsWith("/role") && method === "POST") {
+    const session = sessionOf(req);
+    if (!session) {
+      send(res, 401, { ok: false, error: "Entre com sua conta para isso." });
+      return true;
+    }
+
+    const code = normalizeCode(
+      decodeURIComponent(path.slice("/campaigns/".length, -"/role".length)),
+    );
+    const body = await readJson(req);
+    const name = typeof body?.name === "string" ? body.name.trim().slice(0, 24) : "";
+    const role =
+      body?.role === "gm" ? "gm" : body?.role === "player" ? "player" : null;
+    if (code === "" || name === "" || role === null) {
+      send(res, 400, { ok: false, error: "Diga a conta e o papel (gm ou player)." });
+      return true;
+    }
+
+    const result = await setMemberRole(code, session.accountId, name, role);
+    if (result === "notfound") {
+      // Mesma resposta de sempre: quem não manda aqui não descobre quais selos
+      // existem nem quem é mestre de quê.
+      send(res, 404, { ok: false, error: "Missão não encontrada." });
+      return true;
+    }
+    if (result === "account") {
+      send(res, 400, { ok: false, error: "Conta não encontrada." });
+      return true;
+    }
+    if (result === "owner") {
+      send(res, 400, {
+        ok: false,
+        error: "O dono da missão é sempre mestre. Não dá para rebaixar.",
+      });
+      return true;
+    }
+    if (result === "error") {
+      send(res, 503, { ok: false, error: "Banco indisponível: não deu para mudar o papel." });
+      return true;
+    }
+
+    roleChanged({ code, name, role });
+    send(res, 200, { ok: true, name, role });
     return true;
   }
 

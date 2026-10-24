@@ -1,15 +1,17 @@
 /**
- * Teste de contas, vínculo e sessão (entregas 2 e 4 — ADRs #16 e #19).
+ * Teste de contas, vínculo, papel e sessão (entregas 2, 4 e 5 — ADRs #16, #19,
+ * #20 e #22).
  *
- * Prova o que a conta promete:
+ * Prova o que a conta promete agora:
  *   - a conta entra com usuário e senha;
  *   - dá para **criar a própria conta**, e o cadastro já sai logado;
  *   - o cookie de sessão identifica a conexão **no handshake** (sem mensagem);
- *   - **ser mestre vem do vínculo com a missão**, não de "ser dono": quem tem
- *     vínculo entra como mestre com a chave errada no bolso;
- *   - sem vínculo e sem chave, ninguém vira mestre;
- *   - cair e voltar mantém o mesmo papel e o mesmo nome (o fim do "id do socket
- *     como identidade").
+ *   - **sem conta não se entra na mesa** (ADR #20) — nem como convidado;
+ *   - **ser mestre vem do vínculo com a missão**, não de "ser dono" nem de pedir:
+ *     quem criou entra como mestre com a chave errada no bolso;
+ *   - **o mestre pode dar o papel** a um agente, e vale **na hora** (ADR #22);
+ *   - o dono não é rebaixável;
+ *   - cair e voltar mantém o mesmo papel e o mesmo nome.
  *
  *   npm start
  *   SEED_MASTER_USER=helio SEED_MASTER_PASS=123456 npm run auth
@@ -38,6 +40,14 @@ function check(ok, label) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+async function until(fn, label, tries = 80) {
+  for (let i = 0; i < tries; i += 1) {
+    if (fn()) return true;
+    await sleep(50);
+  }
+  throw new Error(`timeout esperando: ${label}`);
+}
+
 async function post(path, body, cookie) {
   const res = await fetch(`${URL}${path}`, {
     method: "POST",
@@ -62,8 +72,11 @@ function cookieOf(res) {
   return first ? first.split(";")[0] : "";
 }
 
-// O socket.io-client do Node não tem cookie jar: o cookie vai no handshake na mão.
-async function joinAs(role, { cookie, key = "", name = "Convidado" } = {}) {
+/**
+ * Entra na mesa. Não manda nome nem papel: o servidor sabe quem é pelo cookie e
+ * decide o papel pelo vínculo (ADR #20). `key` só existe para a escapatória.
+ */
+async function joinAs({ cookie, key = "" } = {}) {
   const { io } = await import("socket.io-client");
   const socket = io(URL, {
     transports: ["websocket"],
@@ -81,7 +94,7 @@ async function joinAs(role, { cookie, key = "", name = "Convidado" } = {}) {
   });
 
   const ack = await new Promise((resolve) => {
-    socket.emit("room:join", { code: ROOM, name, role, key }, (s) => {
+    socket.emit("room:join", { code: ROOM, key }, (s) => {
       if (s?.ok) state.last = s;
       resolve(s);
     });
@@ -89,6 +102,8 @@ async function joinAs(role, { cookie, key = "", name = "Convidado" } = {}) {
   const me = ack?.ok ? ack.players.find((p) => p.id === ack.you) : null;
   return { socket, ack, state, me };
 }
+
+const papelAoVivo = (c, nome) => c.state.last?.players.find((p) => p.name === nome)?.role;
 
 // ── Roteiro ──────────────────────────────────────────────────────────────────
 
@@ -126,42 +141,49 @@ if (URL.startsWith("https://")) {
 const eu = await get("/api/auth/me", cookie);
 check(eu.body?.ok === true && eu.body.account.name === USER, "/api/auth/me reconhece a conta");
 
-// 6) o VÍNCULO dá o papel de mestre — e é só ele: a chave vai errada de propósito
+// 6) sem conta, a mesa não abre (ADR #20)
 //
-// É o que a entrega 4 mudou. Se o papel ainda viesse de "ser a conta dona da
-// campanha", este teste passaria do mesmo jeito; se viesse da chave, falharia —
-// que é o que se quer ver. Com a chave errada no bolso, a única explicação para
-// o `gm` aceito é o vínculo.
-if ((process.env.GM_KEY ?? "") === "") {
-  console.log("  nota: GM_KEY vazia neste servidor — o teste da chave errada não isola nada");
-}
-const gm = await joinAs("gm", { cookie, key: "nao-e-a-chave" });
+// Era o caminho do convidado até a entrega 4. Com o papel vindo do vínculo e o
+// nome vindo da conta, o convidado não tinha como ser promovido nem como ser
+// encontrado — fechou.
+const convidado = await joinAs({ key: "" });
+check(convidado.ack?.ok === false, "sem conta não se entra na mesa");
+check(
+  /conta/i.test(convidado.ack?.error ?? ""),
+  `a recusa diz o motivo ("${convidado.ack?.error ?? "?"}")`,
+);
+convidado.socket.disconnect();
+
+// 7) o VÍNCULO dá o papel de mestre — e é só ele: a chave vai errada de propósito
+//
+// Com a chave errada no bolso, a única explicação para o `gm` aceito é o vínculo
+// (e o servidor não pede papel nenhum: ele decide).
+const gm = await joinAs({ cookie, key: "nao-e-a-chave" });
 check(gm.ack?.ok === true, "o vínculo de mestre abre a mesa sem depender da chave");
 check(gm.me?.role === "gm", "o papel é mestre");
 check(gm.me?.accountId === login.body.account.id, "o jogador carrega o id da conta");
-check(gm.me?.name === USER, "o nome veio da conta, não do formulário");
+check(gm.me?.name === USER, "o nome veio da conta");
 
-// 7) cair e voltar mantém quem você é — o fim do "id do socket"
+// 8) cair e voltar mantém quem você é — o fim do "id do socket"
 gm.socket.disconnect();
 await sleep(400);
-const voltou = await joinAs("gm", { cookie, key: "nao-e-a-chave", name: "Outro Nome Digitado" });
+const voltou = await joinAs({ cookie, key: "nao-e-a-chave" });
 check(voltou.ack?.ok === true, "voltou e foi reconhecido como mestre de novo");
 check(
   voltou.me?.accountId === gm.me?.accountId && voltou.me?.name === USER,
-  "e é a MESMA conta, com o mesmo nome (o digitado foi ignorado)",
+  "e é a MESMA conta, com o mesmo nome",
 );
 voltou.socket.disconnect();
 
-// 8) sem conta e sem senha, ninguém vira mestre
-const anonGm = await joinAs("gm", { key: "" });
-check(anonGm.ack?.ok === false, "convidado sem senha não vira mestre");
-anonGm.socket.disconnect();
-
-// 9) convidado continua entrando como jogador, só com o nome
-const convidado = await joinAs("player", { name: "Convidado" });
-check(convidado.ack?.ok === true && convidado.me?.role === "player", "convidado entra como jogador");
-check(convidado.me?.accountId === null, "e não tem conta — a identidade é do socket");
-convidado.socket.disconnect();
+// 9) sem chave configurada, chave nenhuma vira mestre (ADR #20)
+if ((process.env.GM_KEY ?? "") === "") {
+  const conta = await testAccount(URL);
+  if (conta.cookie) {
+    const inventada = await joinAs({ cookie: conta.cookie, key: "qualquer-chave" });
+    check(inventada.ack?.ok === false, "sem GM_KEY no servidor, chave inventada não promove");
+    inventada.socket.disconnect();
+  }
+}
 
 // ── Cadastro e vínculo (entrega 4 — ADR #19) ─────────────────────────────────
 
@@ -170,9 +192,7 @@ const curta = await post("/api/accounts", { name: TEST_ACCOUNT, password: "123" 
 check(curta.status === 400, "cadastro com senha curta é recusado com 400");
 
 // 11) cadastro: repetir um nome existente é recusado — e aqui o nome repetido é
-// dito na cara, ao contrário do login. Não dá para esconder: o `unique`
-// recusaria do mesmo jeito, e mensagem genérica só faria a pessoa tentar de novo
-// à toa.
+// dito na cara, ao contrário do login.
 const repetido = await post("/api/accounts", { name: USER, password: "qualquer-senha" });
 check(repetido.status === 409, "cadastro com nome já tomado é recusado com 409");
 
@@ -197,9 +217,8 @@ if (cookieB === "") {
   check(anon.body?.signup === true, "e diz o mesmo para quem não tem conta");
 
   // 14) a conta nova entra como agente e passa a ter VÍNCULO com a missão
-  const bAgente = await joinAs("player", { cookie: cookieB });
+  const bAgente = await joinAs({ cookie: cookieB });
   check(bAgente.ack?.ok === true && bAgente.me?.role === "player", "a conta nova entra como agente");
-  bAgente.socket.disconnect();
   await sleep(500); // o vínculo é gravado sem await, junto da partida
 
   const listaB = await get("/api/campaigns", cookieB);
@@ -209,26 +228,87 @@ if (cookieB === "") {
   check(missaoB?.owner === false, "e essa conta não é dona da missão");
 
   // 15) sem vínculo de mestre e com a chave errada, agente não vira mestre
-  const bGm = await joinAs("gm", { cookie: cookieB, key: "nao-e-a-chave" });
+  const bGm = await joinAs({ cookie: cookieB, key: "nao-e-a-chave" });
   check(bGm.ack?.ok === false, "agente sem vínculo de mestre não vira mestre");
+  check(
+    /senha/i.test(bGm.ack?.error ?? ""),
+    "e a recusa fala da senha, não de um papel que ele não pediu",
+  );
   bGm.socket.disconnect();
 
-  // 16) quem não é dono não apaga — e o 404 não diz se o selo existe
+  // 16) quem não é mestre não dá o papel
+  const semPoder = await api(URL, "POST", `/api/campaigns/${ROOM}/role`, {
+    body: { name: TEST_ACCOUNT, role: "gm" },
+    cookie: cookieB,
+  });
+  check(semPoder.status === 404, "agente não dá o papel de mestre a ninguém (404)");
+
+  // 17) O MESTRE DÁ O PAPEL — e vale na hora (ADR #22)
+  //
+  // `bAgente` continua conectado de propósito: o teste do "na hora" é o socket
+  // que já estava na mesa receber o papel sem reconectar.
+  const promover = await api(URL, "POST", `/api/campaigns/${ROOM}/role`, {
+    body: { name: TEST_ACCOUNT, role: "gm" },
+    cookie,
+  });
+  check(promover.status === 200, "o mestre promove um agente a mestre");
+  await until(
+    () => papelAoVivo(bAgente, TEST_ACCOUNT) === "gm",
+    "o papel novo chega ao agente conectado",
+  );
+  check(true, "e ele vira mestre na sessão aberta, sem F5");
+
+  const listaPromovido = await get("/api/campaigns", cookieB);
+  check(
+    listaPromovido.body?.campaigns?.find((c) => c.code === ROOM)?.role === "gm",
+    "o vínculo gravado é de mestre",
+  );
+
+  // O papel não é enfeite: o promovido passa a poder editar o mapa.
+  bAgente.state.errors.length = 0;
+  bAgente.socket.emit("actor:add", { actor: { name: "Token do promovido", row: 2, col: 2 } });
+  await until(
+    () => bAgente.state.last?.scene.actors.some((a) => a.name === "Token do promovido"),
+    "o promovido mexe no mapa",
+  );
+  check(bAgente.state.errors.length === 0, "promovido a mestre comanda a mesa na hora");
+
+  // 18) e o mestre tira o papel de volta
+  const rebaixar = await api(URL, "POST", `/api/campaigns/${ROOM}/role`, {
+    body: { name: TEST_ACCOUNT, role: "player" },
+    cookie,
+  });
+  check(rebaixar.status === 200, "o mestre tira o papel de volta");
+  await until(
+    () => papelAoVivo(bAgente, TEST_ACCOUNT) === "player",
+    "o rebaixamento chega ao agente conectado",
+  );
+  bAgente.state.errors.length = 0;
+  bAgente.socket.emit("map:walls", { op: "set", cells: [{ row: 0, col: 0 }] });
+  await until(() => bAgente.state.errors.length > 0, "erro ao editar o mapa depois de rebaixado");
+  check(bAgente.state.errors.at(-1)?.code === "DENIED", "rebaixado volta a ser agente na hora");
+  bAgente.socket.disconnect();
+
+  // 19) o DONO não é rebaixável: ele administra a missão
+  const auto = await api(URL, "POST", `/api/campaigns/${ROOM}/role`, {
+    body: { name: USER, role: "player" },
+    cookie,
+  });
+  check(auto.status === 400, "o dono da missão não pode ser rebaixado (400)");
+
+  // 20) quem não é dono não apaga — e o 404 não diz se o selo existe
   const apagar = await api(URL, "DELETE", `/api/campaigns/${ROOM}`, { cookie: cookieB });
   check(apagar.status === 404, "quem não é dono não apaga a missão (404)");
 
-  // 17) o vínculo de mestre é do mestre, e jogar como agente não rebaixa
-  const aAgente = await joinAs("player", { cookie });
-  check(aAgente.ack?.ok === true, "o mestre também pode entrar como agente numa sessão");
-  aAgente.socket.disconnect();
+  // 21) entrar na mesa não rebaixa o vínculo de quem já é mestre
   await sleep(500);
   const listaA = await get("/api/campaigns", cookie);
   const missaoA = listaA.body?.campaigns?.find((c) => c.code === ROOM);
-  check(missaoA?.role === "gm", "e o vínculo dele continua sendo de mestre");
+  check(missaoA?.role === "gm", "o vínculo do dono continua sendo de mestre");
   check(missaoA?.owner === true, "e ele continua dono da missão");
 }
 
-// 18) sair apaga o cookie
+// 22) sair apaga o cookie
 const out = await post("/api/auth/logout", {}, cookie);
 const setCookie = (out.res.headers.getSetCookie?.() ?? [])[0] ?? "";
 check(cookieOf(out.res) === "helio_session=", "o logout manda o cookie vazio");

@@ -75,3 +75,17 @@ export const useNetStore = create<NetState>()((set) => ({
 }));
 
 export const isGm = (s: NetState): boolean => s.role === "gm";
+
+/**
+ * Aviso que some sozinho.
+ *
+ * O mesmo texto pode ser reescrito por outra ação enquanto o primeiro ainda está
+ * na tela: por isso o `setTimeout` só apaga se o aviso ainda for este.
+ */
+export function flashNotice(msg: string, ms = 5000): void {
+  const store = useNetStore.getState();
+  store.setNotice(msg);
+  window.setTimeout(() => {
+    if (useNetStore.getState().notice === msg) useNetStore.getState().setNotice(null);
+  }, ms);
+}

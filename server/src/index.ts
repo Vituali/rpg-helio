@@ -25,6 +25,7 @@ import { touchMembership } from "./accounts.js";
 import { SESSION_COOKIE, cookieValue, readSession, sessionEnabled } from "./auth.js";
 import { dbEnabled } from "./db.js";
 import { handleHttp, registrationOpen } from "./http.js";
+import { onRoleChange } from "./live.js";
 import { migrate } from "./migrate.js";
 import { createRoom, publicState, type Player, type Room } from "./room.js";
 import { normalizeCode } from "./selo.js";
@@ -43,7 +44,6 @@ import { canMove } from "./validate.js";
 const PORT = Number(process.env.PORT ?? 3000);
 const ORIGIN = process.env.ORIGIN ?? "*";
 const DEFAULT_ROOM = (process.env.ROOM_CODE ?? "HELIO").toUpperCase();
-const MAX_NAME = 24;
 
 /**
  * Teto de células aceitas numa única mensagem. O maior tabuleiro possível é
@@ -278,6 +278,38 @@ function bump(room: Room): void {
   scheduleSave(room);
 }
 
+/**
+ * O papel mudou no banco (ADR #22): faz valer na mesa que já está aberta.
+ *
+ * Não é `bump`: a cena não mudou, e portanto não há o que gravar. Só a lista de
+ * jogadores precisa ser reenviada — e é ela que o cliente usa para descobrir o
+ * próprio papel (o `applyState` lê `me.role` a cada `room:state`).
+ *
+ * Rebaixar um mestre para agente dá a ele o token que todo agente tem; promover
+ * não tira nada (um mestre com token continua mestre — só passou a poder tudo).
+ */
+onRoleChange(({ code, name, role }) => {
+  const room = rooms.get(code);
+  if (!room) return;
+  const alvo = name.toLowerCase();
+  let mudou = false;
+  for (const p of room.players.values()) {
+    if (p.name.toLowerCase() !== alvo || p.role === role) continue;
+    p.role = role;
+    mudou = true;
+    if (role === "player" && p.actorId === null) {
+      p.actorId = spawnActor(room, p).id;
+    }
+  }
+  if (!mudou) return;
+  console.log(`[${code}] ${name} agora e ${role} (sessao aberta)`);
+  if (role === "player") {
+    bump(room); // o token novo é cena: aí sim precisa gravar
+  } else {
+    broadcast(room);
+  }
+});
+
 // ── Conexão ──────────────────────────────────────────────────────────────────
 io.on("connection", (socket) => {
   /**
@@ -348,9 +380,28 @@ io.on("connection", (socket) => {
   };
 
   socket.on("room:join", async (msg, ack) => {
-    const m = (msg ?? {}) as { code?: unknown; role?: Role; name?: unknown; key?: unknown };
-    const wantsGm = m.role === "gm";
+    const m = (msg ?? {}) as { code?: unknown; key?: unknown };
     const key = normalizeCodeOr(m.code);
+    const givenKey = typeof m.key === "string" ? m.key : "";
+
+    /*
+     * A conta é a porta (ADR #20).
+     *
+     * Até a entrega 4, o convidado entrava só com o nome: a conta era um
+     * upgrade, não um pedágio. Mas o papel passou a vir do vínculo e o nome, da
+     * conta — e aí o convidado virou um jogador sem nome estável, sem como ser
+     * promovido e sem linha no quadro de membros. A entrada sem conta fechou.
+     *
+     * Sem `SESSION_SECRET` não existe login, e a mesa **não abre no escuro**: a
+     * recusa é a mesma, e o boot grita sobre a variável que falta.
+     */
+    if (!account) {
+      console.log(`[entrada] recusada sem conta (${socket.id})`);
+      if (typeof ack === "function") {
+        ack({ ok: false, error: "Entre com a sua conta para jogar." });
+      }
+      return;
+    }
 
     /*
      * O selo precisa existir (ADR #18). Antes, um selo novo criava a campanha na
@@ -361,7 +412,7 @@ io.on("connection", (socket) => {
      * não abre", que é justamente o que o ADR #17 proíbe. Só recusamos quando o
      * banco respondeu e disse que o selo não existe.
      */
-    const lookup = await findCampaign(key, account?.accountId ?? null);
+    const lookup = await findCampaign(key, account.accountId);
     if (lookup.checked && !lookup.campaign) {
       wrongSelos += 1;
       console.log(`[entrada] selo desconhecido: ${key} (${wrongSelos} nesta conexao)`);
@@ -381,53 +432,44 @@ io.on("connection", (socket) => {
     const room = await getOrCreateRoom(key, lookup.campaign);
 
     /*
-     * Mestre é quem tem **vínculo de mestre** com a missão (ADR #19).
+     * Mestre é quem tem **vínculo de mestre** com a missão (ADRs #19 e #20).
      *
-     * Antes o critério era ser a conta dona da campanha. Dava no mesmo enquanto
-     * só existia uma conta — e travava um co-mestre, que precisaria de outra
-     * campanha ou da senha compartilhada. O vínculo é o quadro de quem manda
-     * nesta mesa, e é lá que o papel mora.
+     * O cliente não pede papel: ele entra, e o servidor diz o que ele é. Quem
+     * criou a missão recebe o vínculo na criação, e quem foi promovido recebe
+     * pela rota de papel (ADR #22). Não existe mais "escolhi MESTRE na tela".
      *
-     * O `GM_KEY` continua valendo como escapatória. Ele não promove ninguém em
-     * definitivo (não escreve vínculo), e sai quando existir recuperação de
-     * senha: hoje, sem ela, tirá-lo trancaria o grupo de fora se o mestre
-     * esquecesse a senha.
-     *
-     * Recusamos a entrada em vez de rebaixar em silêncio, senão a pessoa fica
-     * sem entender por que não consegue mexer no mapa.
+     * A `GM_KEY` continua valendo como escapatória, e só quando existe uma
+     * configurada: ela não escreve vínculo nenhum (é uma senha compartilhada, e
+     * promover alguém com ela seria promover o grupo inteiro em silêncio).
+     * Digitar uma chave é uma declaração de intenção — "quero entrar como
+     * mestre" —, e por isso a chave errada é dita na cara em vez de virar um
+     * rebaixamento silencioso.
      */
     const isGmMember = lookup.campaign?.memberRole === "gm";
-    if (wantsGm && !isGmMember && !gmKeyMatches(String(m.key ?? ""))) {
+    const keyOk = GM_KEY !== "" && givenKey !== "" && gmKeyMatches(givenKey);
+    if (givenKey !== "" && !isGmMember && !keyOk) {
       console.log(
-        `[entrada] mestre recusado em ${room.code}: ${account ? `conta ${account.name} sem vinculo de mestre` : "sem conta"} (${socket.id})`,
+        `[entrada] senha de mestre recusada em ${room.code}: conta ${account.name} sem vinculo (${socket.id})`,
       );
       dropIfEmpty(room);
       if (typeof ack === "function") {
         ack({
           ok: false,
-          // Diz qual dos dois caminhos falhou: "senha errada" para quem está
-          // logado manda procurar o problema no lugar errado.
-          error: account
-            ? "Esta conta não é mestra desta missão. Peça ao mestre, ou use a senha de mestre."
-            : "Senha de mestre incorreta.",
+          error: "Senha de mestre incorreta.",
         });
       }
       return;
     }
 
-    const role: Role = wantsGm ? "gm" : "player";
-    // Logado, o nome vem da conta — é o "não precisar digitar nome toda hora".
-    const name =
-      account?.name ??
-      (String(m.name ?? "")
-        .trim()
-        .slice(0, MAX_NAME) || "Anônimo");
+    const role: Role = isGmMember || keyOk ? "gm" : "player";
+    // O nome vem da conta: não há campo de nome na entrada (ADR #20/#21).
+    const name = account.name;
 
     const player: Player = {
       id: socket.id,
       name,
       role,
-      accountId: account?.accountId ?? null,
+      accountId: account.accountId,
       actorId: null,
       canMoveGlobal: false,
     };
@@ -441,7 +483,7 @@ io.on("connection", (socket) => {
 
     // Registra que esta conta passou por esta campanha (ADR #19). Sem await: é
     // livro-caixa, e a partida não espera por ele.
-    if (account) void touchMembership(account.accountId, room.campaignId);
+    void touchMembership(account.accountId, room.campaignId);
 
     console.log(`[${room.code}] ${name} entrou como ${role}`);
     if (typeof ack === "function") {
@@ -733,13 +775,13 @@ async function main(): Promise<void> {
     console.log(`HELIO server ouvindo em :${PORT} (sala padrão: ${DEFAULT_ROOM})`);
     console.log(
       sessionEnabled
-        ? "  contas: login ligado (cookie de sessão assinado)"
-        : "  contas: SEM SESSION_SECRET - login desligado, so convidado",
+        ? "  contas: login ligado (cookie de sessao assinado) - a mesa so abre com conta"
+        : "  contas: SEM SESSION_SECRET - NINGUEM ENTRA, configure SESSION_SECRET",
     );
     console.log(
       GM_KEY
-        ? "  entrada: jogador entra livre; MESTRE pelo vinculo com a missao (ou GM_KEY, legado)"
-        : "  entrada: SEM GM_KEY - so o vinculo com a missao da papel de mestre",
+        ? "  papel: vinculo com a missao; GM_KEY e a escapatoria (nao escreve vinculo)"
+        : "  papel: so o vinculo com a missao (sem GM_KEY configurada)",
     );
     console.log(
       registrationOpen

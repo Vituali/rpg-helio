@@ -9,13 +9,16 @@
  *   - a conta dona entra como mestre sem senha, e só ela apaga a missão;
  *   - apagar tira o selo do ar, e a missão some da lista.
  *
- * O teste cria as missões de que precisa e **apaga no fim**. Com o banco fora ele
- * não inventa: avisa e verifica o outro lado — que a mesa continua abrindo em
- * memória (ADR #17).
+ * Desde a entrega 5 a mesa exige conta (ADR #20): quem entra pelo selo é uma
+ * **conta de agente**, e o nome na mesa é o nome dela — não se digita nada.
+ *
+ * O teste cria as missões de que precisa e **apaga no fim**.
  *
  *   npm start
  *   URL=http://localhost SEED_MASTER_USER=helio SEED_MASTER_PASS=123456 npm run selo
  */
+
+import { TEST_ACCOUNT, deleteTestAccount, testAccount } from "./harness.mjs";
 
 const URL = (process.env.URL ?? "http://localhost").replace(/\/+$/, "");
 const USER = process.env.SEED_MASTER_USER ?? "helio";
@@ -59,7 +62,7 @@ function cookieOf(res) {
 }
 
 /** O socket.io-client do Node não tem cookie jar: o cookie vai na mão. */
-async function join(code, { cookie, role = "player", name = "Convidado", key = "" } = {}) {
+async function join(code, { cookie, key = "" } = {}) {
   const { io } = await import("socket.io-client");
   const socket = io(URL, {
     transports: ["websocket"],
@@ -70,7 +73,8 @@ async function join(code, { cookie, role = "player", name = "Convidado", key = "
     socket.once("connect_error", reject);
   });
   const ack = await new Promise((resolve) => {
-    socket.emit("room:join", { code, name, role, key }, resolve);
+    // Sem nome e sem papel: quem entra é a conta do cookie (ADR #20).
+    socket.emit("room:join", { code, key }, resolve);
   });
   const me = ack?.ok ? ack.players.find((p) => p.id === ack.you) : null;
   return { socket, ack, me };
@@ -106,9 +110,10 @@ const missao = await http("POST", "/api/campaigns", {
 const dbDown = missao.status === 503;
 if (dbDown) {
   skip("banco indisponível: sem lista, sem criar, sem apagar");
-  // O outro lado do ADR #17: sem banco, o selo não pode ser julgado — e a mesa
-  // tem que abrir do mesmo jeito, com um selo qualquer.
-  const solto = await join(`MEMORIA-${Math.floor(Math.random() * 1e6)}`);
+  // O outro lado do ADR #17: com o banco fora o selo não pode ser julgado — e a
+  // mesa tem que abrir do mesmo jeito, com um selo qualquer. A sessão é
+  // assinada e não mora no banco, então o cookie do login continua valendo.
+  const solto = await join(`MEMORIA-${Math.floor(Math.random() * 1e6)}`, { cookie });
   check(solto.ack?.ok === true, "com o banco fora, a mesa abre em memória");
   solto.socket.disconnect();
   console.log(`\n${failures === 0 ? "TUDO OK" : `${failures} FALHA(S)`} (modo sem banco)`);
@@ -143,25 +148,33 @@ check(
   "a lista traz o nome da missão, não só o selo",
 );
 
-// 6) Selo conhecido entra — e o convidado é convidado
-const convidado = await join(selo, { name: "Kaiser" });
-check(convidado.ack?.ok === true, "convidado entra com o selo, só com o nome");
+// 6) Selo conhecido entra — e quem entra pelo selo é um agente
+//
+// A conta é a porta (ADR #20): o agente precisa de conta, e é o nome dela que a
+// mesa mostra. Não existe mais entrar só com um nome digitado.
+const agente = await testAccount(URL);
+if (!agente.cookie) {
+  console.error(`\nNão deu para criar/entrar na conta de teste "${TEST_ACCOUNT}".`);
+  process.exit(1);
+}
+const convidado = await join(selo, { cookie: agente.cookie });
+check(convidado.ack?.ok === true, "a conta do agente entra com o selo");
 check(convidado.me?.role === "player", "e é jogador, não mestre");
-check(convidado.me?.name === "Kaiser", "com o nome que digitou");
+check(convidado.me?.name === TEST_ACCOUNT, "com o nome da conta, não um nome digitado");
 convidado.socket.disconnect();
 
 // 7) Digitar em minúscula, ou com acento, cai na mesma mesa
 await sleep(300);
-const minusculo = await join(selo.toLowerCase());
+const minusculo = await join(selo.toLowerCase(), { cookie: agente.cookie });
 check(
   minusculo.ack?.ok === true && minusculo.ack.code === selo,
   "selo digitado em minúscula entra na mesma mesa",
 );
 minusculo.socket.disconnect();
 
-// 8) Selo desconhecido NÃO entra
+// 8) Selo desconhecido NÃO entra (nem para quem tem conta)
 await sleep(300);
-const errado = await join("TREVOSO-NADA-AQUI-99");
+const errado = await join("TREVOSO-NADA-AQUI-99", { cookie: agente.cookie });
 check(errado.ack?.ok === false, "selo desconhecido é recusado");
 check(
   /desconhecido/i.test(String(errado.ack?.error ?? "")),
@@ -178,7 +191,7 @@ check(
 
 // 10) A conta dona entra como mestre, sem chave
 await sleep(300);
-const mestre = await join(selo, { cookie, role: "gm" });
+const mestre = await join(selo, { cookie });
 check(mestre.ack?.ok === true, "a conta dona entrou como mestre sem senha");
 check(mestre.me?.role === "gm", "e o papel é mestre");
 check(mestre.ack?.name === "A Maldição de Veríssimo", "a mesa carrega o nome da missão");
@@ -192,7 +205,7 @@ const apagou = await http("DELETE", `/api/campaigns/${selo}`, { cookie });
 check(apagou.status === 200, "o dono apagou a missão");
 
 await sleep(300);
-const fantasma = await join(selo);
+const fantasma = await join(selo, { cookie: agente.cookie });
 check(fantasma.ack?.ok === false, "o selo apagado deixou de funcionar");
 fantasma.socket.disconnect();
 
@@ -205,6 +218,7 @@ const lixo = [selo2, semNome.body?.campaign?.code].filter(Boolean);
 for (const c of lixo) {
   if (restantes.includes(c)) await http("DELETE", `/api/campaigns/${c}`, { cookie });
 }
+deleteTestAccount();
 
 console.log(`\n${failures === 0 ? "TUDO OK" : `${failures} FALHA(S)`}`);
 process.exit(failures === 0 ? 0 : 1);
