@@ -39,9 +39,12 @@ export interface ServerScene {
   cols: number;
   rows: number;
   cell: number;
+  offsetX?: number;
+  offsetY?: number;
   bgImage: string | null;
   fogMode: FogMode;
   walls: boolean[][];
+  edgeWalls?: string[];
   fogExplored: FogValue[][];
   actors: Actor[];
   sectors: Sector[];
@@ -89,6 +92,8 @@ export interface GameState {
   cols: number;
   rows: number;
   cell: number;
+  offsetX: number;
+  offsetY: number;
   bgImage: string | null;
   fogMode: FogMode;
   gmMode: boolean;
@@ -96,6 +101,7 @@ export interface GameState {
   // conteúdo
   fog: FogValue[][];
   walls: boolean[][];
+  edgeWalls: string[];
   actors: Actor[];
   sectors: Sector[];
 
@@ -105,6 +111,7 @@ export interface GameState {
   // ── ações de configuração ──
   setDims: (rows: number, cols: number) => void;
   setCell: (cell: number) => void;
+  setOffset: (offsetX: number, offsetY: number) => void;
   setBgImage: (bg: string | null) => void;
   setFogMode: (mode: FogMode) => void;
   toggleGm: () => void;
@@ -114,6 +121,7 @@ export interface GameState {
   resetFog: () => void;
   clearWalls: () => void;
   paintWalls: (cells: Cell[], value: boolean) => void;
+  paintEdgeWalls: (edges: string[], op: "set" | "clear" | "toggle") => void;
   paintFog: (cells: Cell[], value: FogValue) => void;
   recomputeVision: () => void;
 
@@ -147,12 +155,15 @@ export const useGameStore = create<GameState>()((set, get) => ({
   cols: DEFAULT_COLS,
   rows: DEFAULT_ROWS,
   cell: DEFAULT_CELL,
+  offsetX: 0,
+  offsetY: 0,
   bgImage: null,
   fogMode: "soft",
   gmMode: false,
 
   fog: INITIAL_FOG,
   walls: INITIAL_WALLS,
+  edgeWalls: [],
   actors: INITIAL_ACTORS,
   sectors: [],
 
@@ -177,6 +188,11 @@ export const useGameStore = create<GameState>()((set, get) => ({
     const value = clamp(cell, 16, 96);
     if (isOnline()) return send("map:config", { cell: value });
     set({ cell: value });
+  },
+
+  setOffset: (offsetX, offsetY) => {
+    if (isOnline()) return send("map:config", { offsetX, offsetY });
+    set({ offsetX, offsetY });
   },
 
   setBgImage: (bg) => {
@@ -204,9 +220,10 @@ export const useGameStore = create<GameState>()((set, get) => ({
   clearWalls: () => {
     if (isOnline()) {
       const { rows, cols } = get();
+      send("map:edge-walls", { op: "clear", edges: [] });
       return send("map:walls", { op: "clear", cells: allCells(rows, cols) });
     }
-    set((s) => ({ walls: makeWalls(s.rows, s.cols) }));
+    set((s) => ({ walls: makeWalls(s.rows, s.cols), edgeWalls: [] }));
     get().recomputeVision();
   },
 
@@ -220,6 +237,25 @@ export const useGameStore = create<GameState>()((set, get) => ({
         if (walls[row]?.[col] !== undefined) walls[row][col] = value;
       }
       return { walls };
+    });
+    get().recomputeVision();
+  },
+
+  paintEdgeWalls: (edges, op) => {
+    if (isOnline()) {
+      return send("map:edge-walls", { op, edges });
+    }
+    set((s) => {
+      const setEdges = new Set(s.edgeWalls);
+      for (const edge of edges) {
+        if (op === "set") setEdges.add(edge);
+        else if (op === "clear") setEdges.delete(edge);
+        else if (op === "toggle") {
+          if (setEdges.has(edge)) setEdges.delete(edge);
+          else setEdges.add(edge);
+        }
+      }
+      return { edgeWalls: Array.from(setEdges) };
     });
     get().recomputeVision();
   },
@@ -241,8 +277,8 @@ export const useGameStore = create<GameState>()((set, get) => ({
   },
 
   recomputeVision: () => {
-    const { fog, walls, actors, rows, cols } = get();
-    set({ fog: computeVision(fog, walls, actors, rows, cols) });
+    const { fog, walls, edgeWalls, actors, rows, cols } = get();
+    set({ fog: computeVision(fog, walls, actors, rows, cols, edgeWalls) });
   },
 
   // ── atores ──
@@ -292,7 +328,7 @@ export const useGameStore = create<GameState>()((set, get) => ({
   setActiveActor: (id) => set({ activeActorId: id }),
 
   moveActorTo: (id, goal) => {
-    const { walls, rows, cols, actors } = get();
+    const { walls, edgeWalls, rows, cols, actors } = get();
     const actor = actors.find((a) => a.id === id);
     if (!actor) return;
 
@@ -302,7 +338,7 @@ export const useGameStore = create<GameState>()((set, get) => ({
         ? actor.path[actor.path.length - 1]
         : { row: actor.row, col: actor.col };
 
-    const path = findPath(walls, start, goal, rows, cols);
+    const path = findPath(walls, start, goal, rows, cols, edgeWalls);
     if (!path) return;
 
     set((s) => ({
@@ -369,10 +405,13 @@ export const useGameStore = create<GameState>()((set, get) => ({
       cols: s.cols,
       rows: s.rows,
       cell: s.cell,
+      offsetX: s.offsetX,
+      offsetY: s.offsetY,
       bgImage: s.bgImage,
       fogMode: s.fogMode,
       fog: s.fog,
       walls: s.walls,
+      edgeWalls: s.edgeWalls,
       actors: s.actors,
       sectors: s.sectors,
     };
@@ -386,10 +425,13 @@ export const useGameStore = create<GameState>()((set, get) => ({
         cols,
         rows,
         cell: data.cell ?? s.cell,
+        offsetX: data.offsetX ?? s.offsetX,
+        offsetY: data.offsetY ?? s.offsetY,
         bgImage: data.bgImage ?? s.bgImage,
         fogMode: data.fogMode ?? s.fogMode,
         fog: data.fog ?? s.fog,
         walls: data.walls ?? s.walls,
+        edgeWalls: data.edgeWalls ?? s.edgeWalls,
         actors: data.actors ?? s.actors,
         sectors: data.sectors ?? s.sectors,
       };
@@ -405,9 +447,12 @@ export const useGameStore = create<GameState>()((set, get) => ({
         cols: scene.cols,
         rows: scene.rows,
         cell: scene.cell,
+        offsetX: scene.offsetX ?? 0,
+        offsetY: scene.offsetY ?? 0,
         bgImage: scene.bgImage,
         fogMode: scene.fogMode,
         walls: scene.walls,
+        edgeWalls: scene.edgeWalls ?? [],
         sectors: scene.sectors,
         // O servidor guarda o fog no mesmo formato do cliente (0/1/3);
         // a visão atual (2) é recalculada logo abaixo.

@@ -24,6 +24,7 @@ export const WALK_FPS = 8;
 export const TOOLS = {
   MOVE: "move",
   WALL: "wall",
+  WALL_EDGE: "wall_edge",
   ERASE: "erase",
   REVEAL: "reveal",
   HIDE: "hide",

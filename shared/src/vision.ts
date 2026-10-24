@@ -2,9 +2,61 @@ import { FOG_NONE, FOG_SEEN, FOG_VIS } from "./constants";
 import { inBounds } from "./grid";
 import type { Cell, FogValue } from "./types";
 
+function segmentsIntersect(
+  p0x: number,
+  p0y: number,
+  p1x: number,
+  p1y: number,
+  p2x: number,
+  p2y: number,
+  p3x: number,
+  p3y: number,
+): boolean {
+  const s1x = p1x - p0x;
+  const s1y = p1y - p0y;
+  const s2x = p3x - p2x;
+  const s2y = p3y - p2y;
+
+  const denom = -s2x * s1y + s1x * s2y;
+  if (Math.abs(denom) < 1e-7) return false;
+
+  const s = (-s1y * (p0x - p2x) + s1x * (p0y - p2y)) / denom;
+  const t = (s2x * (p0y - p2y) - s2y * (p0x - p2x)) / denom;
+
+  return s > 0.001 && s < 0.999 && t > 0.001 && t < 0.999;
+}
+
+function edgeIntersectsRay(
+  edgeKey: string,
+  r1: number,
+  c1: number,
+  r2: number,
+  c2: number,
+): boolean {
+  const parts = edgeKey.split(",");
+  if (parts.length < 3) return false;
+  const r = Number(parts[0]);
+  const c = Number(parts[1]);
+  const orient = parts[2];
+
+  const p0x = c1 + 0.5;
+  const p0y = r1 + 0.5;
+  const p1x = c2 + 0.5;
+  const p1y = r2 + 0.5;
+
+  if (orient === "h") {
+    // Borda horizontal no topo da célula (r, c): de (c, r) até (c+1, r)
+    return segmentsIntersect(p0x, p0y, p1x, p1y, c, r, c + 1, r);
+  } else if (orient === "v") {
+    // Borda vertical na esquerda da célula (r, c): de (c, r) até (c, r+1)
+    return segmentsIntersect(p0x, p0y, p1x, p1y, c, r, c, r + 1);
+  }
+  return false;
+}
+
 /**
  * Line of Sight por Bresenham: há visão de (r1,c1) para (r2,c2) se nenhuma
- * parede bloquear o caminho entre os centros das células.
+ * parede em bloco ou parede de borda bloquear o caminho entre os centros das células.
  */
 export function hasLOS(
   walls: boolean[][],
@@ -12,7 +64,15 @@ export function hasLOS(
   c1: number,
   r2: number,
   c2: number,
+  edgeWalls?: Set<string> | string[],
 ): boolean {
+  if (edgeWalls) {
+    const edges = edgeWalls instanceof Set ? edgeWalls : new Set(edgeWalls);
+    for (const key of edges) {
+      if (edgeIntersectsRay(key, r1, c1, r2, c2)) return false;
+    }
+  }
+
   const dx = Math.abs(c2 - c1);
   const dy = Math.abs(r2 - r1);
   const sx = c1 < c2 ? 1 : -1;
@@ -50,6 +110,7 @@ export function visibleCellsFrom(
   vision: number,
   rows: number,
   cols: number,
+  edgeWalls?: Set<string> | string[],
 ): Cell[] {
   const out: Cell[] = [];
   const vr = vision;
@@ -58,10 +119,12 @@ export function visibleCellsFrom(
   const c0 = Math.max(0, origin.col - vr);
   const c1 = Math.min(cols - 1, origin.col + vr);
 
+  const edges = edgeWalls ? (edgeWalls instanceof Set ? edgeWalls : new Set(edgeWalls)) : undefined;
+
   for (let r = r0; r <= r1; r++) {
     for (let c = c0; c <= c1; c++) {
       const dist = Math.hypot(r - origin.row, c - origin.col);
-      if (dist <= vr && hasLOS(walls, origin.row, origin.col, r, c)) {
+      if (dist <= vr && hasLOS(walls, origin.row, origin.col, r, c, edges)) {
         out.push({ row: r, col: c });
       }
     }
@@ -84,10 +147,13 @@ export function computeVision(
   actors: { row: number; col: number; vision: number }[],
   rows: number,
   cols: number,
+  edgeWalls?: Set<string> | string[],
 ): FogValue[][] {
   const next = fog.map((row) =>
     row.map((v) => (v === FOG_VIS ? FOG_SEEN : v) as FogValue),
   );
+
+  const edges = edgeWalls ? (edgeWalls instanceof Set ? edgeWalls : new Set(edgeWalls)) : undefined;
 
   for (const a of actors) {
     const vision = a.vision ?? 5;
@@ -99,7 +165,7 @@ export function computeVision(
     for (let r = r0; r <= r1; r++) {
       for (let c = c0; c <= c1; c++) {
         const dist = Math.hypot(r - a.row, c - a.col);
-        if (dist <= vision && hasLOS(walls, a.row, a.col, r, c)) {
+        if (dist <= vision && hasLOS(walls, a.row, a.col, r, c, edges)) {
           next[r][c] = FOG_VIS;
         }
       }

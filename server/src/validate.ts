@@ -1,4 +1,4 @@
-import { isAdjacent } from "@helio/shared";
+import { isAdjacent, isEdgeBlocked } from "@helio/shared";
 import type { Cell } from "@helio/shared";
 import type { Player, Room } from "./room.js";
 
@@ -31,11 +31,14 @@ export function canMove(
     return { ok: false, reason: "O mestre ainda não liberou seu movimento." };
   }
 
-  const { rows, cols, walls } = room.scene;
+  const { rows, cols, walls, edgeWalls } = room.scene;
   if (to.row < 0 || to.row >= rows || to.col < 0 || to.col >= cols) {
     return { ok: false, reason: "Fora do mapa." };
   }
   if (walls[to.row]?.[to.col]) return { ok: false, reason: "Parede." };
+  if (edgeWalls && isEdgeBlocked(edgeWalls, { row: actor.row, col: actor.col }, to)) {
+    return { ok: false, reason: "Bloqueado por parede do labirinto." };
+  }
   if (!isAdjacent({ row: actor.row, col: actor.col }, to)) {
     return { ok: false, reason: "Um passo por vez." };
   }

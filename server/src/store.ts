@@ -355,9 +355,12 @@ interface PersistedScene {
   cols: number;
   rows: number;
   cell: number;
+  offsetX?: number;
+  offsetY?: number;
   bgImage: string | null;
   fogMode: FogMode;
   walls: boolean[][];
+  edgeWalls?: string[];
   fogExplored: number[][];
   actors: PersistedActor[];
   sectors: Sector[];
@@ -370,9 +373,12 @@ export function persistableScene(room: Room): PersistedScene {
     cols: s.cols,
     rows: s.rows,
     cell: s.cell,
+    offsetX: s.offsetX ?? 0,
+    offsetY: s.offsetY ?? 0,
     bgImage: s.bgImage,
     fogMode: s.fogMode,
     walls: s.walls,
+    edgeWalls: s.edgeWalls ?? [],
     fogExplored: s.fogExplored,
     actors: s.actors
       .filter((a) => a.ownerId === null && !room.pcActors.has(a.id))
@@ -417,8 +423,11 @@ export function sceneFromPersisted(raw: unknown): ServerScene | null {
   scene.rows = rows;
   scene.cols = cols;
   scene.cell = clamp(numberOr(d.cell, 48), 16, 96);
+  scene.offsetX = numberOr(d.offsetX, 0);
+  scene.offsetY = numberOr(d.offsetY, 0);
   scene.bgImage = typeof d.bgImage === "string" ? d.bgImage : null;
   scene.fogMode = d.fogMode === "hard" ? "hard" : "soft";
+  scene.edgeWalls = Array.isArray(d.edgeWalls) ? d.edgeWalls.filter((x): x is string => typeof x === "string") : [];
 
   const walls = asGrid(d.walls).map((row) => row.map((v) => v === true));
   scene.walls = resizeGrid(walls, rows, cols, false);

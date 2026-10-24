@@ -18,9 +18,13 @@ export interface ServerScene {
   cols: number;
   rows: number;
   cell: number;
+  offsetX?: number;
+  offsetY?: number;
   bgImage: string | null;
   fogMode: FogMode;
   walls: boolean[][];
+  /** Paredes em aresta/borda ("r,c,h" ou "r,c,v") */
+  edgeWalls?: string[];
   /** 0 = nunca visto · 1 = já explorado (compartilhado, permanente) */
   fogExplored: number[][];
   actors: Actor[];
@@ -72,9 +76,12 @@ export function createScene(): ServerScene {
     cols: DEFAULT_COLS,
     rows: DEFAULT_ROWS,
     cell: DEFAULT_CELL,
+    offsetX: 0,
+    offsetY: 0,
     bgImage: null,
     fogMode: "soft",
     walls: makeWalls(DEFAULT_ROWS, DEFAULT_COLS),
+    edgeWalls: [],
     fogExplored: makeFog(DEFAULT_ROWS, DEFAULT_COLS),
     actors: [],
     sectors: [],

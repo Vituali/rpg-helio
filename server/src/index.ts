@@ -555,6 +555,29 @@ io.on("connection", (socket) => {
     bump(room);
   });
 
+  socket.on("map:edge-walls", (msg) => {
+    const room = requireGm();
+    if (!room) return;
+    const m = msg as { op?: "set" | "clear" | "toggle"; edges?: string[] };
+    const edges = Array.isArray(m.edges) ? m.edges : [];
+    const current = new Set(room.scene.edgeWalls ?? []);
+
+    for (const edge of edges) {
+      if (typeof edge !== "string") continue;
+      if (m.op === "clear") {
+        current.delete(edge);
+      } else if (m.op === "set") {
+        current.add(edge);
+      } else {
+        // toggle
+        if (current.has(edge)) current.delete(edge);
+        else current.add(edge);
+      }
+    }
+    room.scene.edgeWalls = Array.from(current);
+    bump(room);
+  });
+
   socket.on("map:fog", (msg) => {
     const room = requireGm();
     if (!room) return;
@@ -575,6 +598,8 @@ io.on("connection", (socket) => {
       cols?: number;
       rows?: number;
       cell?: number;
+      offsetX?: number;
+      offsetY?: number;
       bgImage?: string | null;
       fogMode?: "soft" | "hard";
     };
@@ -593,6 +618,8 @@ io.on("connection", (socket) => {
       }
     }
     if (typeof m.cell === "number") s.cell = clamp(m.cell, 16, 96);
+    if (typeof m.offsetX === "number") s.offsetX = m.offsetX;
+    if (typeof m.offsetY === "number") s.offsetY = m.offsetY;
     if (m.bgImage !== undefined) s.bgImage = m.bgImage;
     if (m.fogMode === "soft" || m.fogMode === "hard") s.fogMode = m.fogMode;
     bump(room);

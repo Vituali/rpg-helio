@@ -65,7 +65,8 @@ type UiTool = Tool | "pan";
 const TOOL_LIST: { id: UiTool; label: string; short: string; key: string; icon: ReactNode }[] = [
   { id: TOOLS.MOVE, label: "Mover", short: "Mover", key: "M", icon: <IconMove size={15} /> },
   { id: "pan", label: "Câmera", short: "Câmera", key: "Espaço", icon: <IconPan size={15} /> },
-  { id: TOOLS.WALL, label: "Parede", short: "Parede", key: "W", icon: <IconWall size={15} /> },
+  { id: TOOLS.WALL, label: "Bloco", short: "Bloco", key: "W", icon: <IconWall size={15} /> },
+  { id: TOOLS.WALL_EDGE, label: "Aresta", short: "Aresta", key: "A", icon: <IconWallThin size={15} /> },
   { id: TOOLS.ERASE, label: "Apagar", short: "Apagar", key: "E", icon: <IconErase size={15} /> },
   { id: TOOLS.REVEAL, label: "Revelar", short: "Luz", key: "R", icon: <IconReveal size={15} /> },
   { id: TOOLS.HIDE, label: "Ocultar", short: "Névoa", key: "H", icon: <IconHide size={15} /> },
@@ -87,6 +88,8 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
   const cols = useGameStore((s) => s.cols);
   const rows = useGameStore((s) => s.rows);
   const cell = useGameStore((s) => s.cell);
+  const offsetX = useGameStore((s) => s.offsetX);
+  const offsetY = useGameStore((s) => s.offsetY);
   const bgImage = useGameStore((s) => s.bgImage);
   const fogMode = useGameStore((s) => s.fogMode);
   const gmMode = useGameStore((s) => s.gmMode);
@@ -103,6 +106,7 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
 
   const setDims = useGameStore((s) => s.setDims);
   const setCell = useGameStore((s) => s.setCell);
+  const setOffset = useGameStore((s) => s.setOffset);
   const setBgImage = useGameStore((s) => s.setBgImage);
   const setFogMode = useGameStore((s) => s.setFogMode);
   const toggleGm = useGameStore((s) => s.toggleGm);
@@ -193,11 +197,14 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
     const {
       fog: f,
       walls: w,
+      edgeWalls: ew = [],
       actors: t,
       sectors: sec,
       fogMode: fm,
       gmMode: gm,
       cell: cs,
+      offsetX: oxGrid = 0,
+      offsetY: oyGrid = 0,
       cols: nc,
       rows: nr,
       bgImage: bg,
@@ -214,35 +221,37 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
     const TW = nc * cs;
     const TH = nr * cs;
 
-    // Moldura externa ritualística do tabuleiro
+    // Moldura externa ritualística do tabuleiro (alinhada à grade)
     ctx.strokeStyle = "rgba(217, 119, 6, 0.35)";
     ctx.lineWidth = 2;
-    ctx.strokeRect(-2, -2, TW + 4, TH + 4);
+    ctx.strokeRect(oxGrid - 2, oyGrid - 2, TW + 4, TH + 4);
 
     // ── Fundo ──
     if (bg) {
       const img = getImage(bg);
-      if (img) ctx.drawImage(img, 0, 0, TW, TH);
+      // O mapa de fundo ocupa de 0,0 a TW,TH ou respeita o tamanho da arte;
+      // Ao desenhar o mapa em 0,0, a grade com oxGrid e oyGrid se desloca sobre ele perfeitamente!
+      if (img) ctx.drawImage(img, 0, 0, Math.max(TW, img.width || TW), Math.max(TH, img.height || TH));
     } else {
       for (let r = 0; r < nr; r++) {
         for (let c = 0; c < nc; c++) {
           ctx.fillStyle = (r + c) % 2 === 0 ? PALETTE.tile1 : PALETTE.tile2;
-          ctx.fillRect(c * cs, r * cs, cs, cs);
+          ctx.fillRect(oxGrid + c * cs, oyGrid + r * cs, cs, cs);
           ctx.strokeStyle = "rgba(139, 92, 246, 0.06)";
           ctx.lineWidth = 0.5;
-          ctx.strokeRect(c * cs + 2, r * cs + 2, cs - 4, cs - 4);
+          ctx.strokeRect(oxGrid + c * cs + 2, oyGrid + r * cs + 2, cs - 4, cs - 4);
         }
       }
     }
 
-    // ── Paredes ──
+    // ── Paredes (Blocos) ──
     if (ui.current.wallMode === "blocks") {
       // Modo clássico: blocos retro
       for (let r = 0; r < nr; r++) {
         for (let c = 0; c < nc; c++) {
           if (!w[r]?.[c]) continue;
-          const x = c * cs;
-          const y = r * cs;
+          const x = oxGrid + c * cs;
+          const y = oyGrid + r * cs;
           ctx.fillStyle = PALETTE.wall;
           ctx.fillRect(x, y, cs, cs);
           ctx.fillStyle = PALETTE.wallLit;
@@ -263,8 +272,8 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
       for (let r = 0; r < nr; r++) {
         for (let c = 0; c < nc; c++) {
           if (!w[r]?.[c]) continue;
-          const x = c * cs;
-          const y = r * cs;
+          const x = oxGrid + c * cs;
+          const y = oyGrid + r * cs;
           // Top edge
           if (!w[r - 1]?.[c]) {
             ctx.moveTo(x, y);
@@ -298,17 +307,58 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
       for (let r = 0; r < nr; r++) {
         for (let c = 0; c < nc; c++) {
           if (w[r]?.[c]) {
-            ctx.strokeRect(c * cs + 2, r * cs + 2, cs - 4, cs - 4);
+            ctx.strokeRect(oxGrid + c * cs + 2, oyGrid + r * cs + 2, cs - 4, cs - 4);
           }
         }
       }
       ctx.restore();
     }
 
+    // ── Paredes por Aresta (Edge Walls) ──
+    if (ew.length > 0) {
+      ctx.save();
+      for (const edge of ew) {
+        const parts = edge.split(",");
+        if (parts.length < 3) continue;
+        const r = parseInt(parts[0], 10);
+        const c = parseInt(parts[1], 10);
+        const dir = parts[2];
+
+        const x = oxGrid + c * cs;
+        const y = oyGrid + r * cs;
+
+        // Linha com brilho paranormal
+        ctx.beginPath();
+        if (dir === "h") {
+          ctx.moveTo(x, y);
+          ctx.lineTo(x + cs, y);
+        } else {
+          ctx.moveTo(x, y);
+          ctx.lineTo(x, y + cs);
+        }
+
+        // Se o modo de parede for invisível e não for GM, não desenha (mas bloqueia)
+        if (ui.current.wallMode === "invisible" && !gm) {
+          continue;
+        }
+
+        // Brilho externo sutil
+        ctx.strokeStyle = "rgba(168, 85, 247, 0.3)";
+        ctx.lineWidth = 5;
+        ctx.stroke();
+
+        // Linha interna viva
+        ctx.strokeStyle = ui.current.wallMode === "invisible" ? "rgba(245, 158, 11, 0.85)" : "#e879f9";
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
     // ── Setores ──
     for (const s of sec) {
-      const x1 = s.c1 * cs;
-      const y1 = s.r1 * cs;
+      const x1 = oxGrid + s.c1 * cs;
+      const y1 = oyGrid + s.r1 * cs;
       const sw = (s.c2 - s.c1 + 1) * cs;
       const sh = (s.r2 - s.r1 + 1) * cs;
       ctx.globalAlpha = 0.09;
@@ -336,11 +386,11 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
       ctx.strokeStyle = "#f59e0b";
       ctx.lineWidth = 2;
       ctx.setLineDash([4, 4]);
-      ctx.strokeRect(c1 * cs, r1 * cs, (c2 - c1 + 1) * cs, (r2 - r1 + 1) * cs);
+      ctx.strokeRect(oxGrid + c1 * cs, oyGrid + r1 * cs, (c2 - c1 + 1) * cs, (r2 - r1 + 1) * cs);
       ctx.setLineDash([]);
       ctx.globalAlpha = 0.12;
       ctx.fillStyle = "#f59e0b";
-      ctx.fillRect(c1 * cs, r1 * cs, (c2 - c1 + 1) * cs, (r2 - r1 + 1) * cs);
+      ctx.fillRect(oxGrid + c1 * cs, oyGrid + r1 * cs, (c2 - c1 + 1) * cs, (r2 - r1 + 1) * cs);
       ctx.globalAlpha = 1;
     }
 
@@ -349,14 +399,14 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
     ctx.lineWidth = 0.5;
     for (let c = 0; c <= nc; c++) {
       ctx.beginPath();
-      ctx.moveTo(c * cs, 0);
-      ctx.lineTo(c * cs, TH);
+      ctx.moveTo(oxGrid + c * cs, oyGrid);
+      ctx.lineTo(oxGrid + c * cs, oyGrid + TH);
       ctx.stroke();
     }
     for (let r = 0; r <= nr; r++) {
       ctx.beginPath();
-      ctx.moveTo(0, r * cs);
-      ctx.lineTo(TW, r * cs);
+      ctx.moveTo(oxGrid, oyGrid + r * cs);
+      ctx.lineTo(oxGrid + TW, oyGrid + r * cs);
       ctx.stroke();
     }
 
@@ -367,8 +417,8 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
       const anim = anims.current.get(actor.id);
       if (!anim) continue;
 
-      const cx = anim.rx * cs + cs / 2;
-      const cy = anim.ry * cs + cs / 2;
+      const cx = oxGrid + anim.rx * cs + cs / 2;
+      const cy = oyGrid + anim.ry * cs + cs / 2;
 
       // Anel do raio de visão
       ctx.beginPath();
@@ -382,7 +432,7 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
         ctx.beginPath();
         ctx.moveTo(cx, cy);
         for (const step of actor.path) {
-          ctx.lineTo(step.col * cs + cs / 2, step.row * cs + cs / 2);
+          ctx.lineTo(oxGrid + step.col * cs + cs / 2, oyGrid + step.row * cs + cs / 2);
         }
         ctx.strokeStyle = `${actor.color}88`;
         ctx.lineWidth = 1.8;
@@ -439,10 +489,10 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
             const fv = effectiveFog[r]?.[c] ?? FOG_NONE;
             if (fv === FOG_NONE) {
               ctx.fillStyle = PALETTE.fog0;
-              ctx.fillRect(c * cs, r * cs, cs, cs);
+              ctx.fillRect(oxGrid + c * cs, oyGrid + r * cs, cs, cs);
             } else if (fv === 1) {
               ctx.fillStyle = PALETTE.fog1;
-              ctx.fillRect(c * cs, r * cs, cs, cs);
+              ctx.fillRect(oxGrid + c * cs, oyGrid + r * cs, cs, cs);
             }
           }
         }
@@ -528,7 +578,7 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
             }
           }
 
-          ctx.drawImage(off, 0, 0);
+          ctx.drawImage(off, oxGrid, oyGrid);
         }
       }
     }
@@ -570,32 +620,72 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
       const canvas = canvasRef.current;
       if (!canvas) return null;
       const rect = canvas.getBoundingClientRect();
-      const cx = (clientX - rect.left - pan.x) / zoom;
-      const cy = (clientY - rect.top - pan.y) / zoom;
+      const cx = (clientX - rect.left - pan.x) / zoom - offsetX;
+      const cy = (clientY - rect.top - pan.y) / zoom - offsetY;
       return {
         col: clamp(Math.floor(cx / cell), 0, cols - 1),
         row: clamp(Math.floor(cy / cell), 0, rows - 1),
       };
     },
-    [pan, zoom, cell, cols, rows],
+    [pan, zoom, cell, cols, rows, offsetX, offsetY],
   );
 
-  // ── Aplicar ferramenta numa célula ────────────────────────────────────────
-  const applyToolAt = useCallback((g: Cell, t: UiTool) => {
+  /** Encontra a aresta mais próxima do clique ("r,c,h" ou "r,c,v") */
+  const canvasToEdge = useCallback(
+    (clientX: number, clientY: number): string | null => {
+      const canvas = canvasRef.current;
+      if (!canvas) return null;
+      const rect = canvas.getBoundingClientRect();
+      const cx = (clientX - rect.left - pan.x) / zoom - offsetX;
+      const cy = (clientY - rect.top - pan.y) / zoom - offsetY;
+
+      const col = Math.floor(cx / cell);
+      const row = Math.floor(cy / cell);
+      if (col < 0 || col >= cols || row < 0 || row >= rows) return null;
+
+      const fracX = (cx - col * cell) / cell;
+      const fracY = (cy - row * cell) / cell;
+
+      // Distâncias até as 4 bordas da célula
+      const dTop = fracY;
+      const dBottom = 1 - fracY;
+      const dLeft = fracX;
+      const dRight = 1 - fracX;
+
+      const minD = Math.min(dTop, dBottom, dLeft, dRight);
+      if (minD === dTop) return `${row},${col},h`;
+      if (minD === dBottom) return `${row + 1},${col},h`;
+      if (minD === dLeft) return `${row},${col},v`;
+      return `${row},${col + 1},v`;
+    },
+    [pan, zoom, cell, cols, rows, offsetX, offsetY],
+  );
+
+  // ── Aplicar ferramenta numa célula ou aresta ─────────────────────────────
+  const applyToolAt = useCallback((g: Cell, t: UiTool, clientX?: number, clientY?: number) => {
     const store = useGameStore.getState();
     if (t === TOOLS.MOVE) {
       const id = store.activeActorId;
       if (id) store.moveActorTo(id, g);
     } else if (t === TOOLS.WALL) {
       store.paintWalls([g], true);
+    } else if (t === TOOLS.WALL_EDGE) {
+      if (clientX !== undefined && clientY !== undefined) {
+        const edge = canvasToEdge(clientX, clientY);
+        if (edge) store.paintEdgeWalls([edge], "toggle");
+      }
     } else if (t === TOOLS.ERASE) {
       store.paintWalls([g], false);
+      if (clientX !== undefined && clientY !== undefined) {
+        const edge = canvasToEdge(clientX, clientY);
+        if (edge) store.paintEdgeWalls([edge], "clear");
+      }
     } else if (t === TOOLS.REVEAL) {
       store.paintFog([g], FOG_REVEAL);
     } else if (t === TOOLS.HIDE) {
       store.paintFog([g], FOG_NONE);
     }
-  }, []);
+  }, [canvasToEdge]);
 
   // ── Passo de 1 casa (Teclado e D-Pad Mobile) ──────────────────────────────
   const stepActiveActor = useCallback((dr: number, dc: number) => {
@@ -658,7 +748,7 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
         setSectorDraft({ r1: g.row, c1: g.col, r2: g.row, c2: g.col });
         return;
       }
-      applyToolAt(g, tool);
+      applyToolAt(g, tool, e.clientX, e.clientY);
     },
     [pan.x, pan.y, zoom, tool, canvasToGrid, applyToolAt],
   );
@@ -713,9 +803,9 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
 
       // Evita repintar a mesma célula enquanto arrasta
       const lp = lastPaint.current;
-      if (lp && lp.row === g.row && lp.col === g.col) return;
+      if (lp && lp.row === g.row && lp.col === g.col && tool !== TOOLS.WALL_EDGE) return;
       lastPaint.current = g;
-      applyToolAt(g, tool);
+      applyToolAt(g, tool, e.clientX, e.clientY);
     },
     [tool, canvasToGrid, applyToolAt],
   );
@@ -1493,6 +1583,7 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
                     <span style={{ color: "#9d8ec4", fontSize: 11 }}>Célula (px)</span>
                     <input
                       type="number"
+                      step="0.5"
                       className="occult-input"
                       style={{ width: 72, textAlign: "center", fontFamily: "var(--font-mono)" }}
                       value={cell}
@@ -1501,6 +1592,89 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
                       onChange={(e) => setCell(+e.target.value)}
                     />
                   </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 8,
+                    }}
+                  >
+                    <span style={{ color: "#9d8ec4", fontSize: 11 }}>Offset X (px)</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                      <input
+                        type="number"
+                        className="occult-input"
+                        style={{ width: 60, textAlign: "center", fontFamily: "var(--font-mono)" }}
+                        value={offsetX}
+                        onChange={(e) => setOffset(+e.target.value, offsetY)}
+                      />
+                      <button
+                        type="button"
+                        className="occult-btn"
+                        style={{ padding: "2px 5px", minHeight: 24, fontSize: 10 }}
+                        onClick={() => setOffset(offsetX - 2, offsetY)}
+                        title="-2px X"
+                      >
+                        -
+                      </button>
+                      <button
+                        type="button"
+                        className="occult-btn"
+                        style={{ padding: "2px 5px", minHeight: 24, fontSize: 10 }}
+                        onClick={() => setOffset(offsetX + 2, offsetY)}
+                        title="+2px X"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 8,
+                    }}
+                  >
+                    <span style={{ color: "#9d8ec4", fontSize: 11 }}>Offset Y (px)</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                      <input
+                        type="number"
+                        className="occult-input"
+                        style={{ width: 60, textAlign: "center", fontFamily: "var(--font-mono)" }}
+                        value={offsetY}
+                        onChange={(e) => setOffset(offsetX, +e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        className="occult-btn"
+                        style={{ padding: "2px 5px", minHeight: 24, fontSize: 10 }}
+                        onClick={() => setOffset(offsetX, offsetY - 2)}
+                        title="-2px Y"
+                      >
+                        -
+                      </button>
+                      <button
+                        type="button"
+                        className="occult-btn"
+                        style={{ padding: "2px 5px", minHeight: 24, fontSize: 10 }}
+                        onClick={() => setOffset(offsetX, offsetY + 2)}
+                        title="+2px Y"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="occult-btn"
+                    style={{ padding: "4px 8px", fontSize: 11, alignSelf: "flex-end" }}
+                    onClick={() => setOffset(0, 0)}
+                    title="Zerar calibração de deslocamento da grade"
+                  >
+                    Resetar Offset
+                  </button>
                 </div>
               )}
             </div>

@@ -58,14 +58,22 @@ export interface Sector {
 export type FogMode = "soft" | "hard";
 export type WallDisplayMode = "blocks" | "thin" | "invisible";
 
+export type Tool =
+  | "move"
+  | "wall"
+  | "wall_edge"
+  | "erase"
+  | "reveal"
+  | "hide"
+  | "sector";
 
-export type Tool = "move" | "wall" | "erase" | "reveal" | "hide" | "sector";
-
-/** Configuração da cena (dimensões, fundo, estilo de névoa). */
+/** Configuração da cena (dimensões, fundo, estilo de névoa e alinhamento). */
 export interface SceneConfig {
   cols: number;
   rows: number;
   cell: number;
+  offsetX?: number;
+  offsetY?: number;
   bgImage: string | null;
   fogMode: FogMode;
 }
@@ -77,6 +85,8 @@ export interface SceneConfig {
 export interface GameSnapshot extends SceneConfig {
   fog: FogValue[][];
   walls: boolean[][];
+  /** Paredes em arestas/bordas: "r,c,h" (borda horizontal norte) ou "r,c,v" (borda vertical oeste) */
+  edgeWalls?: string[];
   actors: Actor[];
   sectors: Sector[];
 }
