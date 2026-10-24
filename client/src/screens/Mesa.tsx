@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { CSSProperties, FormEvent } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { Navigate, Link, useNavigate } from "react-router-dom";
 import {
   createCampaign,
   deleteCampaign,
@@ -14,6 +14,7 @@ import { useSession } from "../state/sessionStore";
 import {
   IconChevron,
   IconEye,
+  IconLock,
   IconSigil,
   IconSwords,
 } from "../components/icons";
@@ -180,6 +181,24 @@ export default function Mesa() {
               Conta reconhecida · o papel vem do vínculo com a missão
             </div>
           </div>
+          {/* O painel só aparece para a conta de administração (ADR #23). O
+              servidor confere de novo — esconder o link é conveniência. */}
+          {account.admin && (
+            <Link
+              to="/admin"
+              className="occult-btn"
+              title="Painel do administrador"
+              style={{
+                padding: "4px 10px",
+                fontSize: 11,
+                textDecoration: "none",
+                flexShrink: 0,
+              }}
+            >
+              <IconLock size={12} />
+              Painel
+            </Link>
+          )}
           <button
             type="button"
             className="occult-btn"

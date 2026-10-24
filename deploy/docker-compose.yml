@@ -45,6 +45,10 @@ services:
       # (ADR #20), isso também bloqueia gente nova. O teto é global, por minuto.
       - REGISTRATION=${REGISTRATION:-open}
       - REGISTER_PER_MINUTE=${REGISTER_PER_MINUTE:-10}
+      # Painel do administrador (ADR #23): o NOME da conta que pode trocar senha
+      # em /admin. Vazio desliga o painel. Substitui a recuperação de senha que
+      # não existe — e é por isso que essa conta precisa de uma senha boa.
+      - ADMIN_ACCOUNT=${ADMIN_ACCOUNT:-admin}
       # Limite de taxa por conexão (eventos por segundo e rajada). Os padrões
       # são ~15x o uso legítimo; só mexa se tiver motivo. Ver ADR #15.
       - RATE_PER_SEC=${RATE_PER_SEC:-60}

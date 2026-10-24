@@ -24,7 +24,7 @@ import type { Actor, Cell, Role } from "@helio/shared";
 import { touchMembership } from "./accounts.js";
 import { SESSION_COOKIE, cookieValue, readSession, sessionEnabled } from "./auth.js";
 import { dbEnabled } from "./db.js";
-import { handleHttp, registrationOpen } from "./http.js";
+import { handleHttp, registrationOpen, adminAccount } from "./http.js";
 import { onRoleChange } from "./live.js";
 import { migrate } from "./migrate.js";
 import { createRoom, publicState, type Player, type Room } from "./room.js";
@@ -787,6 +787,11 @@ async function main(): Promise<void> {
       registrationOpen
         ? "  cadastro: aberto - qualquer um cria conta (REGISTRATION=closed fecha)"
         : "  cadastro: FECHADO - so entram contas que ja existem",
+    );
+    console.log(
+      adminAccount
+        ? `  admin: painel em /admin - so a conta "${adminAccount}" (ADMIN_ACCOUNT)`
+        : "  admin: painel desligado (ADMIN_ACCOUNT vazio)",
     );
   });
 }

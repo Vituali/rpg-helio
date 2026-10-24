@@ -91,3 +91,84 @@ export async function touchMembership(
     "registrar vinculo",
   );
 }
+
+// ── Administração (ADR #23) ──────────────────────────────────────────────────
+//
+// O painel existe para uma coisa que hoje não tem outro caminho: **trocar a
+// senha de alguém**. Não há recuperação de senha, e sem isto a única saída seria
+// mexer no banco na mão. É deliberadamente pequeno: listar contas e definir
+// senha. Nada de apagar conta (deixaria missão órfã) nem de mudar papel (isso é
+// do vínculo, na mesa).
+
+/** Uma conta vista pelo administrador: quem é, desde quando e o quanto já jogou. */
+export interface AdminAccountRow {
+  id: string;
+  name: string;
+  createdAt: string;
+  /** Missões das quais é dona. */
+  owned: number;
+  /** Missões em que tem vínculo (como mestre ou agente). */
+  joined: number;
+}
+
+/**
+ * Todas as contas, em ordem de criação.
+ *
+ * A data vai como ISO para o cliente formatar: o servidor não sabe o fuso de
+ * quem está olhando. `count(*)` no Postgres volta como string (é `bigint`), e
+ * por isso o `Number()` — sem ele, o JSON sairia com `"2"` onde o painel espera
+ * um número.
+ */
+export async function listAccounts(): Promise<AdminAccountRow[] | null> {
+  if (!dbEnabled) return null;
+  const rows = await tryQuery<{
+    id: string;
+    name: string;
+    created_at: Date;
+    owned: string;
+    joined: string;
+  }>(
+    `select a.id, a.name, a.created_at,
+            (select count(*) from campaign c where c.gm_account_id = a.id) as owned,
+            (select count(*) from membership m where m.account_id = a.id) as joined
+       from account a
+      order by a.created_at asc, lower(a.name) asc`,
+    [],
+    "listar contas",
+  );
+  if (rows === null) return null;
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    createdAt: r.created_at.toISOString(),
+    owned: Number(r.owned),
+    joined: Number(r.joined),
+  }));
+}
+
+export type PasswordResult = "ok" | "notfound" | "error";
+
+/**
+ * Define a senha de uma conta pelo nome (ADR #23).
+ *
+ * Sobrescreve, não "recupera": a senha antiga não é guardada em lugar nenhum que
+ * dê para ler. O hash novo é gerado com os mesmos parâmetros do cadastro, e a
+ * sessão de quem já estava logado **continua valendo** — o cookie é assinado e
+ * não consulta o banco (ADR #16). Para derrubar todo mundo, troque
+ * `SESSION_SECRET`; isso está dito no painel e no DEPLOY.
+ */
+export async function setAccountPassword(
+  name: string,
+  password: string,
+): Promise<PasswordResult> {
+  if (!dbEnabled) return "error";
+  const rows = await tryQuery<{ name: string }>(
+    `update account set password_hash = $2
+      where lower(name) = lower($1)
+      returning name`,
+    [name, await hashPassword(password)],
+    `trocar senha de ${name}`,
+  );
+  if (rows === null) return "error";
+  return rows[0] ? "ok" : "notfound";
+}

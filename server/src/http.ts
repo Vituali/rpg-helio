@@ -2,9 +2,10 @@
  * Rotas HTTP do servidor (ADR #16, #18 e #19).
  *
  * Duas famílias: **auth** (entrar, sair, quem sou eu, criar conta) e
- * **campanhas** (criar, listar e apagar missões). O jogo em si não passa por
- * aqui — continua no Socket.IO. A divisão é deliberada: tempo real e CRUD em
- * módulos separados, para trocar um sem encostar no outro.
+ * **campanhas** (criar, listar e apagar missões) — mais o **painel do
+ * administrador** (ADR #23), que só lista contas e troca senha. O jogo em si não
+ * passa por aqui — continua no Socket.IO. A divisão é deliberada: tempo real e
+ * CRUD em módulos separados, para trocar um sem encostar no outro.
  *
  * O cookie é o ponto todo: como o Socket.IO lê os cookies do handshake, a
  * identidade chega na conexão sem inventar mensagem nova.
@@ -23,7 +24,7 @@ import {
   signSession,
   verifyPassword,
 } from "./auth.js";
-import { createAccount, findAccountByName } from "./accounts.js";
+import { createAccount, findAccountByName, listAccounts, setAccountPassword } from "./accounts.js";
 import { roleChanged } from "./live.js";
 import { normalizeCode } from "./selo.js";
 import {
@@ -48,6 +49,25 @@ const MAX_BODY = 4 * 1024;
  */
 export const registrationOpen =
   (process.env.REGISTRATION ?? "open").trim().toLowerCase() !== "closed";
+
+/**
+ * A conta de administração (ADR #23).
+ *
+ * **É o nome, não um papel.** O painel existe para uma tarefa só — trocar senha,
+ * já que não há recuperação — e transformar isso num papel exigiria coluna nova,
+ * migration e uma tela para outorgar. O nome resolve, e tem uma consequência que
+ * fica dita: quem tem a conta com este nome manda. Por isso a senha dela é a
+ * senha mais importante do servidor, e o cadastro deve estar fechado quando
+ * ninguém novo estiver entrando.
+ *
+ * `ADMIN_ACCOUNT` permite trocar o nome (e vazio desliga o painel); o padrão é
+ * `admin`, que é o que está escrito no DEPLOY.
+ */
+export const adminAccount = (process.env.ADMIN_ACCOUNT ?? "admin").trim().toLowerCase();
+
+export function isAdminAccount(name: string): boolean {
+  return adminAccount !== "" && name.trim().toLowerCase() === adminAccount;
+}
 
 // ── Limites de tentativas ────────────────────────────────────────────────────
 //
@@ -231,7 +251,11 @@ export async function handleHttp(
     }
     send(res, 200, {
       ok: true,
-      account: { id: session.accountId, name: session.name },
+      account: {
+        id: session.accountId,
+        name: session.name,
+        admin: isAdminAccount(session.name),
+      },
       signup,
     });
     return true;
@@ -289,8 +313,77 @@ export async function handleHttp(
 
     header(res, sessionCookie(signSession(created), secure));
     console.log(`[conta] criada: ${created.name}`);
-    send(res, 201, { ok: true, account: { id: created.id, name: created.name } });
+    send(res, 201, {
+      ok: true,
+      account: {
+        id: created.id,
+        name: created.name,
+        admin: isAdminAccount(created.name),
+      },
+    });
     return true;
+  }
+
+  // ── Painel do administrador (ADR #23) ──
+  //
+  // Duas rotas, e nada mais: listar contas e definir senha. O resto que parecia
+  // "administração" já tem lugar melhor — papel é vínculo (ADR #22), apagar
+  // missão é do dono (ADR #18), e apagar conta deixaria missão órfã.
+  //
+  // A checagem é aqui, não no cliente: a tela só esconde o link, quem decide é
+  // o servidor. O nome vem do cookie assinado, então não há o que forjar sem a
+  // `SESSION_SECRET`.
+  if (path === "/admin/accounts" || path.startsWith("/admin/accounts/")) {
+    const session = sessionOf(req);
+    if (!session) {
+      send(res, 401, { ok: false, error: "Entre com sua conta para isso." });
+      return true;
+    }
+    if (!isAdminAccount(session.name)) {
+      console.log(`[admin] recusado para "${session.name}"`);
+      send(res, 403, { ok: false, error: "Só a conta de administração." });
+      return true;
+    }
+
+    if (path === "/admin/accounts" && method === "GET") {
+      const accounts = await listAccounts();
+      if (accounts === null) {
+        send(res, 503, { ok: false, error: "Banco indisponível: sem lista de contas." });
+        return true;
+      }
+      send(res, 200, { ok: true, admin: adminAccount, accounts });
+      return true;
+    }
+
+    if (path.startsWith("/admin/accounts/") && path.endsWith("/password") && method === "POST") {
+      const name = decodeURIComponent(
+        path.slice("/admin/accounts/".length, -"/password".length),
+      ).trim();
+      const body = await readJson(req);
+      const password = typeof body?.password === "string" ? body.password : "";
+      if (name === "") {
+        send(res, 400, { ok: false, error: "Diga a conta." });
+        return true;
+      }
+      const problem = passwordProblem(password);
+      if (problem) {
+        send(res, 400, { ok: false, error: problem });
+        return true;
+      }
+
+      const result = await setAccountPassword(name, password);
+      if (result === "error") {
+        send(res, 503, { ok: false, error: "Banco indisponível: não deu para trocar a senha." });
+        return true;
+      }
+      if (result === "notfound") {
+        send(res, 404, { ok: false, error: "Conta não encontrada." });
+        return true;
+      }
+      console.log(`[admin] senha trocada: ${name} (por ${session.name})`);
+      send(res, 200, { ok: true, name });
+      return true;
+    }
   }
 
   // ── Campanhas: criar e listar são de quem tem conta (ADR #18) ──
@@ -428,7 +521,14 @@ export async function handleHttp(
 
     header(res, sessionCookie(signSession(account), secure));
     console.log(`[entrada] conta entrou: ${account.name}`);
-    send(res, 200, { ok: true, account: { id: account.id, name: account.name } });
+    send(res, 200, {
+      ok: true,
+      account: {
+        id: account.id,
+        name: account.name,
+        admin: isAdminAccount(account.name),
+      },
+    });
     return true;
   }
 

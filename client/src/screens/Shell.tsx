@@ -15,7 +15,8 @@ export default function Shell({
   subtitle,
   children,
 }: {
-  step: 1 | 2;
+  /** 1 = conta, 2 = missão. O painel do administrador não é um passo: fica sem. */
+  step?: 1 | 2;
   title: string;
   subtitle: string;
   children: ReactNode;
@@ -123,19 +124,21 @@ export default function Shell({
             Membrana · Mesa Paranormal
           </div>
 
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "center",
-              alignItems: "center",
-              gap: 6,
-              marginBottom: 12,
-            }}
-          >
-            <Step n={1} label="Conta" active={step === 1} done={step > 1} />
-            <span style={{ color: "#4c3a70", fontSize: 11 }}>→</span>
-            <Step n={2} label="Missão" active={step === 2} done={false} />
-          </div>
+          {step !== undefined && (
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+                gap: 6,
+                marginBottom: 12,
+              }}
+            >
+              <Step n={1} label="Conta" active={step === 1} done={step > 1} />
+              <span style={{ color: "#4c3a70", fontSize: 11 }}>→</span>
+              <Step n={2} label="Missão" active={step === 2} done={false} />
+            </div>
+          )}
 
           <div
             style={{

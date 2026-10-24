@@ -1,0 +1,298 @@
+import { useEffect, useState } from "react";
+import type { CSSProperties, FormEvent } from "react";
+import { Link, Navigate } from "react-router-dom";
+import { listAllAccounts, resetPassword, type AdminAccount } from "../net/auth";
+import { useSession } from "../state/sessionStore";
+import { IconLock, IconSigil } from "../components/icons";
+import Shell from "./Shell";
+
+const FIELD_LABEL: CSSProperties = {
+  fontSize: 11,
+  fontWeight: 600,
+  letterSpacing: "0.08em",
+  textTransform: "uppercase",
+  color: "#d8cef0",
+  marginBottom: 5,
+  display: "block",
+};
+
+/**
+ * Painel do administrador (ADR #23).
+ *
+ * Existe por um motivo só: **não há recuperação de senha**. Sem esta tela, o
+ * jeito de devolver a conta a alguém seria mexer no banco na mão. Por isso ela
+ * é pequena de propósito — lista contas e troca senha, nada mais.
+ *
+ * Quem vê esta página é decidido pelo servidor (o nome da conta), e não por
+ * este arquivo: a guarda daqui é conveniência, cada rota `/api/admin/*` confere
+ * a sessão de novo.
+ */
+export default function Admin() {
+  const ready = useSession((s) => s.ready);
+  const account = useSession((s) => s.account);
+  const load = useSession((s) => s.load);
+
+  const [accounts, setAccounts] = useState<AdminAccount[]>([]);
+  const [adminName, setAdminName] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+
+  const [target, setTarget] = useState<string | null>(null);
+  const [password, setPassword] = useState("");
+  const [password2, setPassword2] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [feito, setFeito] = useState("");
+
+  useEffect(() => {
+    if (!ready) void load();
+  }, [ready, load]);
+
+  useEffect(() => {
+    // Só o administrador precisa da lista — e só ele consegue pedi-la.
+    if (!account?.admin) return;
+    let alive = true;
+    void listAllAccounts().then((result) => {
+      if (!alive) return;
+      setLoading(false);
+      if (result.ok) {
+        setAccounts(result.accounts ?? []);
+        setAdminName(result.admin ?? "");
+      } else {
+        setLoadError(result.error ?? "Não deu para listar as contas.");
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, [account]);
+
+  if (!ready) {
+    return (
+      <Shell title="Painel do Administrador" subtitle="Consultando a Membrana…">
+        <div style={{ fontSize: 12, color: "#fde68a", textAlign: "center" }}>
+          Sintonizando…
+        </div>
+      </Shell>
+    );
+  }
+  if (!account) return <Navigate to="/entrar" replace />;
+  if (!account.admin) return <Navigate to="/mesa" replace />;
+
+  const escolhida = accounts.find((a) => a.name === target) ?? null;
+
+  const escolher = (name: string) => {
+    setTarget(name);
+    setPassword("");
+    setPassword2("");
+    setError("");
+    setFeito("");
+  };
+
+  const trocar = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!target || busy) return;
+    if (password !== password2) {
+      setError("As duas senhas não são iguais.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setFeito("");
+    const result = await resetPassword(target, password);
+    setBusy(false);
+    if (!result.ok) {
+      setError(result.error ?? "Não deu para trocar a senha.");
+      return;
+    }
+    setFeito(`Senha de "${target}" trocada.`);
+    setPassword("");
+    setPassword2("");
+  };
+
+  return (
+    <Shell
+      title="Painel do Administrador"
+      subtitle="Trocar a senha de uma conta. Sem recuperação de senha, este é o caminho de volta."
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 15 }}>
+        {/* Quem manda aqui */}
+        <div
+          style={{
+            border: "1px solid rgba(139, 92, 246, 0.28)",
+            background: "rgba(12, 8, 24, 0.55)",
+            borderRadius: 10,
+            padding: "9px 12px",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          <IconLock size={15} style={{ color: "#fbbf24", flexShrink: 0 }} />
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 12, color: "#fde68a", fontWeight: 600 }}>
+              {account.name}
+            </div>
+            <div style={{ fontSize: 10, color: "#7e6ea8" }}>
+              Conta de administração{adminName ? ` · ADMIN_ACCOUNT=${adminName}` : ""}
+            </div>
+          </div>
+        </div>
+
+        {/* Contas */}
+        <div>
+          <label style={FIELD_LABEL}>Contas ({accounts.length})</label>
+
+          {loading && (
+            <div style={{ fontSize: 11, color: "#9d8ec4" }}>Carregando as contas…</div>
+          )}
+          {loadError && <div style={{ fontSize: 11, color: "#fca5a5" }}>{loadError}</div>}
+
+          {!loading && accounts.length > 0 && (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+                maxHeight: 190,
+                overflowY: "auto",
+              }}
+            >
+              {accounts.map((a) => {
+                const atual = a.name === target;
+                return (
+                  <button
+                    key={a.id}
+                    type="button"
+                    onClick={() => escolher(a.name)}
+                    title="Escolher esta conta"
+                    style={{
+                      textAlign: "left",
+                      cursor: "pointer",
+                      padding: "6px 8px",
+                      borderRadius: 6,
+                      border: atual
+                        ? "1px solid rgba(245, 158, 11, 0.6)"
+                        : "1px solid rgba(139, 92, 246, 0.18)",
+                      background: atual ? "rgba(245, 158, 11, 0.1)" : "rgba(8, 5, 16, 0.6)",
+                      color: "#f3effb",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 12,
+                        color: "#d8cef0",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {a.name}
+                    </span>
+                    {a.name === account.name && (
+                      <span
+                        style={{
+                          fontSize: 9,
+                          textTransform: "uppercase",
+                          letterSpacing: "0.06em",
+                          color: "#fbbf24",
+                          border: "1px solid rgba(245, 158, 11, 0.45)",
+                          borderRadius: 4,
+                          padding: "0 4px",
+                        }}
+                      >
+                        você
+                      </span>
+                    )}
+                    <span
+                      style={{
+                        marginLeft: "auto",
+                        flexShrink: 0,
+                        fontSize: 10,
+                        color: "#7e6ea8",
+                      }}
+                    >
+                      {a.owned} missões · {a.joined} mesas ·{" "}
+                      {new Date(a.createdAt).toLocaleDateString("pt-BR")}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Senha da conta escolhida */}
+        <form
+          onSubmit={(e) => void trocar(e)}
+          style={{ display: "flex", flexDirection: "column", gap: 8 }}
+        >
+          <label style={FIELD_LABEL} htmlFor="nova-senha">
+            {escolhida ? `Nova senha de ${escolhida.name}` : "Escolha uma conta acima"}
+          </label>
+          <input
+            id="nova-senha"
+            className="occult-input"
+            type="password"
+            value={password}
+            maxLength={200}
+            placeholder="Senha nova"
+            autoComplete="new-password"
+            disabled={!escolhida}
+            onChange={(e) => setPassword(e.target.value)}
+            style={{ padding: "9px 11px", fontSize: 12 }}
+          />
+          <input
+            className="occult-input"
+            type="password"
+            value={password2}
+            maxLength={200}
+            placeholder="Repita a senha"
+            autoComplete="new-password"
+            disabled={!escolhida}
+            onChange={(e) => setPassword2(e.target.value)}
+            style={{ padding: "9px 11px", fontSize: 12 }}
+          />
+
+          {error ? <div style={{ fontSize: 11, color: "#fca5a5" }}>{error}</div> : null}
+          {feito ? <div style={{ fontSize: 11, color: "#86efac" }}>{feito}</div> : null}
+
+          <button
+            type="submit"
+            className="occult-btn"
+            disabled={!escolhida || busy || password === "" || password2 === ""}
+            style={{ width: "100%", padding: "9px 12px" }}
+          >
+            <IconSigil size={13} />
+            {busy ? "Gravando…" : "Trocar senha"}
+          </button>
+        </form>
+
+        <div
+          style={{
+            fontSize: 10,
+            color: "#7e6ea8",
+            lineHeight: 1.5,
+            borderTop: "1px solid rgba(139, 92, 246, 0.18)",
+            paddingTop: 9,
+          }}
+        >
+          A senha nova vale no próximo login. Quem já está conectado continua — o cookie é
+          assinado e não consulta o banco. Para derrubar todo mundo, troque{" "}
+          <span style={{ fontFamily: "var(--font-mono)" }}>SESSION_SECRET</span> e reinicie.
+        </div>
+
+        <Link
+          to="/mesa"
+          className="occult-btn"
+          style={{ textDecoration: "none", width: "100%", padding: "9px 12px" }}
+        >
+          ← Voltar para as missões
+        </Link>
+      </div>
+    </Shell>
+  );
+}

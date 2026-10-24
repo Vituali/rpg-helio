@@ -11,6 +11,7 @@
  *     quem criou entra como mestre com a chave errada no bolso;
  *   - **o mestre pode dar o papel** a um agente, e vale **na hora** (ADR #22);
  *   - o dono não é rebaixável;
+ *   - **só a conta de administração** lista contas e troca senha (ADR #23);
  *   - cair e voltar mantém o mesmo papel e o mesmo nome.
  *
  *   npm start
@@ -19,6 +20,7 @@
 
 import {
   TEST_ACCOUNT,
+  TEST_ACCOUNT_PASS,
   api,
   deleteTestAccount,
   testAccount,
@@ -308,7 +310,97 @@ if (cookieB === "") {
   check(missaoA?.owner === true, "e ele continua dono da missão");
 }
 
-// 22) sair apaga o cookie
+// 22) painel do administrador (ADR #23)
+//
+// O administrador é **um nome de conta**, não um papel: a conta-semente deste
+// teste (`helio`) não é ele. A recusa, então, roda sempre. O caminho de sucesso
+// só roda se `ADMIN_NAME`/`ADMIN_PASS` vierem do ambiente — a senha do
+// administrador real não é assunto do teste.
+const euMestre = await get("/api/auth/me", cookie);
+const souAdmin = euMestre.body?.account?.admin === true;
+check(souAdmin === false, "a conta do mestre não é a conta de administração");
+
+if (!souAdmin) {
+  const semPoderLista = await get("/api/admin/accounts", cookie);
+  check(semPoderLista.status === 403, "quem não é administrador não lista contas (403)");
+
+  const semPoderSenha = await post(
+    `/api/admin/accounts/${encodeURIComponent(TEST_ACCOUNT)}/password`,
+    { password: "senha-do-invasor" },
+    cookie,
+  );
+  check(semPoderSenha.status === 403, "nem troca a senha de ninguém (403)");
+}
+
+check((await get("/api/admin/accounts")).status === 401, "sem sessão, o painel não abre (401)");
+
+const ADMIN_NAME = process.env.ADMIN_NAME ?? "admin";
+const ADMIN_PASS = process.env.ADMIN_PASS ?? "";
+if (ADMIN_PASS) {
+  const adminLogin = await post("/api/auth/login", { name: ADMIN_NAME, password: ADMIN_PASS });
+  check(adminLogin.status === 200, `a conta de administração "${ADMIN_NAME}" entrou`);
+  check(
+    adminLogin.body?.account?.admin === true,
+    "e o servidor a reconhece como administradora",
+  );
+  const adminCookie = cookieOf(adminLogin.res);
+
+  const lista = await get("/api/admin/accounts", adminCookie);
+  const contas = lista.body?.accounts ?? [];
+  const nomes = contas.map((a) => a.name);
+  check(lista.status === 200 && Array.isArray(lista.body?.accounts), "o administrador lista as contas");
+  check(nomes.includes(TEST_ACCOUNT), "a conta de teste aparece na lista");
+  check(nomes.includes(ADMIN_NAME), "e a dele também");
+
+  const linha = contas.find((a) => a.name === TEST_ACCOUNT);
+  check(
+    typeof linha?.createdAt === "string" && !Number.isNaN(Date.parse(linha.createdAt)),
+    "cada conta traz a data de criação",
+  );
+
+  const nova = "senha-trocada-987654";
+  const trocada = await post(
+    `/api/admin/accounts/${encodeURIComponent(TEST_ACCOUNT)}/password`,
+    { password: nova },
+    adminCookie,
+  );
+  check(trocada.status === 200, "o administrador troca a senha de uma conta");
+
+  const comAntiga = await post("/api/auth/login", {
+    name: TEST_ACCOUNT,
+    password: TEST_ACCOUNT_PASS,
+  });
+  check(comAntiga.status === 401, "a senha antiga não entra mais");
+
+  const comNova = await post("/api/auth/login", { name: TEST_ACCOUNT, password: nova });
+  check(comNova.status === 200, "a senha nova entra");
+
+  const curta = await post(
+    `/api/admin/accounts/${encodeURIComponent(TEST_ACCOUNT)}/password`,
+    { password: "123" },
+    adminCookie,
+  );
+  check(curta.status === 400, "senha curta é recusada (400)");
+
+  const fantasma = await post(
+    "/api/admin/accounts/ninguem-aqui/password",
+    { password: nova },
+    adminCookie,
+  );
+  check(fantasma.status === 404, "conta que não existe dá 404");
+
+  // Devolve a senha original: a próxima execução entra com ela.
+  const volta = await post(
+    `/api/admin/accounts/${encodeURIComponent(TEST_ACCOUNT)}/password`,
+    { password: TEST_ACCOUNT_PASS },
+    adminCookie,
+  );
+  check(volta.status === 200, "e a senha original volta no fim");
+} else {
+  console.log("  nota: ADMIN_PASS não veio; o caminho do administrador ficou de fora");
+}
+
+// 23) sair apaga o cookie
 const out = await post("/api/auth/logout", {}, cookie);
 const setCookie = (out.res.headers.getSetCookie?.() ?? [])[0] ?? "";
 check(cookieOf(out.res) === "helio_session=", "o logout manda o cookie vazio");

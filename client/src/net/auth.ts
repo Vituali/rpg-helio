@@ -8,6 +8,7 @@
  *   /api/accounts     criar conta (ADR #19)
  *   /api/campaigns    criar, listar e apagar missões (ADR #18)
  *   /api/campaigns/:selo/role   dar/tirar o papel de mestre (ADR #22)
+ *   /api/admin/*      listar contas e trocar senha (ADR #23)
  *
  * O cookie de sessão vai e volta sozinho (mesma origem), e é ele que o Socket.IO
  * lê no handshake — depois do login, o `connect()` não precisa saber de nada
@@ -24,6 +25,8 @@ import { useNetStore } from "../state/netStore";
 export interface Account {
   id: string;
   name: string;
+  /** Esta conta pode abrir o painel do administrador (ADR #23)? */
+  admin?: boolean;
 }
 
 /** Uma missão: o selo é o convite, o nome é o que se lê. */
@@ -182,6 +185,64 @@ export async function setMemberRole(
   if (!body) return { ok: false, error: "Servidor não respondeu." };
   if (!body.ok) {
     return { ok: false, error: String(body.error ?? "Não foi possível mudar o papel.") };
+  }
+  return { ok: true };
+}
+
+// ── Painel do administrador (ADR #23) ────────────────────────────────────────
+//
+// Duas chamadas, e só. O servidor confere se a sessão é da conta de
+// administração em cada uma: o link escondido na tela é conveniência, não
+// permissão.
+
+/** Uma conta como o painel enxerga: nome, desde quando e o quanto já jogou. */
+export interface AdminAccount {
+  id: string;
+  name: string;
+  createdAt: string;
+  owned: number;
+  joined: number;
+}
+
+export interface AdminListResult {
+  ok: boolean;
+  /** O nome da conta de administração neste servidor (`ADMIN_ACCOUNT`). */
+  admin?: string;
+  accounts?: AdminAccount[];
+  error?: string;
+}
+
+export async function listAllAccounts(): Promise<AdminListResult> {
+  const body = await request("/api/admin/accounts");
+  if (!body) return { ok: false, error: "Servidor não respondeu." };
+  if (!body.ok) {
+    return { ok: false, error: String(body.error ?? "Não deu para listar as contas.") };
+  }
+  return {
+    ok: true,
+    admin: typeof body.admin === "string" ? body.admin : undefined,
+    accounts: (body.accounts as AdminAccount[] | undefined) ?? [],
+  };
+}
+
+/**
+ * Define a senha de uma conta (não pede a antiga: é o administrador).
+ *
+ * Isto **não** derruba sessões abertas — o cookie é assinado e não consulta o
+ * banco (ADR #16). Quem já estava logado continua; para derrubar todos, troque
+ * `SESSION_SECRET`.
+ */
+export async function resetPassword(
+  name: string,
+  password: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const body = await request(`/api/admin/accounts/${encodeURIComponent(name)}/password`, {
+    method: "POST",
+    body: JSON.stringify({ password }),
+  });
+  if (!body) return { ok: false, error: "Servidor não respondeu." };
+  if (!body.ok) {
+    return { ok: false, error: String(body.error ?? "Não deu para trocar a senha.") };
   }
   return { ok: true };
 }

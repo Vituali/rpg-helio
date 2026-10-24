@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes, useNavigate } from "react-route
 import FogWarMap from "./components/FogWarMap";
 import Notice from "./components/Notice";
 import { disconnect } from "./net/socket";
+import Admin from "./screens/Admin";
 import Entrar from "./screens/Entrar";
 import Mesa from "./screens/Mesa";
 import { useNetStore } from "./state/netStore";
@@ -11,6 +12,7 @@ import { useNetStore } from "./state/netStore";
  *
  *   /entrar   a conta: entrar ou criar (ADR #20)
  *   /mesa     escolher a missão e ingressar
+ *   /admin    painel do administrador — senha de conta (ADR #23)
  *   /         a mesa, com o servidor
  *   /local    a mesa sem servidor, para preparar o mapa
  *
@@ -28,6 +30,7 @@ export default function App() {
       <Routes>
         <Route path="/entrar" element={<Entrar />} />
         <Route path="/mesa" element={<Mesa />} />
+        <Route path="/admin" element={<Admin />} />
         <Route path="/local" element={<LocalTable />} />
         <Route path="/" element={<OnlineTable />} />
         <Route path="*" element={<Navigate to="/" replace />} />
