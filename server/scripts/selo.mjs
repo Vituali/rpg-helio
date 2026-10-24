@@ -213,12 +213,14 @@ const final = await http("GET", "/api/campaigns", { cookie });
 const restantes = (final.body?.campaigns ?? []).map((c) => c.code);
 check(!restantes.includes(selo), "e a missão sumiu da lista");
 
-// Limpeza: o teste não deixa lixo para trás.
+// Limpeza: o teste não deixa lixo para trás. Com o cadastro fechado, a conta de
+// teste é **fixture** — sem ela a próxima execução não teria como criar uma.
 const lixo = [selo2, semNome.body?.campaign?.code].filter(Boolean);
 for (const c of lixo) {
   if (restantes.includes(c)) await http("DELETE", `/api/campaigns/${c}`, { cookie });
 }
-deleteTestAccount();
+const eu = await http("GET", "/api/auth/me");
+if (eu.body?.signup === true) deleteTestAccount();
 
 console.log(`\n${failures === 0 ? "TUDO OK" : `${failures} FALHA(S)`}`);
 process.exit(failures === 0 ? 0 : 1);

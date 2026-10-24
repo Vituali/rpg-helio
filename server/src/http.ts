@@ -24,7 +24,15 @@ import {
   signSession,
   verifyPassword,
 } from "./auth.js";
-import { createAccount, findAccountByName, listAccounts, setAccountPassword } from "./accounts.js";
+import {
+  accountIsAdmin,
+  createAccount,
+  findAccountByName,
+  listAccounts,
+  setAccountAdmin,
+  setAccountPassword,
+  touchLogin,
+} from "./accounts.js";
 import { roleChanged } from "./live.js";
 import { normalizeCode } from "./selo.js";
 import {
@@ -67,6 +75,22 @@ export const adminAccount = (process.env.ADMIN_ACCOUNT ?? "admin").trim().toLowe
 
 export function isAdminAccount(name: string): boolean {
   return adminAccount !== "" && name.trim().toLowerCase() === adminAccount;
+}
+
+/**
+ * A sessão é de um administrador? (ADR #23 e #24)
+ *
+ * Duas portas: **a raiz** (o nome do `ADMIN_ACCOUNT`, que não precisa de banco) e
+ * **a flag** `account.is_admin`, que o painel delega. A raiz é a rede de
+ * segurança: se o banco cair, ela continua entrando; e se ninguém mais for
+ * admin, ela nunca some. Banco fora + conta delegada = "não", conservador.
+ *
+ * Isto é `async` porque a flag é lida do banco a cada requisição de painel —
+ * é o preço de conceder e tirar valendo na hora, sem reemitir sessão.
+ */
+async function sessionIsAdmin(session: Session): Promise<boolean> {
+  if (isAdminAccount(session.name)) return true;
+  return (await accountIsAdmin(session.accountId)) === true;
 }
 
 // ── Limites de tentativas ────────────────────────────────────────────────────
@@ -254,7 +278,7 @@ export async function handleHttp(
       account: {
         id: session.accountId,
         name: session.name,
-        admin: isAdminAccount(session.name),
+        admin: await sessionIsAdmin(session),
       },
       signup,
     });
@@ -324,22 +348,22 @@ export async function handleHttp(
     return true;
   }
 
-  // ── Painel do administrador (ADR #23) ──
+  // ── Painel do administrador (ADRs #23 e #24) ──
   //
-  // Duas rotas, e nada mais: listar contas e definir senha. O resto que parecia
-  // "administração" já tem lugar melhor — papel é vínculo (ADR #22), apagar
-  // missão é do dono (ADR #18), e apagar conta deixaria missão órfã.
+  // Três rotas: listar contas, definir senha e delegar a administração. O resto
+  // que parecia "administração" já tem lugar melhor — papel é vínculo (ADR #22),
+  // apagar missão é do dono (ADR #18), e apagar conta deixaria missão órfã.
   //
   // A checagem é aqui, não no cliente: a tela só esconde o link, quem decide é
-  // o servidor. O nome vem do cookie assinado, então não há o que forjar sem a
-  // `SESSION_SECRET`.
+  // o servidor. O nome vem do cookie assinado; a flag de admin delegado vem do
+  // banco (ADR #24), para valer na hora.
   if (path === "/admin/accounts" || path.startsWith("/admin/accounts/")) {
     const session = sessionOf(req);
     if (!session) {
       send(res, 401, { ok: false, error: "Entre com sua conta para isso." });
       return true;
     }
-    if (!isAdminAccount(session.name)) {
+    if (!(await sessionIsAdmin(session))) {
       console.log(`[admin] recusado para "${session.name}"`);
       send(res, 403, { ok: false, error: "Só a conta de administração." });
       return true;
@@ -382,6 +406,45 @@ export async function handleHttp(
       }
       console.log(`[admin] senha trocada: ${name} (por ${session.name})`);
       send(res, 200, { ok: true, name });
+      return true;
+    }
+
+    // Dar e tirar a administração (ADR #24). A raiz é recusada aqui, antes do
+    // `update`: ela é administradora pelo nome, e um clique não pode apagá-la.
+    if (path.startsWith("/admin/accounts/") && path.endsWith("/admin") && method === "POST") {
+      const name = decodeURIComponent(
+        path.slice("/admin/accounts/".length, -"/admin".length),
+      ).trim();
+      const body = await readJson(req);
+      if (name === "") {
+        send(res, 400, { ok: false, error: "Diga a conta." });
+        return true;
+      }
+      if (typeof body?.admin !== "boolean") {
+        send(res, 400, { ok: false, error: "Diga se dá ou tira a administração." });
+        return true;
+      }
+      if (isAdminAccount(name) && body.admin === false) {
+        send(res, 400, {
+          ok: false,
+          error: `A conta raiz (${adminAccount}) é sempre administradora.`,
+        });
+        return true;
+      }
+
+      const result = await setAccountAdmin(name, body.admin);
+      if (result === "error") {
+        send(res, 503, { ok: false, error: "Banco indisponível: não deu para mudar." });
+        return true;
+      }
+      if (result === "notfound") {
+        send(res, 404, { ok: false, error: "Conta não encontrada." });
+        return true;
+      }
+      console.log(
+        `[admin] ${body.admin ? "deu" : "tirou"} admin: ${name} (por ${session.name})`,
+      );
+      send(res, 200, { ok: true, name, admin: body.admin });
       return true;
     }
   }
@@ -521,12 +584,13 @@ export async function handleHttp(
 
     header(res, sessionCookie(signSession(account), secure));
     console.log(`[entrada] conta entrou: ${account.name}`);
+    await touchLogin(account.id);
     send(res, 200, {
       ok: true,
       account: {
         id: account.id,
         name: account.name,
-        admin: isAdminAccount(account.name),
+        admin: isAdminAccount(account.name) || account.is_admin === true,
       },
     });
     return true;

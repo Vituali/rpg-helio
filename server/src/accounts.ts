@@ -13,13 +13,15 @@ export interface AccountRow {
   id: string;
   name: string;
   password_hash: string;
+  /** Administrador delegado (ADR #24). A raiz é decidida pelo nome, não aqui. */
+  is_admin: boolean;
 }
 
 /** Busca por nome, sem diferenciar maiúscula de minúscula (índice em `lower(name)`). */
 export async function findAccountByName(name: string): Promise<AccountRow | null> {
   if (!dbEnabled) return null;
   const rows = await tryQuery<AccountRow>(
-    "select id, name, password_hash from account where lower(name) = lower($1)",
+    "select id, name, password_hash, is_admin from account where lower(name) = lower($1)",
     [name],
     "buscar conta",
   );
@@ -39,6 +41,33 @@ export async function findAccountById(id: string): Promise<AccountPublic | null>
     "buscar conta por id",
   );
   return rows?.[0] ?? null;
+}
+
+/**
+ * A conta é administradora delegada? (ADR #24)
+ *
+ * `null` não é "não" — é **não sei**: o banco está fora. Quem chama decide o que
+ * fazer com a dúvida; a rota do painel é conservadora e trata como "não".
+ *
+ * Isto é uma leitura por requisição de painel, e é de propósito: conceder ou
+ * tirar admin precisa valer **na hora**, e o cookie é assinado (não dá para
+ * mudar o que ele afirma sem reemitir). A raiz não depende desta consulta.
+ */
+export async function accountIsAdmin(id: string): Promise<boolean | null> {
+  if (!dbEnabled) return null;
+  const rows = await tryQuery<{ is_admin: boolean }>(
+    "select is_admin from account where id = $1",
+    [id],
+    "buscar admin da conta",
+  );
+  if (rows === null) return null;
+  return rows[0]?.is_admin === true;
+}
+
+/** Marca o acesso agora — o painel mostra "visto por último" (ADR #24). */
+export async function touchLogin(id: string): Promise<void> {
+  if (!dbEnabled) return;
+  await tryQuery("update account set last_login_at = now() where id = $1", [id], "marcar acesso");
 }
 
 /**
@@ -92,19 +121,23 @@ export async function touchMembership(
   );
 }
 
-// ── Administração (ADR #23) ──────────────────────────────────────────────────
+// ── Administração (ADRs #23 e #24) ───────────────────────────────────────────
 //
 // O painel existe para uma coisa que hoje não tem outro caminho: **trocar a
-// senha de alguém**. Não há recuperação de senha, e sem isto a única saída seria
-// mexer no banco na mão. É deliberadamente pequeno: listar contas e definir
-// senha. Nada de apagar conta (deixaria missão órfã) nem de mudar papel (isso é
-// do vínculo, na mesa).
+// senha de alguém** — e, desde o ADR #24, **delegar a administração**. Não há
+// recuperação de senha, e sem isto a única saída seria mexer no banco na mão.
+// Continua pequeno de propósito: nada de apagar conta (deixaria missão órfã) nem
+// de mudar papel (isso é do vínculo, na mesa).
 
 /** Uma conta vista pelo administrador: quem é, desde quando e o quanto já jogou. */
 export interface AdminAccountRow {
   id: string;
   name: string;
   createdAt: string;
+  /** Último login, ou `null` para quem nunca entrou depois do ADR #24. */
+  lastLoginAt: string | null;
+  /** Administrador delegado. A raiz aparece com este campo `false` e é o nome. */
+  isAdmin: boolean;
   /** Missões das quais é dona. */
   owned: number;
   /** Missões em que tem vínculo (como mestre ou agente). */
@@ -114,7 +147,7 @@ export interface AdminAccountRow {
 /**
  * Todas as contas, em ordem de criação.
  *
- * A data vai como ISO para o cliente formatar: o servidor não sabe o fuso de
+ * As datas vão como ISO para o cliente formatar: o servidor não sabe o fuso de
  * quem está olhando. `count(*)` no Postgres volta como string (é `bigint`), e
  * por isso o `Number()` — sem ele, o JSON sairia com `"2"` onde o painel espera
  * um número.
@@ -125,10 +158,12 @@ export async function listAccounts(): Promise<AdminAccountRow[] | null> {
     id: string;
     name: string;
     created_at: Date;
+    last_login_at: Date | null;
+    is_admin: boolean;
     owned: string;
     joined: string;
   }>(
-    `select a.id, a.name, a.created_at,
+    `select a.id, a.name, a.created_at, a.last_login_at, a.is_admin,
             (select count(*) from campaign c where c.gm_account_id = a.id) as owned,
             (select count(*) from membership m where m.account_id = a.id) as joined
        from account a
@@ -141,6 +176,8 @@ export async function listAccounts(): Promise<AdminAccountRow[] | null> {
     id: r.id,
     name: r.name,
     createdAt: r.created_at.toISOString(),
+    lastLoginAt: r.last_login_at ? r.last_login_at.toISOString() : null,
+    isAdmin: r.is_admin === true,
     owned: Number(r.owned),
     joined: Number(r.joined),
   }));
@@ -168,6 +205,30 @@ export async function setAccountPassword(
       returning name`,
     [name, await hashPassword(password)],
     `trocar senha de ${name}`,
+  );
+  if (rows === null) return "error";
+  return rows[0] ? "ok" : "notfound";
+}
+
+/**
+ * Dá ou tira o papel de administrador de uma conta (ADR #24).
+ *
+ * A raiz não passa por aqui: quem tem o nome do `ADMIN_ACCOUNT` é administrador
+ * pelo nome, e a rota recusa rebaixá-la antes de chegar neste `update`. O efeito
+ * é imediato porque a checagem do painel lê esta coluna a cada requisição — não
+ * há cookie para reemitir nem sessão para recriar.
+ */
+export async function setAccountAdmin(
+  name: string,
+  admin: boolean,
+): Promise<PasswordResult> {
+  if (!dbEnabled) return "error";
+  const rows = await tryQuery<{ name: string }>(
+    `update account set is_admin = $2
+      where lower(name) = lower($1)
+      returning name`,
+    [name, admin],
+    `${admin ? "dar" : "tirar"} admin de ${name}`,
   );
   if (rows === null) return "error";
   return rows[0] ? "ok" : "notfound";

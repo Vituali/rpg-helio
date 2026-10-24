@@ -289,9 +289,14 @@ check(true, "ao sair, o token volta para as mãos do mestre");
 
 gm.socket.disconnect();
 
-// O teste não deixa missão órfã para trás (ADR #18), nem conta de teste.
+// O teste não deixa missão órfã para trás (ADR #18), nem conta de teste. Com o
+// cadastro fechado, a conta é **fixture**: sem ela a próxima execução não teria
+// como criar uma.
 await missao.cleanup();
-deleteTestAccount();
+const eu = await fetch(`${URL}/api/auth/me`)
+  .then((r) => r.json())
+  .catch(() => null);
+if (eu?.signup === true) deleteTestAccount();
 
 console.log(
   `\n${failures === 0 ? "TUDO OK" : `${failures} FALHA(S)`} — sala ${ROOM}${

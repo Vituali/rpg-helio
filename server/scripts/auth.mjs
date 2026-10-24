@@ -11,7 +11,8 @@
  *     quem criou entra como mestre com a chave errada no bolso;
  *   - **o mestre pode dar o papel** a um agente, e vale **na hora** (ADR #22);
  *   - o dono não é rebaixável;
- *   - **só a conta de administração** lista contas e troca senha (ADR #23);
+ *   - **só a conta de administração** lista contas e troca senha (ADR #23), e ela
+ *     pode **delegar** a administração, valendo na hora (ADR #24);
  *   - cair e voltar mantém o mesmo papel e o mesmo nome.
  *
  *   npm start
@@ -113,6 +114,15 @@ const papelAoVivo = (c, nome) => c.state.last?.players.find((p) => p.name === no
 const anon = await get("/api/auth/me");
 check(anon.body?.ok === false, "sem cookie, /api/auth/me não conhece ninguém");
 
+/**
+ * O servidor aceita cadastro novo? (ADR #19)
+ *
+ * Com `REGISTRATION=closed`, metade desta suíte não se aplica: não há cadastro
+ * para testar, e a conta descartável precisa já existir. O teste continua útil
+ * para login, papel e painel — só não inventa conta.
+ */
+const cadastroAberto = anon.body?.signup === true;
+
 // 2) senha errada não entra
 const errada = await post("/api/auth/login", { name: USER, password: "senha-errada" });
 check(errada.status === 401, "senha errada é recusada com 401");
@@ -190,13 +200,21 @@ if ((process.env.GM_KEY ?? "") === "") {
 // ── Cadastro e vínculo (entrega 4 — ADR #19) ─────────────────────────────────
 
 // 10) cadastro: senha curta é recusada antes de qualquer coisa
-const curta = await post("/api/accounts", { name: TEST_ACCOUNT, password: "123" });
-check(curta.status === 400, "cadastro com senha curta é recusado com 400");
+if (cadastroAberto) {
+  const curta = await post("/api/accounts", { name: TEST_ACCOUNT, password: "123" });
+  check(curta.status === 400, "cadastro com senha curta é recusado com 400");
 
-// 11) cadastro: repetir um nome existente é recusado — e aqui o nome repetido é
-// dito na cara, ao contrário do login.
-const repetido = await post("/api/accounts", { name: USER, password: "qualquer-senha" });
-check(repetido.status === 409, "cadastro com nome já tomado é recusado com 409");
+  // 11) cadastro: repetir um nome existente é recusado — e aqui o nome repetido é
+  // dito na cara, ao contrário do login.
+  const repetido = await post("/api/accounts", { name: USER, password: "qualquer-senha" });
+  check(repetido.status === 409, "cadastro com nome já tomado é recusado com 409");
+} else {
+  const fechado = await post("/api/accounts", {
+    name: "cadastro-fechado-teste",
+    password: "123456",
+  });
+  check(fechado.status === 403, "com o cadastro fechado, criar conta é recusado (403)");
+}
 
 // 12) cadastro de verdade: cria, já sai logada, e o nome sai do banco
 const conta = await testAccount(URL);
@@ -204,8 +222,9 @@ const cookieB = conta.cookie ?? "";
 
 if (cookieB === "") {
   console.log(
-    "  nota: cadastro indisponível (banco fora, ou cadastro fechado) — os testes de vínculo não se aplicam",
+    "  nota: cadastro fechado e a conta de teste não existe — crie \"agente-teste\" com REGISTRATION=open",
   );
+  console.log("        para rodar os testes de vínculo; os de login, papel e painel seguem valendo");
 } else {
   check(conta.cookie !== null, `a conta "${TEST_ACCOUNT}" está logada (criada agora: ${conta.created})`);
 
@@ -215,8 +234,15 @@ if (cookieB === "") {
     euB.body?.ok === true && euB.body.account.name === TEST_ACCOUNT,
     "/api/auth/me reconhece a conta recém-criada",
   );
-  check(euB.body?.signup === true, "/api/auth/me diz que o cadastro está aberto");
-  check(anon.body?.signup === true, "e diz o mesmo para quem não tem conta");
+  if (cadastroAberto) {
+    check(euB.body?.signup === true, "/api/auth/me diz que o cadastro está aberto");
+    check(anon.body?.signup === true, "e diz o mesmo para quem não tem conta");
+  } else {
+    check(
+      euB.body?.signup === false && anon.body?.signup === false,
+      "com o cadastro fechado, com e sem conta, o servidor avisa que não aceita nova",
+    );
+  }
 
   // 14) a conta nova entra como agente e passa a ter VÍNCULO com a missão
   const bAgente = await joinAs({ cookie: cookieB });
@@ -310,33 +336,44 @@ if (cookieB === "") {
   check(missaoA?.owner === true, "e ele continua dono da missão");
 }
 
-// 22) painel do administrador (ADR #23)
+// 22) painel do administrador (ADRs #23 e #24)
 //
-// O administrador é **um nome de conta**, não um papel: a conta-semente deste
-// teste (`helio`) não é ele. A recusa, então, roda sempre. O caminho de sucesso
-// só roda se `ADMIN_NAME`/`ADMIN_PASS` vierem do ambiente — a senha do
-// administrador real não é assunto do teste.
-const euMestre = await get("/api/auth/me", cookie);
-const souAdmin = euMestre.body?.account?.admin === true;
-check(souAdmin === false, "a conta do mestre não é a conta de administração");
+// As recusas precisam de uma conta que **não seja administradora**. O mestre pode
+// ser (delegado, e nesta máquina é); o agente de teste normalmente não é. O alvo
+// é escolhido, não presumido. O caminho de sucesso só roda se
+// `ADMIN_NAME`/`ADMIN_PASS` vierem do ambiente — a senha do administrador real
+// não é assunto do teste.
+const mestreAdmin = (await get("/api/auth/me", cookie)).body?.account?.admin === true;
+const agenteAdmin =
+  cookieB === "" ? true : (await get("/api/auth/me", cookieB)).body?.account?.admin === true;
+const comum = !mestreAdmin ? cookie : !agenteAdmin ? cookieB : "";
 
-if (!souAdmin) {
-  const semPoderLista = await get("/api/admin/accounts", cookie);
+if (comum !== "") {
+  const semPoderLista = await get("/api/admin/accounts", comum);
   check(semPoderLista.status === 403, "quem não é administrador não lista contas (403)");
 
   const semPoderSenha = await post(
     `/api/admin/accounts/${encodeURIComponent(TEST_ACCOUNT)}/password`,
     { password: "senha-do-invasor" },
-    cookie,
+    comum,
   );
   check(semPoderSenha.status === 403, "nem troca a senha de ninguém (403)");
+
+  const semPoderAdmin = await post(
+    `/api/admin/accounts/${encodeURIComponent(TEST_ACCOUNT)}/admin`,
+    { admin: true },
+    comum,
+  );
+  check(semPoderAdmin.status === 403, "nem delega administração (403)");
+} else {
+  console.log("  nota: todas as contas de teste são administradoras — as recusas ficaram de fora");
 }
 
 check((await get("/api/admin/accounts")).status === 401, "sem sessão, o painel não abre (401)");
 
 const ADMIN_NAME = process.env.ADMIN_NAME ?? "admin";
 const ADMIN_PASS = process.env.ADMIN_PASS ?? "";
-if (ADMIN_PASS) {
+if (ADMIN_PASS && cookieB !== "") {
   const adminLogin = await post("/api/auth/login", { name: ADMIN_NAME, password: ADMIN_PASS });
   check(adminLogin.status === 200, `a conta de administração "${ADMIN_NAME}" entrou`);
   check(
@@ -389,6 +426,65 @@ if (ADMIN_PASS) {
   );
   check(fantasma.status === 404, "conta que não existe dá 404");
 
+  // 22b) delegar a administração (ADR #24)
+  //
+  // A lista carrega o último acesso: é o que permite saber de quem é a conta.
+  check(
+    typeof linha?.lastLoginAt === "string" && !Number.isNaN(Date.parse(linha.lastLoginAt)),
+    "a lista diz quando a conta entrou pela última vez",
+  );
+
+  const rebaixarRaiz = await post(
+    `/api/admin/accounts/${encodeURIComponent(ADMIN_NAME)}/admin`,
+    { admin: false },
+    adminCookie,
+  );
+  check(rebaixarRaiz.status === 400, "a conta raiz não pode ser rebaixada (400)");
+
+  const semResposta = await post(
+    `/api/admin/accounts/${encodeURIComponent(TEST_ACCOUNT)}/admin`,
+    {},
+    adminCookie,
+  );
+  check(semResposta.status === 400, "sem dizer dá ou tira, a rota recusa (400)");
+
+  if (!agenteAdmin) {
+    // O alvo da delegação é a conta descartável, nunca a conta pessoal do mestre:
+    // o teste não pode mexer no que o dono do servidor decidiu na tela.
+    const dar = await post(
+      `/api/admin/accounts/${encodeURIComponent(TEST_ACCOUNT)}/admin`,
+      { admin: true },
+      adminCookie,
+    );
+    check(dar.status === 200, "o administrador delega a administração");
+
+    const euAgora = await get("/api/auth/me", cookieB);
+    check(euAgora.body?.account?.admin === true, "e vale na hora, sem novo login");
+    check(
+      (await get("/api/admin/accounts", cookieB)).status === 200,
+      "quem recebeu entra no painel na hora",
+    );
+
+    const listaDepois = await get("/api/admin/accounts", adminCookie);
+    const delegado = (listaDepois.body?.accounts ?? []).find((a) => a.name === TEST_ACCOUNT);
+    check(delegado?.isAdmin === true, "e a lista marca a conta como administradora");
+
+    const tirar = await post(
+      `/api/admin/accounts/${encodeURIComponent(TEST_ACCOUNT)}/admin`,
+      { admin: false },
+      adminCookie,
+    );
+    check(tirar.status === 200, "e tira de volta");
+    const euDeNovo = await get("/api/auth/me", cookieB);
+    check(euDeNovo.body?.account?.admin === false, "quem perdeu vê o painel fechar na hora");
+    check(
+      (await get("/api/admin/accounts", cookieB)).status === 403,
+      "e volta a receber 403",
+    );
+  } else {
+    console.log("  nota: a conta de teste é a raiz; a delegação ficou de fora");
+  }
+
   // Devolve a senha original: a próxima execução entra com ela.
   const volta = await post(
     `/api/admin/accounts/${encodeURIComponent(TEST_ACCOUNT)}/password`,
@@ -407,8 +503,14 @@ check(cookieOf(out.res) === "helio_session=", "o logout manda o cookie vazio");
 check(setCookie.includes("Max-Age=0"), "com Max-Age=0, para o navegador esquecer na hora");
 
 // O teste não deixa missão órfã para trás (ADR #18), nem conta (ADR #19).
+// Com o cadastro fechado, a conta de teste é **fixture**: sem ela, a próxima
+// execução não teria como criar uma, e os testes de vínculo sumiriam.
 await missao.cleanup();
-deleteTestAccount();
+if (cadastroAberto) {
+  deleteTestAccount();
+} else {
+  console.log("  nota: cadastro fechado — a conta de teste fica para a próxima execução");
+}
 
 console.log(
   `\n${failures === 0 ? "TUDO OK" : `${failures} FALHA(S)`} — sala ${ROOM}${

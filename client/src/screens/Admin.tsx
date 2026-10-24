@@ -1,9 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties, FormEvent } from "react";
 import { Link, Navigate } from "react-router-dom";
-import { listAllAccounts, resetPassword, type AdminAccount } from "../net/auth";
+import {
+  listAllAccounts,
+  resetPassword,
+  setAccountAdmin,
+  type AdminAccount,
+} from "../net/auth";
 import { useSession } from "../state/sessionStore";
-import { IconLock, IconSigil } from "../components/icons";
+import { IconLock, IconSigil, IconUnlock } from "../components/icons";
 import Shell from "./Shell";
 
 const FIELD_LABEL: CSSProperties = {
@@ -16,16 +21,26 @@ const FIELD_LABEL: CSSProperties = {
   display: "block",
 };
 
+/** `24/10, 21:03` — curto o bastante para caber na linha da conta. */
+function visto(iso: string): string {
+  return new Date(iso).toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 /**
- * Painel do administrador (ADR #23).
+ * Painel do administrador (ADRs #23 e #24).
  *
  * Existe por um motivo só: **não há recuperação de senha**. Sem esta tela, o
  * jeito de devolver a conta a alguém seria mexer no banco na mão. Por isso ela
- * é pequena de propósito — lista contas e troca senha, nada mais.
+ * é pequena de propósito — lista contas, troca senha e delega a administração.
  *
- * Quem vê esta página é decidido pelo servidor (o nome da conta), e não por
- * este arquivo: a guarda daqui é conveniência, cada rota `/api/admin/*` confere
- * a sessão de novo.
+ * Quem vê esta página é decidido pelo servidor (o nome da conta ou a flag de
+ * admin delegado), e não por este arquivo: a guarda daqui é conveniência, cada
+ * rota `/api/admin/*` confere a sessão de novo.
  */
 export default function Admin() {
   const ready = useSession((s) => s.ready);
@@ -36,11 +51,13 @@ export default function Admin() {
   const [adminName, setAdminName] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  const [filtro, setFiltro] = useState("");
 
   const [target, setTarget] = useState<string | null>(null);
   const [password, setPassword] = useState("");
   const [password2, setPassword2] = useState("");
   const [busy, setBusy] = useState(false);
+  const [busyAdmin, setBusyAdmin] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [feito, setFeito] = useState("");
 
@@ -66,6 +83,16 @@ export default function Admin() {
       alive = false;
     };
   }, [account]);
+
+  const raiz = adminName.trim().toLowerCase();
+  const ehRaiz = (nome: string) => raiz !== "" && nome.trim().toLowerCase() === raiz;
+
+  const lista = useMemo(() => {
+    const q = filtro.trim().toLowerCase();
+    return q ? accounts.filter((a) => a.name.toLowerCase().includes(q)) : accounts;
+  }, [accounts, filtro]);
+
+  const delegados = accounts.filter((a) => a.isAdmin && !ehRaiz(a.name)).length;
 
   if (!ready) {
     return (
@@ -110,13 +137,33 @@ export default function Admin() {
     setPassword2("");
   };
 
+  const alternarAdmin = async (a: AdminAccount) => {
+    if (busyAdmin) return;
+    const dar = !a.isAdmin;
+    setBusyAdmin(a.name);
+    setError("");
+    setFeito("");
+    const result = await setAccountAdmin(a.name, dar);
+    setBusyAdmin(null);
+    if (!result.ok) {
+      setError(result.error ?? "Não deu para mudar a administração.");
+      return;
+    }
+    setAccounts((prev) => prev.map((x) => (x.id === a.id ? { ...x, isAdmin: dar } : x)));
+    setFeito(
+      dar
+        ? `"${a.name}" agora é administrador(a). A pessoa vê o painel ao recarregar a página.`
+        : `"${a.name}" deixou de ser administrador(a).`,
+    );
+  };
+
   return (
     <Shell
       title="Painel do Administrador"
-      subtitle="Trocar a senha de uma conta. Sem recuperação de senha, este é o caminho de volta."
+      subtitle="Senha esquecida, administração delegada. Só quem já é administrador vê esta página."
     >
-      <div style={{ display: "flex", flexDirection: "column", gap: 15 }}>
-        {/* Quem manda aqui */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
+        {/* Quem está olhando, e quantos administradores existem */}
         <div
           style={{
             border: "1px solid rgba(139, 92, 246, 0.28)",
@@ -134,91 +181,173 @@ export default function Admin() {
               {account.name}
             </div>
             <div style={{ fontSize: 10, color: "#7e6ea8" }}>
-              Conta de administração{adminName ? ` · ADMIN_ACCOUNT=${adminName}` : ""}
+              Raiz: {adminName || "—"} · delegados: {delegados}
             </div>
           </div>
         </div>
 
+        {error ? <div style={{ fontSize: 11, color: "#fca5a5" }}>{error}</div> : null}
+        {feito ? <div style={{ fontSize: 11, color: "#86efac" }}>{feito}</div> : null}
+
         {/* Contas */}
         <div>
-          <label style={FIELD_LABEL}>Contas ({accounts.length})</label>
+          <label style={FIELD_LABEL} htmlFor="filtro-contas">
+            Contas ({accounts.length})
+          </label>
+          <input
+            id="filtro-contas"
+            className="occult-input"
+            value={filtro}
+            placeholder="Filtrar por nome…"
+            autoComplete="off"
+            onChange={(e) => setFiltro(e.target.value)}
+            style={{ padding: "7px 10px", fontSize: 12, marginBottom: 6 }}
+          />
 
           {loading && (
             <div style={{ fontSize: 11, color: "#9d8ec4" }}>Carregando as contas…</div>
           )}
           {loadError && <div style={{ fontSize: 11, color: "#fca5a5" }}>{loadError}</div>}
+          {!loading && !loadError && lista.length === 0 && (
+            <div style={{ fontSize: 11, color: "#9d8ec4" }}>Nenhuma conta com esse nome.</div>
+          )}
 
-          {!loading && accounts.length > 0 && (
+          {!loading && lista.length > 0 && (
             <div
               style={{
                 display: "flex",
                 flexDirection: "column",
                 gap: 4,
-                maxHeight: 190,
+                maxHeight: 230,
                 overflowY: "auto",
+                paddingRight: 2,
               }}
             >
-              {accounts.map((a) => {
+              {lista.map((a) => {
                 const atual = a.name === target;
+                const root = ehRaiz(a.name);
+                const admin = a.isAdmin || root;
                 return (
-                  <button
-                    key={a.id}
-                    type="button"
-                    onClick={() => escolher(a.name)}
-                    title="Escolher esta conta"
-                    style={{
-                      textAlign: "left",
-                      cursor: "pointer",
-                      padding: "6px 8px",
-                      borderRadius: 6,
-                      border: atual
-                        ? "1px solid rgba(245, 158, 11, 0.6)"
-                        : "1px solid rgba(139, 92, 246, 0.18)",
-                      background: atual ? "rgba(245, 158, 11, 0.1)" : "rgba(8, 5, 16, 0.6)",
-                      color: "#f3effb",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                    }}
-                  >
-                    <span
+                  <div key={a.id} style={{ display: "flex", gap: 4 }}>
+                    <button
+                      type="button"
+                      onClick={() => escolher(a.name)}
+                      title="Escolher esta conta para trocar a senha"
                       style={{
-                        fontSize: 12,
-                        color: "#d8cef0",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
+                        flex: 1,
+                        minWidth: 0,
+                        textAlign: "left",
+                        cursor: "pointer",
+                        padding: "6px 8px",
+                        borderRadius: 6,
+                        border: atual
+                          ? "1px solid rgba(245, 158, 11, 0.6)"
+                          : "1px solid rgba(139, 92, 246, 0.18)",
+                        background: atual
+                          ? "rgba(245, 158, 11, 0.1)"
+                          : "rgba(8, 5, 16, 0.6)",
+                        color: "#f3effb",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 5,
                       }}
                     >
-                      {a.name}
-                    </span>
-                    {a.name === account.name && (
                       <span
                         style={{
-                          fontSize: 9,
-                          textTransform: "uppercase",
-                          letterSpacing: "0.06em",
-                          color: "#fbbf24",
-                          border: "1px solid rgba(245, 158, 11, 0.45)",
-                          borderRadius: 4,
-                          padding: "0 4px",
+                          fontSize: 12,
+                          color: "#d8cef0",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
                         }}
                       >
-                        você
+                        {a.name}
                       </span>
-                    )}
-                    <span
+                      {admin && (
+                        <span
+                          style={{
+                            flexShrink: 0,
+                            fontSize: 9,
+                            textTransform: "uppercase",
+                            letterSpacing: "0.06em",
+                            color: "#fbbf24",
+                            border: "1px solid rgba(245, 158, 11, 0.45)",
+                            borderRadius: 4,
+                            padding: "0 4px",
+                          }}
+                        >
+                          {root ? "raiz" : "admin"}
+                        </span>
+                      )}
+                      {a.name === account.name && (
+                        <span
+                          style={{
+                            flexShrink: 0,
+                            fontSize: 9,
+                            textTransform: "uppercase",
+                            letterSpacing: "0.06em",
+                            color: "#9d8ec4",
+                            border: "1px solid rgba(139, 92, 246, 0.35)",
+                            borderRadius: 4,
+                            padding: "0 4px",
+                          }}
+                        >
+                          você
+                        </span>
+                      )}
+                      <span
+                        style={{
+                          marginLeft: "auto",
+                          flexShrink: 0,
+                          fontSize: 9.5,
+                          lineHeight: 1.35,
+                          color: "#7e6ea8",
+                          textAlign: "right",
+                        }}
+                      >
+                        {a.owned} missões · {a.joined} mesas
+                        <br />
+                        {a.lastLoginAt ? `visto ${visto(a.lastLoginAt)}` : "nunca entrou"}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => void alternarAdmin(a)}
+                      disabled={root || busyAdmin !== null}
+                      title={
+                        root
+                          ? `A conta raiz (${adminName}) é sempre administradora.`
+                          : admin
+                            ? "Tirar a administração"
+                            : "Dar a administração"
+                      }
                       style={{
-                        marginLeft: "auto",
                         flexShrink: 0,
-                        fontSize: 10,
-                        color: "#7e6ea8",
+                        width: 30,
+                        borderRadius: 6,
+                        border: admin
+                          ? "1px solid rgba(245, 158, 11, 0.45)"
+                          : "1px solid rgba(139, 92, 246, 0.25)",
+                        background: admin
+                          ? "rgba(245, 158, 11, 0.12)"
+                          : "rgba(8, 5, 16, 0.6)",
+                        color: root ? "#5d4e82" : admin ? "#fbbf24" : "#9d8ec4",
+                        cursor: root || busyAdmin !== null ? "default" : "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
                       }}
                     >
-                      {a.owned} missões · {a.joined} mesas ·{" "}
-                      {new Date(a.createdAt).toLocaleDateString("pt-BR")}
-                    </span>
-                  </button>
+                      {busyAdmin === a.name ? (
+                        "…"
+                      ) : admin ? (
+                        <IconLock size={12} />
+                      ) : (
+                        <IconUnlock size={12} />
+                      )}
+                    </button>
+                  </div>
                 );
               })}
             </div>
@@ -256,9 +385,6 @@ export default function Admin() {
             onChange={(e) => setPassword2(e.target.value)}
             style={{ padding: "9px 11px", fontSize: 12 }}
           />
-
-          {error ? <div style={{ fontSize: 11, color: "#fca5a5" }}>{error}</div> : null}
-          {feito ? <div style={{ fontSize: 11, color: "#86efac" }}>{feito}</div> : null}
 
           <button
             type="submit"

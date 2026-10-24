@@ -200,6 +200,10 @@ export interface AdminAccount {
   id: string;
   name: string;
   createdAt: string;
+  /** Último login, ou `null` para quem nunca entrou. */
+  lastLoginAt: string | null;
+  /** Administrador delegado. A raiz é reconhecida pelo nome, não por este campo. */
+  isAdmin: boolean;
   owned: number;
   joined: number;
 }
@@ -243,6 +247,27 @@ export async function resetPassword(
   if (!body) return { ok: false, error: "Servidor não respondeu." };
   if (!body.ok) {
     return { ok: false, error: String(body.error ?? "Não deu para trocar a senha.") };
+  }
+  return { ok: true };
+}
+
+/**
+ * Dá ou tira a administração de uma conta (ADR #24).
+ *
+ * Vale na hora no servidor; no navegador da outra pessoa, só na próxima carga da
+ * página — é o `/api/auth/me` que conta ao cliente que ele é admin.
+ */
+export async function setAccountAdmin(
+  name: string,
+  admin: boolean,
+): Promise<{ ok: boolean; error?: string }> {
+  const body = await request(`/api/admin/accounts/${encodeURIComponent(name)}/admin`, {
+    method: "POST",
+    body: JSON.stringify({ admin }),
+  });
+  if (!body) return { ok: false, error: "Servidor não respondeu." };
+  if (!body.ok) {
+    return { ok: false, error: String(body.error ?? "Não deu para mudar a administração.") };
   }
   return { ok: true };
 }
