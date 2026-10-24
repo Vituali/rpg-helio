@@ -46,11 +46,9 @@ const ORIGIN = process.env.ORIGIN ?? "*";
 const DEFAULT_ROOM = (process.env.ROOM_CODE ?? "SANTO-CULTO-TUBARAO-26").toUpperCase();
 
 /**
- * Teto de células aceitas numa única mensagem. O maior tabuleiro possível é
- * 80x60 = 4800 (`map:config` limita nisso), então 5000 cobre qualquer seleção
- * legítima e barra um payload absurdo, tipo 1 milhão de células.
+ * Teto de células aceitas numa única mensagem. Com suporte a tabuleiros até 120x120 = 14400.
  */
-const MAX_CELLS = 5000;
+const MAX_CELLS = 16000;
 
 /**
  * Limite de taxa por conexão (token bucket).
@@ -605,8 +603,8 @@ io.on("connection", (socket) => {
     };
 
     if (typeof m.cols === "number" || typeof m.rows === "number") {
-      const rows = clamp(Number(m.rows ?? s.rows), 5, 60);
-      const cols = clamp(Number(m.cols ?? s.cols), 5, 80);
+      const rows = clamp(Number(m.rows ?? s.rows), 5, 120);
+      const cols = clamp(Number(m.cols ?? s.cols), 5, 120);
       s.rows = rows;
       s.cols = cols;
       s.walls = resizeGrid(s.walls, rows, cols, false);
@@ -617,7 +615,7 @@ io.on("connection", (socket) => {
         a.col = clamp(a.col, 0, cols - 1);
       }
     }
-    if (typeof m.cell === "number") s.cell = clamp(m.cell, 16, 96);
+    if (typeof m.cell === "number") s.cell = clamp(m.cell, 12, 160);
     if (typeof m.offsetX === "number") s.offsetX = m.offsetX;
     if (typeof m.offsetY === "number") s.offsetY = m.offsetY;
     if (m.bgImage !== undefined) s.bgImage = m.bgImage;

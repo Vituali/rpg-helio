@@ -123,7 +123,8 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
 
   // ── Estado de UI (local) ──────────────────────────────────────────────────
   const [tool, setTool] = useState<UiTool>(TOOLS.MOVE);
-  const [wallMode, setWallMode] = useState<WallDisplayMode>("thin");
+  const [wallMode] = useState<WallDisplayMode>("invisible");
+  const [showGmWallLines, setShowGmWallLines] = useState(true);
   const [sharedVision, setSharedVision] = useState(false);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
@@ -137,6 +138,7 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
   const [showSettings, setShowSettings] = useState(false);
   const [showMaps, setShowMaps] = useState(true);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [toolsDropdownOpen, setToolsDropdownOpen] = useState(false);
 
   // Mobile / HUD extra
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -180,9 +182,9 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
   } | null>(null);
 
   // UI lida pelo loop de render (sem re-assinar callbacks)
-  const ui = useRef({ pan, zoom, tool, sectorDraft, wallMode, sharedVision, isMaster, youId });
+  const ui = useRef({ pan, zoom, tool, sectorDraft, wallMode, showGmWallLines, sharedVision, isMaster, youId });
   useEffect(() => {
-    ui.current = { pan, zoom, tool, sectorDraft, wallMode, sharedVision, isMaster, youId };
+    ui.current = { pan, zoom, tool, sectorDraft, wallMode, showGmWallLines, sharedVision, isMaster, youId };
   });
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -298,8 +300,8 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
       }
       ctx.stroke();
       ctx.restore();
-    } else if (ui.current.wallMode === "invisible" && gm) {
-      // Invisível no jogo: mestre ainda vê linhas pontilhadas sutis
+    } else if (ui.current.wallMode === "invisible" && gm && ui.current.showGmWallLines) {
+      // Invisível no jogo: mestre ainda vê linhas pontilhadas sutis se ativado
       ctx.save();
       ctx.strokeStyle = "rgba(245, 158, 11, 0.35)";
       ctx.lineWidth = 1;
@@ -316,43 +318,52 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
 
     // ── Paredes por Aresta (Edge Walls) ──
     if (ew.length > 0) {
-      ctx.save();
-      for (const edge of ew) {
-        const parts = edge.split(",");
-        if (parts.length < 3) continue;
-        const r = parseInt(parts[0], 10);
-        const c = parseInt(parts[1], 10);
-        const dir = parts[2];
+      // Se for invisível para jogador, ou se o GM desligou o preview de paredes, não renderiza
+      const canRenderEdges =
+        ui.current.wallMode !== "invisible" || (gm && ui.current.showGmWallLines);
 
-        const x = oxGrid + c * cs;
-        const y = oyGrid + r * cs;
+      if (canRenderEdges) {
+        ctx.save();
+        for (const edge of ew) {
+          const parts = edge.split(",");
+          if (parts.length < 3) continue;
+          const r = parseInt(parts[0], 10);
+          const c = parseInt(parts[1], 10);
+          const dir = parts[2];
 
-        // Linha com brilho paranormal
-        ctx.beginPath();
-        if (dir === "h") {
-          ctx.moveTo(x, y);
-          ctx.lineTo(x + cs, y);
-        } else {
-          ctx.moveTo(x, y);
-          ctx.lineTo(x, y + cs);
+          const x = oxGrid + c * cs;
+          const y = oyGrid + r * cs;
+
+          // Linha com brilho paranormal
+          ctx.beginPath();
+          if (dir === "h") {
+            ctx.moveTo(x, y);
+            ctx.lineTo(x + cs, y);
+          } else {
+            ctx.moveTo(x, y);
+            ctx.lineTo(x, y + cs);
+          }
+
+          // Se o modo de parede for invisível (apenas visualização sutil de mestre)
+          if (ui.current.wallMode === "invisible") {
+            ctx.strokeStyle = "rgba(245, 158, 11, 0.45)";
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([3, 3]);
+            ctx.stroke();
+          } else {
+            // Brilho externo sutil
+            ctx.strokeStyle = "rgba(168, 85, 247, 0.3)";
+            ctx.lineWidth = 5;
+            ctx.stroke();
+
+            // Linha interna viva
+            ctx.strokeStyle = "#e879f9";
+            ctx.lineWidth = 2.5;
+            ctx.stroke();
+          }
         }
-
-        // Se o modo de parede for invisível e não for GM, não desenha (mas bloqueia)
-        if (ui.current.wallMode === "invisible" && !gm) {
-          continue;
-        }
-
-        // Brilho externo sutil
-        ctx.strokeStyle = "rgba(168, 85, 247, 0.3)";
-        ctx.lineWidth = 5;
-        ctx.stroke();
-
-        // Linha interna viva
-        ctx.strokeStyle = ui.current.wallMode === "invisible" ? "rgba(245, 158, 11, 0.85)" : "#e879f9";
-        ctx.lineWidth = 2.5;
-        ctx.stroke();
+        ctx.restore();
       }
-      ctx.restore();
     }
 
     // ── Setores ──
@@ -1147,26 +1158,76 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
           </button>
         )}
 
-        {/* Ferramentas no Desktop */}
-        <div
-          className="vtt-desktop-tools"
-          style={{ display: "flex", alignItems: "center", gap: 5 }}
-        >
-          {TOOL_LIST.filter((tl) => isMaster || tl.id === TOOLS.MOVE || tl.id === "pan").map((tl) => (
-            <button
-              key={tl.id}
-              type="button"
-              className="occult-btn"
-              data-active={tool === tl.id}
-              onClick={() => setTool(tl.id)}
-              title={`[${tl.key}] ${tl.label}`}
+        {/* Ferramentas Compactas (Dropdown para Mestre & Agente) */}
+        <div style={{ position: "relative" }}>
+          <button
+            type="button"
+            className="occult-btn occult-btn--gold"
+            onClick={() => setToolsDropdownOpen((p) => !p)}
+            title="Selecionar Ferramenta"
+            style={{ display: "inline-flex", alignItems: "center", gap: 7 }}
+          >
+            {TOOL_LIST.find((t) => t.id === tool)?.icon}
+            <span>{TOOL_LIST.find((t) => t.id === tool)?.label}</span>
+            <IconChevron size={12} dir={toolsDropdownOpen ? "up" : "down"} />
+          </button>
+
+          {toolsDropdownOpen && (
+            <div
+              style={{
+                position: "absolute",
+                top: "calc(100% + 6px)",
+                left: 0,
+                zIndex: 100,
+                background: "rgba(18, 10, 32, 0.98)",
+                border: "1px solid rgba(217, 119, 6, 0.45)",
+                borderRadius: 8,
+                padding: 6,
+                boxShadow: "0 10px 25px rgba(0,0,0,0.7), 0 0 15px rgba(168, 85, 247, 0.2)",
+                backdropFilter: "blur(12px)",
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+                minWidth: 140,
+              }}
             >
-              {tl.icon}
-              <span>{tl.label}</span>
-            </button>
-          ))}
-          <div className="vtt-sep" />
+              {TOOL_LIST.filter((tl) => isMaster || tl.id === TOOLS.MOVE || tl.id === "pan").map((tl) => (
+                <button
+                  key={tl.id}
+                  type="button"
+                  className="occult-btn"
+                  data-active={tool === tl.id}
+                  style={{
+                    justifyContent: "flex-start",
+                    width: "100%",
+                    padding: "6px 10px",
+                    gap: 8,
+                  }}
+                  onClick={() => {
+                    setTool(tl.id);
+                    setToolsDropdownOpen(false);
+                  }}
+                  title={`[${tl.key}] ${tl.label}`}
+                >
+                  {tl.icon}
+                  <span>{tl.label}</span>
+                  <span
+                    style={{
+                      marginLeft: "auto",
+                      fontSize: 10,
+                      opacity: 0.5,
+                      fontFamily: "var(--font-mono)",
+                    }}
+                  >
+                    [{tl.key}]
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
+
+        <div className="vtt-sep" />
 
         {/* Controles de Visão e Membrana (Apenas Mestre) */}
         {isMaster && (
@@ -1209,20 +1270,16 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
               <span>{sharedVision ? "Visão Grupo" : "Visão Individual"}</span>
             </button>
 
+            {/* Alternar visualização das paredes invisíveis para o mestre */}
             <button
               type="button"
               className="occult-btn"
-              onClick={() => {
-                const next: WallDisplayMode =
-                  wallMode === "thin" ? "invisible" : wallMode === "invisible" ? "blocks" : "thin";
-                setWallMode(next);
-              }}
-              title="Alternar renderização das paredes (Fina / Invisível / Blocos)"
+              data-active={showGmWallLines}
+              onClick={() => setShowGmWallLines((p) => !p)}
+              title="Mostrar/Ocultar traçado pontilhado de paredes invisíveis para o Mestre"
             >
-              <IconWallThin size={14} />
-              <span>
-                Paredes: {wallMode === "thin" ? "Linhas" : wallMode === "invisible" ? "Invisíveis" : "Blocos"}
-              </span>
+              {showGmWallLines ? <IconEye size={14} /> : <IconEyeOff size={14} />}
+              <span>{showGmWallLines ? "Paredes Visíveis" : "Paredes Ocultas"}</span>
             </button>
 
             <div className="vtt-sep" />
@@ -1549,7 +1606,7 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
                       style={{ width: 72, textAlign: "center", fontFamily: "var(--font-mono)" }}
                       value={cols}
                       min={5}
-                      max={80}
+                      max={120}
                       onChange={(e) => setDims(rows, +e.target.value)}
                     />
                   </div>
@@ -1568,7 +1625,7 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
                       style={{ width: 72, textAlign: "center", fontFamily: "var(--font-mono)" }}
                       value={rows}
                       min={5}
-                      max={60}
+                      max={120}
                       onChange={(e) => setDims(+e.target.value, cols)}
                     />
                   </div>
@@ -1587,8 +1644,8 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
                       className="occult-input"
                       style={{ width: 72, textAlign: "center", fontFamily: "var(--font-mono)" }}
                       value={cell}
-                      min={16}
-                      max={96}
+                      min={12}
+                      max={160}
                       onChange={(e) => setCell(+e.target.value)}
                     />
                   </div>

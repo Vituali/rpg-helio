@@ -172,8 +172,8 @@ export const useGameStore = create<GameState>()((set, get) => ({
   // ── configuração ──
   // Em rede, quem manda é o servidor: manda a intenção e espera o `room:state`.
   setDims: (rows, cols) => {
-    const r = clamp(rows, 5, 60);
-    const c = clamp(cols, 5, 80);
+    const r = clamp(rows, 5, 120);
+    const c = clamp(cols, 5, 120);
     if (isOnline()) return send("map:config", { rows: r, cols: c });
     set((s) => ({
       rows: r,
@@ -185,7 +185,7 @@ export const useGameStore = create<GameState>()((set, get) => ({
   },
 
   setCell: (cell) => {
-    const value = clamp(cell, 16, 96);
+    const value = clamp(cell, 12, 160);
     if (isOnline()) return send("map:config", { cell: value });
     set({ cell: value });
   },
