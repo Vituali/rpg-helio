@@ -175,10 +175,12 @@ O login passa por **HTTP**, não pelo socket. Quatro rotas, e só:
 | `POST /api/auth/logout` | Apaga o cookie no cliente |
 | `GET /api/auth/me` | `{ ok, account, signup }` — quem este navegador é, e se o servidor aceita cadastro novo |
 
-Além dessas, o **painel do administrador** (ADR #23): `GET /api/admin/accounts` lista as contas e
-`POST /api/admin/accounts/:nome/password` define a senha de uma delas. As duas exigem a conta cujo
-nome é `ADMIN_ACCOUNT` (padrão `admin`) — **é nome, não papel**, e o servidor confere em cada
-chamada. A página `/admin` é só a tela; esconder o link não é permissão.
+Além dessas, o **painel do administrador** (ADRs #23 e #24): `GET /api/admin/accounts` lista as contas,
+`POST /api/admin/accounts/:nome/password` define a senha e `POST /api/admin/accounts/:nome/admin` dá ou
+tira a administração. As três exigem ser administrador — a conta cujo nome é `ADMIN_ACCOUNT` (padrão
+`admin`, a **raiz**) ou uma conta com `account.is_admin` (delegada) —, e o servidor confere em cada
+chamada, lendo a flag do banco para que delegar valha na hora. A página `/admin` é só a tela; esconder o
+link não é permissão.
 
 O jogo continua inteiro no Socket.IO. A divisão é deliberada: tempo real e CRUD são módulos
 separados, para trocar um sem encostar no outro (`server/src/http.ts`).
@@ -566,11 +568,12 @@ Feito:
   a página de entrada parar de oferecer o formulário). O que um cadastro entrega a um estranho é pouco:
   entrar ainda exige o selo, e mestre ainda exige vínculo. **Desde a entrega 5, fechar o cadastro fecha a
   porta de entrada de gente nova**: sem conta não se entra, e não há como criar uma.
-- **Painel do administrador (ADR #23):** uma conta, escolhida pelo **nome** (`ADMIN_ACCOUNT`, padrão
-  `admin`), lista as contas e troca a senha de qualquer uma em `/admin`. É o substituto da recuperação
-  de senha que não existe, e não é um papel: não entra no modelo de vínculo, não dá poder na mesa e
-  não muda o papel de ninguém. A senha nova **não derruba sessões abertas** — para isso, troque
-  `SESSION_SECRET`.
+- **Painel do administrador (ADRs #23 e #24):** a **raiz** é uma conta escolhida pelo nome
+  (`ADMIN_ACCOUNT`, padrão `admin`) e não pode ser rebaixada; as demais entram por delegação
+  (`account.is_admin`). Em `/admin` o administrador lista as contas com o último acesso, troca senha e
+  dá/tira administração. É o substituto da recuperação de senha que não existe, e não é um papel: não
+  entra no modelo de vínculo, não dá poder na mesa e não muda o papel de ninguém. A senha nova **não
+  derruba sessões abertas** — para isso, troque `SESSION_SECRET`.
 - **A identidade chega no handshake**, pelo cookie: não existe evento de "autenticar" que alguém possa
   esquecer de chamar. **E ela é obrigatória**: sem sessão válida, `room:join` recusa (ADR #20).
 - **Criar e apagar missão exigem conta** (ADR #18): quem cria é o dono, e apagar é do dono. Quem não é

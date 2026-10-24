@@ -450,3 +450,14 @@ export function IconAlert({ size = 16, ...props }: IconProps) {
     </svg>
   );
 }
+
+/** Parede Fina / Linha */
+export function IconWallThin({ size = 16, ...props }: IconProps) {
+  return (
+    <svg {...base(size, props)}>
+      <line x1="12" y1="3" x2="12" y2="21" strokeWidth="2.5" />
+      <circle cx="12" cy="6" r="1.5" fill="currentColor" />
+      <circle cx="12" cy="18" r="1.5" fill="currentColor" />
+    </svg>
+  );
+}

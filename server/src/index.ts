@@ -43,7 +43,7 @@ import { canMove } from "./validate.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const ORIGIN = process.env.ORIGIN ?? "*";
-const DEFAULT_ROOM = (process.env.ROOM_CODE ?? "HELIO").toUpperCase();
+const DEFAULT_ROOM = (process.env.ROOM_CODE ?? "SANTO-CULTO-TUBARAO-26").toUpperCase();
 
 /**
  * Teto de células aceitas numa única mensagem. O maior tabuleiro possível é
@@ -586,6 +586,11 @@ io.on("connection", (socket) => {
       s.cols = cols;
       s.walls = resizeGrid(s.walls, rows, cols, false);
       s.fogExplored = resizeGrid(s.fogExplored, rows, cols, FOG_NONE);
+      // Mantém os personagens dentro dos limites sem nunca deletá-los
+      for (const a of s.actors) {
+        a.row = clamp(a.row, 0, rows - 1);
+        a.col = clamp(a.col, 0, cols - 1);
+      }
     }
     if (typeof m.cell === "number") s.cell = clamp(m.cell, 16, 96);
     if (m.bgImage !== undefined) s.bgImage = m.bgImage;

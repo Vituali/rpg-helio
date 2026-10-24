@@ -20,8 +20,9 @@ import {
   PALETTE,
   TOOLS,
   clamp,
+  computeVision,
 } from "@helio/shared";
-import type { Cell, Tool } from "@helio/shared";
+import type { Cell, Tool, WallDisplayMode } from "@helio/shared";
 import { loadAssets, type AssetManifests, type MapEntry } from "../render/assets";
 import { useGameStore } from "../state/gameStore";
 import { useNetStore } from "../state/netStore";
@@ -53,6 +54,7 @@ import {
   IconTrash,
   IconUpload,
   IconWall,
+  IconWallThin,
 } from "./icons";
 import { stepAnimations, type AnimMap } from "../render/animation";
 import { getImage } from "../render/images";
@@ -95,6 +97,9 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
   const activeActorId = useGameStore((s) => s.activeActorId);
 
   const online = useNetStore((s) => s.status === "online");
+  const userRole = useNetStore((s) => s.role);
+  const youId = useNetStore((s) => s.you);
+  const isMaster = !online || userRole === "gm";
 
   const setDims = useGameStore((s) => s.setDims);
   const setCell = useGameStore((s) => s.setCell);
@@ -114,6 +119,8 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
 
   // ── Estado de UI (local) ──────────────────────────────────────────────────
   const [tool, setTool] = useState<UiTool>(TOOLS.MOVE);
+  const [wallMode, setWallMode] = useState<WallDisplayMode>("thin");
+  const [sharedVision, setSharedVision] = useState(false);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [sectorDraft, setSectorDraft] = useState<
@@ -169,9 +176,9 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
   } | null>(null);
 
   // UI lida pelo loop de render (sem re-assinar callbacks)
-  const ui = useRef({ pan, zoom, tool, sectorDraft });
+  const ui = useRef({ pan, zoom, tool, sectorDraft, wallMode, sharedVision, isMaster, youId });
   useEffect(() => {
-    ui.current = { pan, zoom, tool, sectorDraft };
+    ui.current = { pan, zoom, tool, sectorDraft, wallMode, sharedVision, isMaster, youId };
   });
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -229,21 +236,73 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
     }
 
     // ── Paredes ──
-    for (let r = 0; r < nr; r++) {
-      for (let c = 0; c < nc; c++) {
-        if (!w[r]?.[c]) continue;
-        const x = c * cs;
-        const y = r * cs;
-        ctx.fillStyle = PALETTE.wall;
-        ctx.fillRect(x, y, cs, cs);
-        ctx.fillStyle = PALETTE.wallLit;
-        ctx.fillRect(x + 2, y + 2, cs - 4, cs / 2 - 2);
-        ctx.fillRect(x + cs / 2, y + cs / 2 + 1, cs / 2 - 3, cs / 2 - 4);
-        ctx.fillRect(x + 2, y + cs / 2 + 1, cs / 2 - 3, cs / 2 - 4);
-        ctx.strokeStyle = "rgba(168, 85, 247, 0.35)";
-        ctx.lineWidth = 1;
-        ctx.strokeRect(x, y, cs, cs);
+    if (ui.current.wallMode === "blocks") {
+      // Modo clássico: blocos retro
+      for (let r = 0; r < nr; r++) {
+        for (let c = 0; c < nc; c++) {
+          if (!w[r]?.[c]) continue;
+          const x = c * cs;
+          const y = r * cs;
+          ctx.fillStyle = PALETTE.wall;
+          ctx.fillRect(x, y, cs, cs);
+          ctx.fillStyle = PALETTE.wallLit;
+          ctx.fillRect(x + 2, y + 2, cs - 4, cs / 2 - 2);
+          ctx.fillRect(x + cs / 2, y + cs / 2 + 1, cs / 2 - 3, cs / 2 - 4);
+          ctx.fillRect(x + 2, y + cs / 2 + 1, cs / 2 - 3, cs / 2 - 4);
+          ctx.strokeStyle = "rgba(168, 85, 247, 0.35)";
+          ctx.lineWidth = 1;
+          ctx.strokeRect(x, y, cs, cs);
+        }
       }
+    } else if (ui.current.wallMode === "thin") {
+      // Linhas finas contornando apenas os limites das paredes (permite ver a arte do mapa)
+      ctx.save();
+      ctx.strokeStyle = "rgba(192, 132, 252, 0.7)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let r = 0; r < nr; r++) {
+        for (let c = 0; c < nc; c++) {
+          if (!w[r]?.[c]) continue;
+          const x = c * cs;
+          const y = r * cs;
+          // Top edge
+          if (!w[r - 1]?.[c]) {
+            ctx.moveTo(x, y);
+            ctx.lineTo(x + cs, y);
+          }
+          // Bottom edge
+          if (!w[r + 1]?.[c]) {
+            ctx.moveTo(x, y + cs);
+            ctx.lineTo(x + cs, y + cs);
+          }
+          // Left edge
+          if (!w[r]?.[c - 1]) {
+            ctx.moveTo(x, y);
+            ctx.lineTo(x, y + cs);
+          }
+          // Right edge
+          if (!w[r]?.[c + 1]) {
+            ctx.moveTo(x + cs, y);
+            ctx.lineTo(x + cs, y + cs);
+          }
+        }
+      }
+      ctx.stroke();
+      ctx.restore();
+    } else if (ui.current.wallMode === "invisible" && gm) {
+      // Invisível no jogo: mestre ainda vê linhas pontilhadas sutis
+      ctx.save();
+      ctx.strokeStyle = "rgba(245, 158, 11, 0.35)";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      for (let r = 0; r < nr; r++) {
+        for (let c = 0; c < nc; c++) {
+          if (w[r]?.[c]) {
+            ctx.strokeRect(c * cs + 2, r * cs + 2, cs - 4, cs - 4);
+          }
+        }
+      }
+      ctx.restore();
     }
 
     // ── Setores ──
@@ -354,10 +413,30 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
 
     // ── Fog of War ──
     if (!gm) {
+      // Determina quais atores contam para a visão deste jogador (perspectiva de visão única)
+      const isSoloPerspective = !ui.current.isMaster && !ui.current.sharedVision && ui.current.youId;
+      let effectiveFog = f;
+      if (isSoloPerspective) {
+        // Encontra o ator ou atores controlados por este jogador
+        const myActors = t.filter(
+          (a) => a.ownerId === ui.current.youId || a.id === activeId,
+        );
+        if (myActors.length > 0) {
+          // Calcula a visão local exclusiva destes atores
+          effectiveFog = computeVision(
+            f.map((row) => row.map((v) => (v === FOG_VIS ? 1 : v) as any)),
+            w,
+            myActors,
+            nr,
+            nc,
+          );
+        }
+      }
+
       if (fm === "hard") {
         for (let r = 0; r < nr; r++) {
           for (let c = 0; c < nc; c++) {
-            const fv = f[r]?.[c] ?? FOG_NONE;
+            const fv = effectiveFog[r]?.[c] ?? FOG_NONE;
             if (fv === FOG_NONE) {
               ctx.fillStyle = PALETTE.fog0;
               ctx.fillRect(c * cs, r * cs, cs, cs);
@@ -391,7 +470,7 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
           ox.globalCompositeOperation = "destination-out";
           for (let r = 0; r < nr; r++) {
             for (let c = 0; c < nc; c++) {
-              if ((f[r]?.[c] ?? FOG_NONE) >= FOG_VIS) {
+              if ((effectiveFog[r]?.[c] ?? FOG_NONE) >= FOG_VIS) {
                 ox.globalAlpha = 1;
                 ox.fillRect(c * cs, r * cs, cs, cs);
               }
@@ -402,7 +481,7 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
           // Já explorado: escurece parcialmente
           for (let r = 0; r < nr; r++) {
             for (let c = 0; c < nc; c++) {
-              if ((f[r]?.[c] ?? FOG_NONE) === 1) {
+              if ((effectiveFog[r]?.[c] ?? FOG_NONE) === 1) {
                 ox.globalAlpha = 0.62;
                 ox.fillStyle = "#04020a";
                 ox.fillRect(c * cs, r * cs, cs, cs);
@@ -424,12 +503,12 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
           ];
           for (let r = 0; r < nr; r++) {
             for (let c = 0; c < nc; c++) {
-              if ((f[r]?.[c] ?? 0) < FOG_VIS) continue;
+              if ((effectiveFog[r]?.[c] ?? 0) < FOG_VIS) continue;
               for (const [dr, dc] of neighbors) {
                 const nr2 = r + dr;
                 const nc2 = c + dc;
                 if (nr2 < 0 || nr2 >= nr || nc2 < 0 || nc2 >= nc) continue;
-                if ((f[nr2]?.[nc2] ?? 0) !== FOG_NONE) continue;
+                if ((effectiveFog[nr2]?.[nc2] ?? 0) !== FOG_NONE) continue;
                 const grd = ox.createLinearGradient(
                   c * cs + cs / 2,
                   r * cs + cs / 2,
@@ -983,7 +1062,7 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
           className="vtt-desktop-tools"
           style={{ display: "flex", alignItems: "center", gap: 5 }}
         >
-          {TOOL_LIST.map((tl) => (
+          {TOOL_LIST.filter((tl) => isMaster || tl.id === TOOLS.MOVE || tl.id === "pan").map((tl) => (
             <button
               key={tl.id}
               type="button"
@@ -999,55 +1078,86 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
           <div className="vtt-sep" />
         </div>
 
-        {/* Controles de Visão e Membrana */}
-        <button
-          type="button"
-          className="occult-btn occult-btn--gold"
-          data-active={gmMode}
-          onClick={toggleGm}
-          disabled={online}
-          title={
-            online
-              ? "Definido pelo servidor: o papel vem do vínculo com a missão"
-              : "[G] Visão do Mestre — tudo visível"
-          }
-        >
-          {gmMode ? <IconEye size={15} /> : <IconEyeOff size={15} />}
-          <span>{gmMode ? "Mestre ON" : "Mestre OFF"}</span>
-        </button>
+        {/* Controles de Visão e Membrana (Apenas Mestre) */}
+        {isMaster && (
+          <>
+            <button
+              type="button"
+              className="occult-btn occult-btn--gold"
+              data-active={gmMode}
+              onClick={toggleGm}
+              disabled={online}
+              title={
+                online
+                  ? "Definido pelo servidor: o papel vem do vínculo com a missão"
+                  : "[G] Visão do Mestre — tudo visível"
+              }
+            >
+              {gmMode ? <IconEye size={15} /> : <IconEyeOff size={15} />}
+              <span>{gmMode ? "Mestre ON" : "Mestre OFF"}</span>
+            </button>
 
-        <button
-          type="button"
-          className="occult-btn"
-          data-active={fogMode === "soft"}
-          onClick={() => setFogMode(fogMode === "soft" ? "hard" : "soft")}
-          title="[F] Alternar névoa suave ou rígida"
-        >
-          <IconMist size={15} />
-          <span>{fogMode === "soft" ? "Bruma Suave" : "Bruma Densa"}</span>
-        </button>
+            <button
+              type="button"
+              className="occult-btn"
+              data-active={fogMode === "soft"}
+              onClick={() => setFogMode(fogMode === "soft" ? "hard" : "soft")}
+              title="[F] Alternar névoa suave ou rígida"
+            >
+              <IconMist size={15} />
+              <span>{fogMode === "soft" ? "Bruma Suave" : "Bruma Densa"}</span>
+            </button>
 
-        <div className="vtt-sep" />
+            <button
+              type="button"
+              className="occult-btn"
+              data-active={sharedVision}
+              onClick={() => setSharedVision((p) => !p)}
+              title="Alternar visão compartilhada de todos os agentes"
+            >
+              <IconEye size={14} />
+              <span>{sharedVision ? "Visão Grupo" : "Visão Individual"}</span>
+            </button>
 
-        <button
-          type="button"
-          className="occult-btn"
-          onClick={resetFog}
-          title="Cobrir todo o mapa com névoa novamente"
-        >
-          <IconReset size={14} />
-          <span>Reset Fog</span>
-        </button>
+            <button
+              type="button"
+              className="occult-btn"
+              onClick={() => {
+                const next: WallDisplayMode =
+                  wallMode === "thin" ? "invisible" : wallMode === "invisible" ? "blocks" : "thin";
+                setWallMode(next);
+              }}
+              title="Alternar renderização das paredes (Fina / Invisível / Blocos)"
+            >
+              <IconWallThin size={14} />
+              <span>
+                Paredes: {wallMode === "thin" ? "Linhas" : wallMode === "invisible" ? "Invisíveis" : "Blocos"}
+              </span>
+            </button>
 
-        <button
-          type="button"
-          className="occult-btn occult-btn--danger"
-          onClick={clearWalls}
-          title="Remover todas as paredes do mapa"
-        >
-          <IconTrash size={14} />
-          <span>Limpar Paredes</span>
-        </button>
+            <div className="vtt-sep" />
+
+            <button
+              type="button"
+              className="occult-btn"
+              onClick={resetFog}
+              title="Cobrir todo o mapa com névoa novamente"
+            >
+              <IconReset size={14} />
+              <span>Reset Fog</span>
+            </button>
+
+            <button
+              type="button"
+              className="occult-btn occult-btn--danger"
+              onClick={clearWalls}
+              title="Remover todas as paredes do mapa"
+            >
+              <IconTrash size={14} />
+              <span>Limpar Paredes</span>
+            </button>
+          </>
+        )}
 
         <button
           type="button"
@@ -1059,51 +1169,55 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
           <span>Enquadrar</span>
         </button>
 
-        <div className="vtt-sep" />
+        {isMaster && (
+          <>
+            <div className="vtt-sep" />
 
-        <label className="occult-btn" title="Carregar imagem de fundo personalizada">
-          <IconImage size={15} />
-          <span>Mapa BG</span>
-          <input
-            type="file"
-            accept="image/*"
-            style={{ display: "none" }}
-            onChange={handleBgUpload}
-          />
-        </label>
-        {bgImage && (
-          <button
-            type="button"
-            className="occult-btn occult-btn--danger"
-            onClick={() => setBgImage(null)}
-            title="Remover imagem de fundo"
-          >
-            <IconClose size={14} />
-          </button>
+            <label className="occult-btn" title="Carregar imagem de fundo personalizada">
+              <IconImage size={15} />
+              <span>Mapa BG</span>
+              <input
+                type="file"
+                accept="image/*"
+                style={{ display: "none" }}
+                onChange={handleBgUpload}
+              />
+            </label>
+            {bgImage && (
+              <button
+                type="button"
+                className="occult-btn occult-btn--danger"
+                onClick={() => setBgImage(null)}
+                title="Remover imagem de fundo"
+              >
+                <IconClose size={14} />
+              </button>
+            )}
+
+            <div className="vtt-sep" />
+
+            <button
+              type="button"
+              className="occult-btn"
+              onClick={exportState}
+              title="Salvar estado da mesa em JSON"
+            >
+              <IconDownload size={14} />
+              <span>Exportar</span>
+            </button>
+
+            <label className="occult-btn" title="Carregar estado da mesa de um JSON">
+              <IconUpload size={14} />
+              <span>Importar</span>
+              <input
+                type="file"
+                accept=".json"
+                style={{ display: "none" }}
+                onChange={importState}
+              />
+            </label>
+          </>
         )}
-
-        <div className="vtt-sep" />
-
-        <button
-          type="button"
-          className="occult-btn"
-          onClick={exportState}
-          title="Salvar estado da mesa em JSON"
-        >
-          <IconDownload size={14} />
-          <span>Exportar</span>
-        </button>
-
-        <label className="occult-btn" title="Carregar estado da mesa de um JSON">
-          <IconUpload size={14} />
-          <span>Importar</span>
-          <input
-            type="file"
-            accept=".json"
-            style={{ display: "none" }}
-            onChange={importState}
-          />
-        </label>
 
         {/* Botão para abrir Grimório (Sidebar) no Mobile */}
         <button
@@ -1312,168 +1426,172 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
 
           <PlayersPanel />
 
-          {/* Seção: Geometria da Grade */}
-          <div className="vtt-section">
-            <div
-              className="vtt-section-head"
-              onClick={() => setShowSettings((p) => !p)}
-            >
-              <span className="vtt-section-title">
-                <IconGrid size={14} style={{ color: "#c084fc" }} />
-                <span>GEOMETRIA DA GRADE</span>
-              </span>
-              <IconChevron size={14} dir={showSettings ? "up" : "down"} />
-            </div>
-            {showSettings && (
+          {/* Seção: Geometria da Grade (Apenas Mestre) */}
+          {isMaster && (
+            <div className="vtt-section">
               <div
-                className="vtt-section-body"
-                style={{ display: "flex", flexDirection: "column", gap: 8 }}
+                className="vtt-section-head"
+                onClick={() => setShowSettings((p) => !p)}
               >
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    gap: 8,
-                  }}
-                >
-                  <span style={{ color: "#9d8ec4", fontSize: 11 }}>Colunas</span>
-                  <input
-                    type="number"
-                    className="occult-input"
-                    style={{ width: 72, textAlign: "center", fontFamily: "var(--font-mono)" }}
-                    value={cols}
-                    min={5}
-                    max={80}
-                    onChange={(e) => setDims(rows, +e.target.value)}
-                  />
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    gap: 8,
-                  }}
-                >
-                  <span style={{ color: "#9d8ec4", fontSize: 11 }}>Linhas</span>
-                  <input
-                    type="number"
-                    className="occult-input"
-                    style={{ width: 72, textAlign: "center", fontFamily: "var(--font-mono)" }}
-                    value={rows}
-                    min={5}
-                    max={60}
-                    onChange={(e) => setDims(+e.target.value, cols)}
-                  />
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    gap: 8,
-                  }}
-                >
-                  <span style={{ color: "#9d8ec4", fontSize: 11 }}>Célula (px)</span>
-                  <input
-                    type="number"
-                    className="occult-input"
-                    style={{ width: 72, textAlign: "center", fontFamily: "var(--font-mono)" }}
-                    value={cell}
-                    min={16}
-                    max={96}
-                    onChange={(e) => setCell(+e.target.value)}
-                  />
-                </div>
+                <span className="vtt-section-title">
+                  <IconGrid size={14} style={{ color: "#c084fc" }} />
+                  <span>GEOMETRIA DA GRADE</span>
+                </span>
+                <IconChevron size={14} dir={showSettings ? "up" : "down"} />
               </div>
-            )}
-          </div>
-
-          {/* Seção: Mapas */}
-          <div className="vtt-section">
-            <div className="vtt-section-head" onClick={() => setShowMaps((p) => !p)}>
-              <span className="vtt-section-title">
-                <IconMap size={14} style={{ color: "#fbbf24" }} />
-                <span>CENÁRIOS & MAPAS</span>
-              </span>
-              <IconChevron size={14} dir={showMaps ? "up" : "down"} />
-            </div>
-            {showMaps && (
-              <div
-                className="vtt-section-body"
-                style={{ display: "flex", flexDirection: "column", gap: 6 }}
-              >
-                {assets.maps.length === 0 && (
-                  <div style={{ color: "#8474a8", fontSize: 11 }}>
-                    Execute <b>tools/optimize-assets.ps1</b> para gerar os mapas otimizados.
+              {showSettings && (
+                <div
+                  className="vtt-section-body"
+                  style={{ display: "flex", flexDirection: "column", gap: 8 }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 8,
+                    }}
+                  >
+                    <span style={{ color: "#9d8ec4", fontSize: 11 }}>Colunas</span>
+                    <input
+                      type="number"
+                      className="occult-input"
+                      style={{ width: 72, textAlign: "center", fontFamily: "var(--font-mono)" }}
+                      value={cols}
+                      min={5}
+                      max={80}
+                      onChange={(e) => setDims(rows, +e.target.value)}
+                    />
                   </div>
-                )}
-                {assets.maps.map((m) => {
-                  const isCurrent = bgImage === m.src;
-                  return (
-                    <div
-                      key={m.id}
-                      style={{
-                        display: "flex",
-                        gap: 7,
-                        alignItems: "center",
-                        padding: 4,
-                        borderRadius: 8,
-                        background: isCurrent
-                          ? "rgba(109, 40, 217, 0.22)"
-                          : "rgba(18, 11, 32, 0.65)",
-                        border: `1px solid ${
-                          isCurrent ? "rgba(245, 158, 11, 0.55)" : "rgba(139, 92, 246, 0.16)"
-                        }`,
-                      }}
-                    >
-                      <img
-                        src={m.src}
-                        alt={m.name}
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 8,
+                    }}
+                  >
+                    <span style={{ color: "#9d8ec4", fontSize: 11 }}>Linhas</span>
+                    <input
+                      type="number"
+                      className="occult-input"
+                      style={{ width: 72, textAlign: "center", fontFamily: "var(--font-mono)" }}
+                      value={rows}
+                      min={5}
+                      max={60}
+                      onChange={(e) => setDims(+e.target.value, cols)}
+                    />
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 8,
+                    }}
+                  >
+                    <span style={{ color: "#9d8ec4", fontSize: 11 }}>Célula (px)</span>
+                    <input
+                      type="number"
+                      className="occult-input"
+                      style={{ width: 72, textAlign: "center", fontFamily: "var(--font-mono)" }}
+                      value={cell}
+                      min={16}
+                      max={96}
+                      onChange={(e) => setCell(+e.target.value)}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Seção: Mapas (Apenas Mestre — evita spoilers para os jogadores) */}
+          {isMaster && (
+            <div className="vtt-section">
+              <div className="vtt-section-head" onClick={() => setShowMaps((p) => !p)}>
+                <span className="vtt-section-title">
+                  <IconMap size={14} style={{ color: "#fbbf24" }} />
+                  <span>CENÁRIOS & MAPAS</span>
+                </span>
+                <IconChevron size={14} dir={showMaps ? "up" : "down"} />
+              </div>
+              {showMaps && (
+                <div
+                  className="vtt-section-body"
+                  style={{ display: "flex", flexDirection: "column", gap: 6 }}
+                >
+                  {assets.maps.length === 0 && (
+                    <div style={{ color: "#8474a8", fontSize: 11 }}>
+                      Execute <b>tools/optimize-assets.ps1</b> para gerar os mapas otimizados.
+                    </div>
+                  )}
+                  {assets.maps.map((m) => {
+                    const isCurrent = bgImage === m.src;
+                    return (
+                      <div
+                        key={m.id}
                         style={{
-                          width: 44,
-                          height: 32,
-                          objectFit: "cover",
-                          borderRadius: 5,
-                          border: "1px solid rgba(168, 85, 247, 0.35)",
-                          flexShrink: 0,
+                          display: "flex",
+                          gap: 7,
+                          alignItems: "center",
+                          padding: 4,
+                          borderRadius: 8,
+                          background: isCurrent
+                            ? "rgba(109, 40, 217, 0.22)"
+                            : "rgba(18, 11, 32, 0.65)",
+                          border: `1px solid ${
+                            isCurrent ? "rgba(245, 158, 11, 0.55)" : "rgba(139, 92, 246, 0.16)"
+                          }`,
                         }}
-                      />
-                      <button
-                        type="button"
-                        className="occult-btn"
-                        data-active={isCurrent}
-                        style={{
-                          flex: 1,
-                          justifyContent: "flex-start",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          padding: "5px 8px",
-                          minHeight: 32,
-                        }}
-                        onClick={() => setBgImage(isCurrent ? null : m.src)}
-                        title={isCurrent ? "Remover fundo" : "Ativar este mapa"}
                       >
-                        {m.name}
-                      </button>
-                      {m.w && m.h ? (
+                        <img
+                          src={m.src}
+                          alt={m.name}
+                          style={{
+                            width: 44,
+                            height: 32,
+                            objectFit: "cover",
+                            borderRadius: 5,
+                            border: "1px solid rgba(168, 85, 247, 0.35)",
+                            flexShrink: 0,
+                          }}
+                        />
                         <button
                           type="button"
                           className="occult-btn"
-                          style={{ padding: "5px 7px", minHeight: 32 }}
-                          onClick={() => fitGridToMap(m)}
-                          title={`Ajustar proporção da grade a este mapa (${m.w}×${m.h})`}
+                          data-active={isCurrent}
+                          style={{
+                            flex: 1,
+                            justifyContent: "flex-start",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            padding: "5px 8px",
+                            minHeight: 32,
+                          }}
+                          onClick={() => setBgImage(isCurrent ? null : m.src)}
+                          title={isCurrent ? "Remover fundo" : "Ativar este mapa"}
                         >
-                          <IconGrid size={13} />
+                          {m.name}
                         </button>
-                      ) : null}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+                        {m.w && m.h ? (
+                          <button
+                            type="button"
+                            className="occult-btn"
+                            style={{ padding: "5px 7px", minHeight: 32 }}
+                            onClick={() => fitGridToMap(m)}
+                            title={`Ajustar proporção da grade a este mapa (${m.w}×${m.h})`}
+                          >
+                            <IconGrid size={13} />
+                          </button>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Seção: Atores / Entidades */}
           <div className="vtt-section">
@@ -1483,20 +1601,22 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
             >
               <span className="vtt-section-title">
                 <IconSwords size={14} style={{ color: "#c084fc" }} />
-                <span>AGENTES & ENTIDADES</span>
+                <span>{isMaster ? "AGENTES & ENTIDADES" : "SEU AGENTE"}</span>
               </span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                <button
-                  type="button"
-                  className="occult-btn occult-btn--gold"
-                  style={{ padding: "2px 8px", minHeight: 24, fontSize: 10 }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    addActor();
-                  }}
-                >
-                  <IconPlus size={12} /> Invocar
-                </button>
+                {isMaster && (
+                  <button
+                    type="button"
+                    className="occult-btn occult-btn--gold"
+                    style={{ padding: "2px 8px", minHeight: 24, fontSize: 10 }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      addActor();
+                    }}
+                  >
+                    <IconPlus size={12} /> Invocar
+                  </button>
+                )}
                 <IconChevron size={14} dir={showTokens ? "up" : "down"} />
               </span>
             </div>
@@ -1506,8 +1626,11 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
                 className="vtt-section-body"
                 style={{ display: "flex", flexDirection: "column", gap: 9 }}
               >
-                {actors.map((actor) => {
+                {actors
+                  .filter((actor) => isMaster || actor.ownerId === youId || actor.id === activeActorId)
+                  .map((actor) => {
                   const isActive = actor.id === activeActorId;
+                  const isMine = actor.ownerId === youId || (!isMaster && isActive);
                   return (
                     <div
                       key={actor.id}
@@ -1569,144 +1692,165 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
                           </span>
                         )}
 
-                        <input
-                          className="occult-input"
-                          style={{ flex: 1, minWidth: 0, padding: "4px 7px", fontWeight: 600 }}
-                          value={actor.name}
-                          onChange={(e) => updateActor(actor.id, { name: e.target.value })}
-                          onClick={(e) => e.stopPropagation()}
-                        />
+                        {isMaster ? (
+                          <input
+                            className="occult-input"
+                            style={{ flex: 1, minWidth: 0, padding: "4px 7px", fontWeight: 600 }}
+                            value={actor.name}
+                            onChange={(e) => updateActor(actor.id, { name: e.target.value })}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        ) : (
+                          <span style={{ flex: 1, minWidth: 0, fontWeight: 600, color: "#f3effb", fontSize: 13 }}>
+                            {actor.name}
+                          </span>
+                        )}
 
-                        <input
-                          type="color"
-                          value={actor.color}
-                          title="Cor da aura / token"
-                          style={{
-                            width: 26,
-                            height: 26,
-                            border: "none",
-                            borderRadius: 6,
-                            cursor: "pointer",
-                            background: "none",
-                            flexShrink: 0,
-                          }}
-                          onChange={(e) => updateActor(actor.id, { color: e.target.value })}
-                          onClick={(e) => e.stopPropagation()}
-                        />
+                        {isMaster && (
+                          <input
+                            type="color"
+                            value={actor.color}
+                            title="Cor da aura / token"
+                            style={{
+                              width: 26,
+                              height: 26,
+                              border: "none",
+                              borderRadius: 6,
+                              cursor: "pointer",
+                              background: "none",
+                              flexShrink: 0,
+                            }}
+                            onChange={(e) => updateActor(actor.id, { color: e.target.value })}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        )}
 
-                        <button
-                          type="button"
-                          className="occult-btn occult-btn--danger"
-                          style={{ padding: "4px 6px", minHeight: 26 }}
-                          title="Remover ator"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            removeActor(actor.id);
-                          }}
-                        >
-                          <IconClose size={12} />
-                        </button>
+                        {isMaster && (
+                          <button
+                            type="button"
+                            className="occult-btn occult-btn--danger"
+                            style={{ padding: "4px 6px", minHeight: 26 }}
+                            title="Remover ator"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              removeActor(actor.id);
+                            }}
+                          >
+                            <IconClose size={12} />
+                          </button>
+                        )}
                       </div>
 
                       {/* Alcance de Visão */}
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 8,
-                          marginTop: 7,
-                        }}
-                      >
-                        <span style={{ color: "#9d8ec4", fontSize: 11, minWidth: 38 }}>
-                          Visão
-                        </span>
-                        <input
-                          type="range"
-                          min={1}
-                          max={15}
-                          value={actor.vision}
-                          style={{ flex: 1, accentColor: actor.color, cursor: "pointer" }}
-                          onChange={(e) => {
-                            updateActor(actor.id, { vision: +e.target.value });
-                            useGameStore.getState().recomputeVision();
-                          }}
-                          onClick={(e) => e.stopPropagation()}
-                        />
-                        <span
+                      {isMaster ? (
+                        <div
                           style={{
-                            color: "#fde68a",
-                            fontFamily: "var(--font-mono)",
-                            fontSize: 11,
-                            minWidth: 18,
-                            textAlign: "right",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            marginTop: 7,
                           }}
                         >
-                          {actor.vision}
-                        </span>
-                      </div>
+                          <span style={{ color: "#9d8ec4", fontSize: 11, minWidth: 38 }}>
+                            Visão
+                          </span>
+                          <input
+                            type="range"
+                            min={1}
+                            max={15}
+                            value={actor.vision}
+                            style={{ flex: 1, accentColor: actor.color, cursor: "pointer" }}
+                            onChange={(e) => {
+                              updateActor(actor.id, { vision: +e.target.value });
+                              useGameStore.getState().recomputeVision();
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                          <span
+                            style={{
+                              color: "#fde68a",
+                              fontFamily: "var(--font-mono)",
+                              fontSize: 11,
+                              minWidth: 18,
+                              textAlign: "right",
+                            }}
+                          >
+                            {actor.vision}
+                          </span>
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: 11, color: "#9d8ec4", marginTop: 6, display: "flex", justifyContent: "space-between" }}>
+                          <span>Alcance Sensorial: <b style={{ color: "#fde68a" }}>{actor.vision} casas</b></span>
+                          <span style={{ fontFamily: "var(--font-mono)", color: "#c084fc" }}>[{actor.col}, {actor.row}]</span>
+                        </div>
+                      )}
 
-                      {/* Seletor de Retrato / Token */}
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 8,
-                          marginTop: 6,
-                        }}
-                      >
-                        <span style={{ color: "#9d8ec4", fontSize: 11, minWidth: 38 }}>
-                          Token
-                        </span>
-                        <select
-                          className="occult-input"
-                          style={{ flex: 1, minWidth: 0, padding: "4px 6px" }}
-                          value={actor.portrait ?? ""}
-                          onChange={(e) =>
-                            updateActor(actor.id, { portrait: e.target.value || null })
-                          }
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <option value="">— Miniatura Procedural —</option>
-                          {assets.tokens.map((t) => (
-                            <option key={t.id} value={t.src}>
-                              {t.name}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {/* Sprite & Coordenada */}
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          gap: 8,
-                          marginTop: 6,
-                        }}
-                      >
-                        <span style={{ color: "#9d8ec4", fontSize: 11, minWidth: 38 }}>
-                          Sprite
-                        </span>
-                        <input
-                          className="occult-input"
-                          style={{ width: 90, padding: "3px 6px", fontSize: 11 }}
-                          value={actor.sprite}
-                          onChange={(e) => updateActor(actor.id, { sprite: e.target.value })}
-                          onClick={(e) => e.stopPropagation()}
-                          title="Chave do spritesheet em /sprites/<chave>.png"
-                        />
-                        <span
+                      {/* Seletor de Retrato / Token (Apenas Mestre ou Dono) */}
+                      {(isMaster || isMine) && (
+                        <div
                           style={{
-                            color: "#8474a8",
-                            fontFamily: "var(--font-mono)",
-                            fontSize: 10,
-                            marginLeft: "auto",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            marginTop: 6,
                           }}
                         >
-                          [{actor.col}, {actor.row}]
-                        </span>
-                      </div>
+                          <span style={{ color: "#9d8ec4", fontSize: 11, minWidth: 38 }}>
+                            Token
+                          </span>
+                          <select
+                            className="occult-input"
+                            style={{ flex: 1, minWidth: 0, padding: "4px 6px" }}
+                            value={actor.portrait ?? ""}
+                            onChange={(e) =>
+                              updateActor(actor.id, { portrait: e.target.value || null })
+                            }
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <option value="">— Miniatura Procedural —</option>
+                            {assets.tokens.map((t) => (
+                              <option key={t.id} value={t.src}>
+                                {t.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+
+                      {/* Sprite & Coordenada (Apenas Mestre) */}
+                      {isMaster && (
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: 8,
+                            marginTop: 6,
+                          }}
+                        >
+                          <span style={{ color: "#9d8ec4", fontSize: 11, minWidth: 38 }}>
+                            Sprite
+                          </span>
+                          <input
+                            className="occult-input"
+                            style={{ width: 90, padding: "3px 6px", fontSize: 11 }}
+                            value={actor.sprite}
+                            onChange={(e) => updateActor(actor.id, { sprite: e.target.value })}
+                            onClick={(e) => e.stopPropagation()}
+                            title="Chave do spritesheet em /sprites/<chave>.png"
+                          />
+                          <span
+                            style={{
+                              color: "#8474a8",
+                              fontFamily: "var(--font-mono)",
+                              fontSize: 10,
+                              marginLeft: "auto",
+                            }}
+                          >
+                            [{actor.col}, {actor.row}]
+                          </span>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -1714,86 +1858,88 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
             )}
           </div>
 
-          {/* Seção: Setores */}
-          <div className="vtt-section">
-            <div
-              className="vtt-section-head"
-              onClick={() => setShowSectors((p) => !p)}
-            >
-              <span className="vtt-section-title">
-                <IconSector size={14} style={{ color: "#22d3ee" }} />
-                <span>SETORES RITUAIS</span>
-              </span>
-              <IconChevron size={14} dir={showSectors ? "up" : "down"} />
-            </div>
-            {showSectors && (
+          {/* Seção: Setores (Apenas Mestre) */}
+          {isMaster && (
+            <div className="vtt-section">
               <div
-                className="vtt-section-body"
-                style={{ display: "flex", flexDirection: "column", gap: 6 }}
+                className="vtt-section-head"
+                onClick={() => setShowSectors((p) => !p)}
               >
-                {sectors.length === 0 && (
-                  <div style={{ color: "#8474a8", fontSize: 11, lineHeight: 1.45 }}>
-                    Selecione a ferramenta <b>Setor</b> e arraste no mapa para demarcar salas ou
-                    zonas.
-                  </div>
-                )}
-                {sectors.map((sec) => (
-                  <div
-                    key={sec.id}
-                    onClick={() => jumpToSector(sec)}
-                    title={`Focar câmera em: ${sec.name}`}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      padding: "6px 9px",
-                      background: "rgba(18, 11, 34, 0.8)",
-                      border: `1px solid ${sec.color}44`,
-                      borderLeft: `3px solid ${sec.color}`,
-                      borderRadius: 7,
-                      cursor: "pointer",
-                      gap: 6,
-                    }}
-                  >
-                    <span
-                      style={{
-                        color: sec.color,
-                        fontFamily: "var(--font-display)",
-                        fontWeight: 600,
-                        fontSize: 11,
-                        flex: 1,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {sec.name}
-                    </span>
-                    <span
-                      style={{
-                        color: "#8474a8",
-                        fontFamily: "var(--font-mono)",
-                        fontSize: 10,
-                      }}
-                    >
-                      {sec.c2 - sec.c1 + 1}×{sec.r2 - sec.r1 + 1}
-                    </span>
-                    <button
-                      type="button"
-                      className="occult-btn occult-btn--danger"
-                      style={{ padding: "2px 5px", minHeight: 22 }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removeSector(sec.id);
-                      }}
-                    >
-                      <IconClose size={11} />
-                    </button>
-                  </div>
-                ))}
+                <span className="vtt-section-title">
+                  <IconSector size={14} style={{ color: "#22d3ee" }} />
+                  <span>SETORES RITUAIS</span>
+                </span>
+                <IconChevron size={14} dir={showSectors ? "up" : "down"} />
               </div>
-            )}
-          </div>
+              {showSectors && (
+                <div
+                  className="vtt-section-body"
+                  style={{ display: "flex", flexDirection: "column", gap: 6 }}
+                >
+                  {sectors.length === 0 && (
+                    <div style={{ color: "#8474a8", fontSize: 11, lineHeight: 1.45 }}>
+                      Selecione a ferramenta <b>Setor</b> e arraste no mapa para demarcar salas ou
+                      zonas.
+                    </div>
+                  )}
+                  {sectors.map((sec) => (
+                    <div
+                      key={sec.id}
+                      onClick={() => jumpToSector(sec)}
+                      title={`Focar câmera em: ${sec.name}`}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        padding: "6px 9px",
+                        background: "rgba(18, 11, 34, 0.8)",
+                        border: `1px solid ${sec.color}44`,
+                        borderLeft: `3px solid ${sec.color}`,
+                        borderRadius: 7,
+                        cursor: "pointer",
+                        gap: 6,
+                      }}
+                    >
+                      <span
+                        style={{
+                          color: sec.color,
+                          fontFamily: "var(--font-display)",
+                          fontWeight: 600,
+                          fontSize: 11,
+                          flex: 1,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {sec.name}
+                      </span>
+                      <span
+                        style={{
+                          color: "#8474a8",
+                          fontFamily: "var(--font-mono)",
+                          fontSize: 10,
+                        }}
+                      >
+                        {sec.c2 - sec.c1 + 1}×{sec.r2 - sec.r1 + 1}
+                      </span>
+                      <button
+                        type="button"
+                        className="occult-btn occult-btn--danger"
+                        style={{ padding: "2px 5px", minHeight: 22 }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeSector(sec.id);
+                        }}
+                      >
+                        <IconClose size={11} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Seção: Atalhos de Teclado */}
           <div className="vtt-section" style={{ marginTop: "auto" }}>
@@ -1857,7 +2003,7 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
 
       {/* ── Dock Inferior de Ferramentas (Mobile) ── */}
       <nav className="vtt-mobile-dock" aria-label="Ferramentas do Mapa">
-        {TOOL_LIST.map((tl) => (
+        {TOOL_LIST.filter((tl) => isMaster || tl.id === TOOLS.MOVE || tl.id === "pan").map((tl) => (
           <button
             key={tl.id}
             type="button"

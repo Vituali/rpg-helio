@@ -56,6 +56,8 @@ export interface Sector {
 }
 
 export type FogMode = "soft" | "hard";
+export type WallDisplayMode = "blocks" | "thin" | "invisible";
+
 
 export type Tool = "move" | "wall" | "erase" | "reveal" | "hide" | "sector";
 

@@ -53,7 +53,9 @@ export default function Mesa() {
   const status = useNetStore((s) => s.status);
 
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
-  const [code, setCode] = useState(() => localStorage.getItem(SELO_STORAGE) ?? "");
+  const [code, setCode] = useState(
+    () => localStorage.getItem(SELO_STORAGE) ?? "SANTO-CULTO-TUBARAO-26",
+  );
   const [gmKey, setGmKey] = useState(() => localStorage.getItem(GMKEY_STORAGE) ?? "");
   const [showKey, setShowKey] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -236,7 +238,7 @@ export default function Mesa() {
             </span>
           </div>
 
-          {campaigns.length > 0 && (
+          {campaigns.length > 0 ? (
             <div
               style={{
                 display: "flex",
@@ -351,14 +353,42 @@ export default function Mesa() {
                 );
               })}
             </div>
+          ) : (
+            /* Botão de atalho rápido para a sessão oficial Santo Culto Tubarão 26 */
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 5,
+                padding: "8px 10px",
+                borderRadius: 8,
+                background: "rgba(30, 20, 50, 0.45)",
+                border: "1px dashed rgba(245, 158, 11, 0.35)",
+              }}
+            >
+              <div style={{ fontSize: 11, color: "#d8cef0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span>Sessão Principal (Padrão)</span>
+                <span style={{ fontSize: 9, color: "#a855f7", textTransform: "uppercase" }}>Ordem</span>
+              </div>
+              <button
+                type="button"
+                className="occult-btn occult-btn--gold"
+                style={{ padding: "6px 10px", fontSize: 11, justifyContent: "flex-start", width: "100%" }}
+                onClick={() => setCode("SANTO-CULTO-TUBARAO-26")}
+              >
+                <IconSigil size={13} />
+                <span>SANTO-CULTO-TUBARAO-26</span>
+              </button>
+            </div>
           )}
 
-          <div style={{ display: "flex", gap: 6 }}>
+          {/* Criação de novas campanhas restrita ou opcional */}
+          <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
             <input
               className="occult-input"
               style={{ padding: "7px 9px", fontSize: 12 }}
               value={newName}
-              placeholder="Nome da nova missão"
+              placeholder="Criar nova missão (Mestres)"
               maxLength={40}
               onChange={(e) => setNewName(e.target.value)}
             />
@@ -366,10 +396,10 @@ export default function Mesa() {
               type="button"
               className="occult-btn"
               style={{ padding: "7px 12px", fontSize: 12, flexShrink: 0 }}
-              disabled={missaoBusy}
+              disabled={missaoBusy || !newName.trim()}
               onClick={() => void criarMissao()}
             >
-              {missaoBusy ? "..." : "Criar"}
+              {missaoBusy ? "..." : "+ Criar"}
             </button>
           </div>
 

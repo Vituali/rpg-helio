@@ -718,3 +718,41 @@ mais valiosa do servidor: ela manda em todas as outras. A recomendação no DEPL
 administrador**. Como é nome e não papel, renomear a conta (que não existe) não quebra nada, e trocar
 `ADMIN_ACCOUNT` troca o dono do painel sem migration. O `GM_KEY` continua onde estava: a recuperação agora
 existe, mas ainda não é self-service, e o ADR #16 já tinha dito que ele sai quando as duas coisas existirem.
+
+## #24 – Administração delegada, com a raiz presa ao nome
+
+**Contexto.** O ADR #23 acertou o principal (existe um painel, e ele resolve senha esquecida), mas deixou o
+poder preso a **uma** conta, decidida por variável de ambiente. O pedido seguinte foi direto e com risada:
+*"admin pode dar admin pra alguém também (pro helio principalmente)"*. Trocar `ADMIN_ACCOUNT` no `.env` não
+é delegar — é reiniciar o servidor e trocar o dono; não serve para "o helio também".
+
+**Decisão.**
+
+- **Uma coluna, não um papel.** `account.is_admin` (migration `002_admins.sql`), `false` por padrão. Não
+  entra em `membership`, não dá poder na mesa, não muda o papel de ninguém: é só a chave do painel. Papel
+  de mesa continua sendo vínculo (ADR #19/#22).
+- **A raiz continua sendo o nome.** Quem tem o nome do `ADMIN_ACCOUNT` é administrador **sempre**, e a rota
+  recusa rebaixá-la (400). É a rede de segurança: um clique errado não deixa o painel sem dono, e se o
+  banco cair a raiz ainda entra (ela não depende de consulta). Por isso **não existe** a regra "não dá para
+  tirar o último admin": o último admin é sempre a raiz.
+- **`POST /api/admin/accounts/:nome/admin`** com `{ admin: true | false }`, alvo pelo nome (como no #22/#23).
+  Sem `admin` booleano no corpo é 400; conta inexistente é 404. A flag pode ser tirada de si mesmo, se
+  houver raiz — e há.
+- **Vale na hora, sem novo login.** O cookie é assinado e **não** carrega a flag; cada requisição de painel
+  e cada `/api/auth/me` leem a coluna. É uma consulta por requisição de painel — barata, indexada pela
+  chave primária — e é o que faz "dar admin" e "tirar admin" terem efeito imediato, que é o ponto todo.
+  No navegador da outra pessoa, a mudança aparece na próxima carga da página (é o `/auth/me` que conta).
+- **`last_login_at`.** O login marca a data; `/auth/me` não conta como acesso. O painel mostra "visto
+  24/10, 21:03" — sem isso, "quem é esta conta?" era só nome e contagem de missões.
+- **Filtro por nome na tela.** A lista é curta hoje, mas o administrador não deveria rolar uma tabela para
+  achar uma pessoa.
+- **Sem log de auditoria.** Conceder e tirar ficam no `console.log` do servidor, como o resto. Um histórico
+  de verdade é outra decisão (e outra tabela); não entrou de carona.
+
+**Consequências.** Delegar deixou de ser um segundo `.env` e virou um clique, reversível. O preço, dito:
+quem é administrador pode se multiplicar, e **administrador nenhum é auditado** — para um servidor de grupo
+fechado, é o mesmo risco do ADR #23, agora distribuído. A raiz não pode ser rebaixada, mas pode ser
+"contornada": quem tem a `SESSION_SECRET` ou o `.env` a redefine. Continua não havendo apagar conta
+(deixaria missão órfã) nem revogar sessão; admin a mais não resolve nenhum dos dois, e o painel não finge
+que resolve. Na prática, o caminho é: entra como `admin`, delega para o `helio`, e o `helio` passa a abrir o
+painel com a própria conta — mas só com uma senha que não seja `123456`.

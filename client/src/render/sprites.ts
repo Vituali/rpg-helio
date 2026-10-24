@@ -109,7 +109,10 @@ export interface ActorDraw {
   label: string;
   /** Retrato estático (modo token). Tem prioridade sobre o spritesheet. */
   portrait?: HTMLImageElement | null;
+  /** Se o ator tem movimento liberado (para mostrar badge/cadeado se travado) */
+  canMove?: boolean;
 }
+
 
 export function drawActor(
   ctx: CanvasRenderingContext2D,
@@ -163,11 +166,13 @@ export function drawActor(
     ctx.restore();
   }
 
-  // Placa de nome estilizada
+  // Placa de nome estilizada + Indicador se travado
   ctx.save();
   const fontSize = Math.max(9, Math.round(p.cell * 0.21));
   ctx.font = `600 ${fontSize}px 'Chakra Petch', sans-serif`;
-  const textW = ctx.measureText(p.label).width;
+  const isLocked = p.canMove === false;
+  const labelWithLock = isLocked ? `🔒 ${p.label}` : p.label;
+  const textW = ctx.measureText(labelWithLock).width;
   const padX = 5;
   const padY = 2;
   const boxY = p.cy + bodyR * 1.1;
@@ -179,17 +184,22 @@ export function drawActor(
     fontSize + padY * 2,
     4,
   );
-  ctx.fillStyle = "rgba(8, 5, 16, 0.82)";
+  ctx.fillStyle = isLocked ? "rgba(35, 10, 10, 0.88)" : "rgba(8, 5, 16, 0.82)";
   ctx.fill();
-  ctx.strokeStyle = p.active ? "rgba(251, 191, 36, 0.65)" : "rgba(168, 85, 247, 0.35)";
+  ctx.strokeStyle = isLocked
+    ? "rgba(239, 68, 68, 0.65)"
+    : p.active
+      ? "rgba(251, 191, 36, 0.65)"
+      : "rgba(168, 85, 247, 0.35)";
   ctx.lineWidth = 1;
   ctx.stroke();
 
-  ctx.fillStyle = p.active ? "#fef3c7" : "#f3effb";
+  ctx.fillStyle = isLocked ? "#fca5a5" : p.active ? "#fef3c7" : "#f3effb";
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
-  ctx.fillText(p.label, p.cx, boxY + padY);
+  ctx.fillText(labelWithLock, p.cx, boxY + padY);
   ctx.restore();
+
 }
 
 /**

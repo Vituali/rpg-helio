@@ -31,6 +31,8 @@ export const TOOLS = {
 } as const satisfies Record<string, Tool>;
 
 export const FOG_MODES: FogMode[] = ["soft", "hard"];
+export const WALL_DISPLAY_MODES = ["blocks", "thin", "invisible"] as const;
+
 
 // ── Paleta ───────────────────────────────────────────────────────────────────
 export const PALETTE = {

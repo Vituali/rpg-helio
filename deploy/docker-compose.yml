@@ -25,7 +25,7 @@ services:
       - postgres
     environment:
       - PORT=3000
-      - ROOM_CODE=${ROOM_CODE:-HELIO}    # sala padrão
+      - ROOM_CODE=${ROOM_CODE:-SANTO-CULTO-TUBARAO-26}    # sala padrão
       - ORIGIN=${ORIGIN:-*}              # CORS; "*" basta pois tudo passa pelo Caddy
       # Senha de mestre (escapatória, legado). O caminho de verdade é o vínculo
       # com a missão; vazio = NENHUMA escapatória (ADR #20).

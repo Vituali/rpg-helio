@@ -339,7 +339,7 @@ A entrada tem duas telas (ADR #21), e cada uma faz uma pergunta:
 |---|---|---|
 | `/entrar` | *quem é você?* | entrar ou criar conta; endereço do servidor em "opções avançadas"; link do modo local |
 | `/mesa` | *em qual missão?* | a conta (e **Sair**), as missões com criar/escolher/apagar, a "Identificação na Ordem" só leitura, o selo e **Ingressar** |
-| `/admin` | *cuidar das contas* | lista de contas e troca de senha — **só a conta `ADMIN_ACCOUNT`** (ADR #23) |
+| `/admin` | *cuidar das contas* | lista de contas (com o último acesso), troca de senha e delegação — **só administradores** (ADRs #23 e #24) |
 | `/` | *a mesa* | o mapa, só com conexão viva |
 | `/local` | *preparar sozinho* | o mapa sem servidor |
 
@@ -386,29 +386,40 @@ fechar a porta para gente nova**: quem ainda não tem conta não tem como entrar
 depois, reabra, deixe a pessoa se cadastrar e feche de novo. Fechar o cadastro **não** protege a mesa
 (quem protege é o selo), mas corta a única porta que um estranho com a URL pode usar sem convite.
 
-### Senha esquecida: o painel do administrador (ADR #23)
+### Senha esquecida: o painel do administrador (ADRs #23 e #24)
 
-Não existe "esqueci minha senha" automático. O caminho de volta é **`/admin`**, aberto **só para a conta
-cujo nome é `ADMIN_ACCOUNT`** (padrão `admin`):
+Não existe "esqueci minha senha" automático. O caminho de volta é **`/admin`**, aberto para a conta
+**raiz** — cujo nome é `ADMIN_ACCOUNT` (padrão `admin`) — e para quem ela **delegar**:
 
-1. Entre em `/entrar` com a conta `admin` (a que você criou).
+1. Entre em `/entrar` com a conta `admin`.
 2. Em `/mesa`, clique em **Painel** (o cadeado ao lado de *Sair*) — ou vá direto a `/admin`.
 3. Escolha a conta na lista, digite a senha nova duas vezes e confirme.
 
-A lista mostra nome, data de criação, quantas missões a conta possui e em quantas tem vínculo — o
-suficiente para não trocar a senha da pessoa errada. Trocar a senha **não derruba quem já está
-conectado**: o cookie é assinado e não consulta o banco (ADR #16). Para derrubar todo mundo de uma vez,
-troque `SESSION_SECRET` no `deploy/.env` e reinicie o `app`.
+A lista mostra nome, missões que a conta possui, mesas em que tem vínculo e **quando entrou pela última
+vez** — o suficiente para não mexer na conta errada. O campo de filtro acha a pessoa sem rolar a lista.
 
-**A conta `admin` é a mais valiosa do servidor** — ela define a senha de todas as outras. Duas
+**Delegar administração.** O cadeado à direita de cada conta dá ou tira a administração na hora. A conta
+que recebeu passa a ver o link *Painel* ao recarregar a página; o servidor confere a cada chamada, então
+não é preciso um novo login. A **raiz** (`ADMIN_ACCOUNT`) não pode ser rebaixada — é a rede de segurança
+contra um clique que deixaria o painel sem dono.
+
+**Antes de delegar, olhe a senha.** O painel define a senha de qualquer conta, então administrador e dono
+da conta são a mesma chave. A conta-semente `helio` deste servidor nasceu com a senha `123456`; dar admin a
+ela sem trocar a senha é o mesmo que publicar o painel. Se for delegar para a `helio`, troque a senha dela
+antes (pelo próprio painel, com a conta `admin`) — ou crie uma conta só para administrar.
+
+Trocar a senha **não derruba quem já está conectado**: o cookie é assinado e não consulta o banco (ADR #16).
+Para derrubar todo mundo de uma vez, troque `SESSION_SECRET` no `deploy/.env` e reinicie o `app`.
+
+**A conta `admin` é a mais valiosa do servidor**, e agora pode multiplicar administradores. Duas
 consequências:
 
 - **Ela manda, não joga:** o painel não dá poder na mesa. Ser mestre continua vindo do vínculo com a
-  missão (ADR #19/#22), não deste nome.
+  missão (ADRs #19 e #22), não deste nome.
 - **Quem criar a conta primeiro, é o administrador.** Se o cadastro estiver aberto e ninguém tiver essa
-  conta ainda, um estranho com a URL pode criá-la. Por isso: cadastre-a agora, use uma senha boa e feche
-  o cadastro quando o grupo todo tiver conta (`REGISTRATION=closed`). Se quiser outro nome, defina
-  `ADMIN_ACCOUNT` no `deploy/.env`; vazio desliga o painel.
+  conta ainda, um estranho com a URL pode criá-la. Por isso: use uma senha boa e mantenha o cadastro
+  fechado quando o grupo todo já tiver conta (`REGISTRATION=closed`). Se quiser outro nome para a raiz,
+  defina `ADMIN_ACCOUNT` no `deploy/.env`; vazio desliga o painel.
 
 ### Backup
 
