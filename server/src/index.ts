@@ -24,11 +24,12 @@ import type { Actor, Cell, Role } from "@helio/shared";
 import { touchMembership } from "./accounts.js";
 import { SESSION_COOKIE, cookieValue, readSession, sessionEnabled } from "./auth.js";
 import { dbEnabled } from "./db.js";
-import { handleHttp, registrationOpen, adminAccount } from "./http.js";
+import { handleHttp, adminAccount } from "./http.js";
 import { onRoleChange } from "./live.js";
 import { migrate } from "./migrate.js";
 import { createRoom, publicState, type Player, type Room } from "./room.js";
 import { normalizeCode } from "./selo.js";
+import { loadSettings, registrationOpen, settings } from "./settings.js";
 import {
   ensureDefaultCampaign,
   findCampaign,
@@ -43,7 +44,6 @@ import { canMove } from "./validate.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const ORIGIN = process.env.ORIGIN ?? "*";
-const DEFAULT_ROOM = (process.env.ROOM_CODE ?? "SANTO-CULTO-TUBARAO-26").toUpperCase();
 
 /**
  * Teto de células aceitas numa única mensagem. Com suporte a tabuleiros até 120x120 = 14400.
@@ -82,11 +82,13 @@ const loading = new Map<string, Promise<Room>>();
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 /**
- * Forma canônica do selo da sala. Vazio cai no selo sugerido do servidor
- * (`ROOM_CODE`) — é o que mantém o hábito do grupo funcionando.
+ * Forma canônica do selo da sala. Vazio cai na **sala da casa** — a que o painel
+ * define (`app_setting.default_room`, ADR #25) e que nasce do `ROOM_CODE`. Sem
+ * sala da casa, fica vazio mesmo, e `room:join` pede o selo em vez de inventar
+ * uma sala que ninguém conhece.
  */
 function normalizeCodeOr(code: unknown): string {
-  return normalizeCode(code) || DEFAULT_ROOM;
+  return normalizeCode(code) || settings().defaultRoom;
 }
 
 /**
@@ -382,6 +384,16 @@ io.on("connection", (socket) => {
     const m = (msg ?? {}) as { code?: unknown; key?: unknown };
     const key = normalizeCodeOr(m.code);
     const givenKey = typeof m.key === "string" ? m.key : "";
+
+    // Sem selo digitado e sem sala da casa configurada, não há o que abrir. A
+    // recusa é explícita: inventar uma sala faria o jogador entrar num lugar que
+    // ninguém combinou (ADR #25).
+    if (key === "") {
+      if (typeof ack === "function") {
+        ack({ ok: false, error: "Diga o selo da missão." });
+      }
+      return;
+    }
 
     /*
      * A conta é a porta (ADR #20).
@@ -798,10 +810,16 @@ async function connectDatabase(): Promise<void> {
     try {
       await migrate();
       setDefaultGmAccount(await seedMaster());
+      // O que o painel decidiu (ADR #25) entra depois das migrations: a tabela
+      // `app_setting` pode nem existir num banco novo. Sem banco, o padrão do
+      // ambiente continua valendo.
+      await loadSettings();
       // O selo sugerido do lobby precisa existir (ADR #18): num banco novo, todo
       // mundo receberia "selo desconhecido" na primeira vez. É a única criação
-      // de carona que sobrou, e ela acontece uma vez, aqui.
-      await ensureDefaultCampaign(DEFAULT_ROOM);
+      // de carona que sobrou, e ela acontece uma vez, aqui. Sem sala da casa,
+      // não há o que criar.
+      const casa = settings().defaultRoom;
+      if (casa !== "") await ensureDefaultCampaign(casa);
       console.log("[banco] conectado (migrations em dia)");
       return;
     } catch (err) {
@@ -824,7 +842,10 @@ async function main(): Promise<void> {
   }
 
   httpServer.listen(PORT, () => {
-    console.log(`HELIO server ouvindo em :${PORT} (sala padrão: ${DEFAULT_ROOM})`);
+    const live = settings();
+    console.log(
+      `HELIO server ouvindo em :${PORT} (sala da casa: ${live.defaultRoom || "nenhuma"})`,
+    );
     console.log(
       sessionEnabled
         ? "  contas: login ligado (cookie de sessao assinado) - a mesa so abre com conta"
@@ -836,9 +857,9 @@ async function main(): Promise<void> {
         : "  papel: so o vinculo com a missao (sem GM_KEY configurada)",
     );
     console.log(
-      registrationOpen
-        ? "  cadastro: aberto - qualquer um cria conta (REGISTRATION=closed fecha)"
-        : "  cadastro: FECHADO - so entram contas que ja existem",
+      registrationOpen()
+        ? "  cadastro: aberto - o painel /admin fecha na hora, sem restart"
+        : "  cadastro: FECHADO - so entram contas que ja existem (o painel /admin abre)",
     );
     console.log(
       adminAccount

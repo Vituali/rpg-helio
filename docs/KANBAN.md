@@ -105,12 +105,14 @@ mas a rota funciona para qualquer conta da missão — quem foi promovido descon
 próxima sessão. A tela não tem como listar contas que nunca entraram, e inventar uma lista de contas
 seria pior do que a limitação.
 
-**Fora do slice, pedido no meio do caminho: o painel do administrador (ADRs #23 e #24).** Não havia
+**Fora do slice, pedido no meio do caminho: o painel do administrador (ADRs #23–#25).** Não havia
 recuperação de senha — quem esquecesse ficava sem identidade até alguém abrir o `psql`. Agora a conta
 `admin` (`ADMIN_ACCOUNT`) lista as contas — com o último acesso — e define senha em `/admin`; e pode
 **delegar** a administração (coluna `is_admin`, migration 002), com a raiz presa ao nome para o painel
 nunca ficar sem dono. É **nome/flag, não papel**: não dá poder na mesa e não derruba sessões abertas.
-Apagar conta ficou fora: deixaria missão órfã.
+O mesmo painel passou a guardar a **configuração viva** (migration 003): cadastro aberto/fechado e a
+**sala da casa**, mudando na hora sem editar `.env` nem reiniciar. Apagar conta ficou fora: deixaria missão
+órfã.
 
 ---
 

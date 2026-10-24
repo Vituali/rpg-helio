@@ -174,13 +174,14 @@ O login passa por **HTTP**, não pelo socket. Quatro rotas, e só:
 | `POST /api/accounts` | `{ name, password }` → **cria a conta** e já devolve o cookie (cadastro, ADR #19) |
 | `POST /api/auth/logout` | Apaga o cookie no cliente |
 | `GET /api/auth/me` | `{ ok, account, signup }` — quem este navegador é, e se o servidor aceita cadastro novo |
+| `GET /api/settings` | `{ signup, defaultRoom }` — o que o servidor oferece hoje, **sem sessão** (ADR #25) |
 
-Além dessas, o **painel do administrador** (ADRs #23 e #24): `GET /api/admin/accounts` lista as contas,
-`POST /api/admin/accounts/:nome/password` define a senha e `POST /api/admin/accounts/:nome/admin` dá ou
-tira a administração. As três exigem ser administrador — a conta cujo nome é `ADMIN_ACCOUNT` (padrão
-`admin`, a **raiz**) ou uma conta com `account.is_admin` (delegada) —, e o servidor confere em cada
-chamada, lendo a flag do banco para que delegar valha na hora. A página `/admin` é só a tela; esconder o
-link não é permissão.
+Além dessas, o **painel do administrador** (ADRs #23 a #25): `GET /api/admin/accounts` lista as contas,
+`POST /api/admin/accounts/:nome/password` define a senha, `POST /api/admin/accounts/:nome/admin` dá ou
+tira a administração, e `GET/POST /api/admin/settings` leem e mudam cadastro e sala da casa. As rotas
+exigem ser administrador — a conta cujo nome é `ADMIN_ACCOUNT` (padrão `admin`, a **raiz**) ou uma conta
+com `account.is_admin` (delegada) —, e o servidor confere em cada chamada, lendo a flag do banco para que
+delegar valha na hora. A página `/admin` é só a tela; esconder o link não é permissão.
 
 O jogo continua inteiro no Socket.IO. A divisão é deliberada: tempo real e CRUD são módulos
 separados, para trocar um sem encostar no outro (`server/src/http.ts`).
@@ -222,14 +223,16 @@ Criar conta é `POST /api/accounts`: nome de 2 a 24 caracteres, senha de 6 a 200
 devolve o cookie — quem se cadastra entra, sem tela de "agora digite de novo o que você acabou de
 digitar".
 
-**O cadastro é aberto por padrão.** `REGISTRATION=closed` fecha a porta (a página de entrada para de oferecer
-"criar conta", o servidor responde 403 e o boot avisa), e `REGISTER_PER_MINUTE` (padrão 10) limita a
+**O cadastro é aberto por padrão.** `REGISTRATION=closed` fecha a porta, e o **painel `/admin` abre e fecha
+na hora** (ADR #25) — o `.env` é só o padrão de fábrica. Fechado, a página de entrada para de oferecer
+"criar conta", o servidor responde 403 e o boot avisa. `REGISTER_PER_MINUTE` (padrão 10) limita a
 rajada. O freio é modesto porque o que um cadastro entrega a um estranho é pouco: **entrar ainda exige
 o Selo da Missão, e ser mestre ainda exige vínculo**. A conta sozinha não abre mesa nenhuma — o limite
 existe para não entupir o `scrypt`, que é caro de propósito e roda na mesma thread da partida.
 
 `GET /api/auth/me` devolve `signup` junto de "quem sou eu": a página de entrada precisa saber se pode oferecer o
-formulário antes de a pessoa preencher.
+formulário antes de a pessoa preencher. `GET /api/settings` responde o mesmo (e a sala da casa) sem sessão,
+para o lobby não depender de login para saber o que oferecer.
 
 **Nome repetido é dito na cara aqui — no login, não.** É a única assimetria, e é inevitável: o índice
 `unique` recusaria de qualquer jeito, e uma mensagem genérica só faria a pessoa tentar de novo à toa.
@@ -331,8 +334,9 @@ limite de pacotes.
 | Na mesa | O cabeçalho mostra o **nome** da missão; o selo continua à mão do mestre |
 
 O nome (\"A Maldição de Veríssimo\") é para ler; o selo é para entrar. **Os dois não se derivam**:
-batizar a missão não pode determinar o convite. E o `ROOM_CODE` do deploy virou o **selo sugerido**,
-criado no boot **apenas quando o banco está vazio**.
+batizar a missão não pode determinar o convite. Missões se criam em `/mesa`, quantas quiser — cada uma é uma
+sala. O `ROOM_CODE` (ou a **sala da casa**, definida no painel) é só o atalho do lobby: ele é criado no boot
+**apenas quando o banco está vazio** e aparece como conveniência para quem ainda não é membro (ADR #25).
 
 ---
 
@@ -564,16 +568,18 @@ Feito:
   no tempo. Limite global de tentativas de login, porque `scrypt` é caro e o mesmo processo serve a
   partida.
 - **Cadastro de conta (ADR #19):** `POST /api/accounts` cria a conta e já devolve a sessão. Aberto por
-  padrão, com teto global (`REGISTER_PER_MINUTE`) e interruptor (`REGISTRATION=closed`, que também faz
-  a página de entrada parar de oferecer o formulário). O que um cadastro entrega a um estranho é pouco:
-  entrar ainda exige o selo, e mestre ainda exige vínculo. **Desde a entrega 5, fechar o cadastro fecha a
-  porta de entrada de gente nova**: sem conta não se entra, e não há como criar uma.
-- **Painel do administrador (ADRs #23 e #24):** a **raiz** é uma conta escolhida pelo nome
+  padrão, com teto global (`REGISTER_PER_MINUTE`) e interruptor — `REGISTRATION=closed` é o padrão de
+  fábrica, e o painel **abre e fecha na hora** (ADR #25). Fechado, a página de entrada para de oferecer o
+  formulário. O que um cadastro entrega a um estranho é pouco: entrar ainda exige o selo, e mestre ainda
+  exige vínculo. **Desde a entrega 5, fechar o cadastro fecha a porta de entrada de gente nova**: sem conta
+  não se entra, e não há como criar uma.
+- **Painel do administrador (ADRs #23 a #25):** a **raiz** é uma conta escolhida pelo nome
   (`ADMIN_ACCOUNT`, padrão `admin`) e não pode ser rebaixada; as demais entram por delegação
-  (`account.is_admin`). Em `/admin` o administrador lista as contas com o último acesso, troca senha e
-  dá/tira administração. É o substituto da recuperação de senha que não existe, e não é um papel: não
-  entra no modelo de vínculo, não dá poder na mesa e não muda o papel de ninguém. A senha nova **não
-  derruba sessões abertas** — para isso, troque `SESSION_SECRET`.
+  (`account.is_admin`). Em `/admin` o administrador lista as contas com o último acesso, troca senha,
+  dá/tira administração e muda a **configuração viva** (cadastro e sala da casa, `app_setting`). É o
+  substituto da recuperação de senha que não existe, e não é um papel: não entra no modelo de vínculo, não
+  dá poder na mesa e não muda o papel de ninguém. A senha nova **não derruba sessões abertas** — para
+  isso, troque `SESSION_SECRET`.
 - **A identidade chega no handshake**, pelo cookie: não existe evento de "autenticar" que alguém possa
   esquecer de chamar. **E ela é obrigatória**: sem sessão válida, `room:join` recusa (ADR #20).
 - **Criar e apagar missão exigem conta** (ADR #18): quem cria é o dono, e apagar é do dono. Quem não é

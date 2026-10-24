@@ -79,8 +79,9 @@ metade do projeto que o site vai herdar. **A conta é a mesma na mesa e no site.
   `GM_KEY` vazia = nenhuma escapatória.
 - ✅ **Páginas** (ADR #21): `/entrar`, `/mesa`, `/` e `/local`, cada uma com uma pergunta.
 - ✅ **Promoção a mestre** (ADR #22): o mestre outorga o papel pelo painel, **na hora**, sem F5.
-- ✅ **Painel do administrador** (ADRs #23 e #24): a conta `admin` lista as contas (com o último acesso),
-  troca senha e delega a administração em `/admin` — o conserto caseiro da senha esquecida, sem mexer no
+- ✅ **Painel do administrador** (ADRs #23–#25): a conta `admin` lista as contas (com o último acesso),
+  troca senha, delega a administração e muda a **configuração viva** — cadastro aberto/fechado e sala da
+  casa — em `/admin`, sem editar `.env` nem reiniciar. O conserto caseiro da senha esquecida, sem mexer no
   banco na mão.
 
 **Pronto quando:** cair, dar F5, trocar de aparelho ou voltar no dia seguinte não te transforma em outra

@@ -756,3 +756,48 @@ fechado, é o mesmo risco do ADR #23, agora distribuído. A raiz não pode ser r
 (deixaria missão órfã) nem revogar sessão; admin a mais não resolve nenhum dos dois, e o painel não finge
 que resolve. Na prática, o caminho é: entra como `admin`, delega para o `helio`, e o `helio` passa a abrir o
 painel com a própria conta — mas só com uma senha que não seja `123456`.
+
+---
+
+## #25 – Configuração viva: o painel manda, o `.env` é o padrão de fábrica
+
+**Contexto.** Duas decisões de operação nasceram presas ao ambiente: **cadastro aberto**
+(`REGISTRATION=closed`) e o **selo da sala** (`ROOM_CODE`). As duas fazem sentido como padrão de instalação
+e péssimo como única forma de mudar: "fecha o cadastro agora, entrou um estranho" e "a mesa do grupo virou
+outra" não deveriam custar editar um arquivo e reiniciar o `app` — ainda mais com um painel já aberto. O
+pedido veio junto de uma dúvida legítima: *"se o helio quiser criar outra sala, não teria como? só fixando no
+`.env`?"*.
+
+**Decisão.**
+
+- **Sala não é variável: é campanha.** Criar mesa sempre foi `POST /api/campaigns` (em `/mesa`), quantas
+  quiser, cada uma com o próprio selo e o criador como mestre. O `ROOM_CODE` **nunca** foi a lista de salas —
+  era só o selo que nascia no primeiro boot e o atalho do lobby. O que estava engessado era o atalho.
+- **`app_setting` (migration `003_settings.sql`)**: `key`, `value`, `updated_at`. Duas chaves hoje,
+  `registration` (`open`/`closed`) e `default_room` (selo, vazio = nenhuma). Uma tabela de duas linhas em vez
+  de um arquivo de configuração: é o banco que já está de pé, já tem migration e já guarda a cena.
+- **O ambiente vira padrão de fábrica.** No boot, `loadSettings()` aplica o que o painel salvou; o que não
+  estiver salvo continua valendo do `.env`. A partir do primeiro clique no painel, **o banco manda** — senão a
+  mudança sumiria no próximo restart, que é o oposto do pedido. O boot imprime o que está valendo.
+- **`GET /api/settings` é público**: `{ signup, defaultRoom }`. A tela de entrada precisa do primeiro antes
+  do login, e o lobby precisa do segundo. Separar do `/auth/me` deixa o lobby funcionar mesmo sem sessão.
+- **`GET/POST /api/admin/settings`** (raiz ou delegado, como o resto do painel). `POST` aceita
+  `{ registration?: boolean, defaultRoom?: string }`; sem nenhum dos dois é 400. Sala com selo inexistente é
+  **404** — um atalho que não abre é pior do que nenhum. Sem banco, **503 e nada muda na memória**: dizer
+  "troquei" e voltar no próximo boot seria pior do que recusar.
+- **Gravação em uma instrução.** Um `insert ... on conflict` com as linhas que mudaram: ou tudo entra, ou
+  nada. A memória só é atualizada depois do banco responder.
+- **`registrationOpen` deixou de ser constante.** É função, consultada a cada `/auth/me` e a cada criação de
+  conta; fechar o cadastro vale **na hora**, sem restart e sem derrubar ninguém.
+- **Sem sala da casa, sem sala inventada.** `room:join` sem selo e sem `default_room` recusa com "Diga o selo
+  da missão" em vez de cair num código fixo. O cliente **não tem mais** selo embutido: usa o último deste
+  navegador, senão a missão mais recente da lista, senão a sala da casa.
+- **A raiz e os delegados mexem nisso; não é por missão.** Cadastro e sala da casa são do servidor. Papel de
+  mesa continua sendo vínculo (ADR #19/#22) e não se mistura com isto.
+
+**Consequências.** O `.env` deixou de ser o lugar de operar: continua sendo o de instalar (e o socorro quando
+o banco está fora). O preço, dito: a configuração vive **na memória do processo** — se o banco estava fora no
+boot, o painel salva mas o efeito só entra no próximo start; e, como tudo no painel, não há auditoria. Abrir o
+cadastro é um clique e não pede confirmação: é deliberado (é o caso "entrou gente nova"), mas significa que
+quem é administrador pode abrir a porta sem querer. As duas chaves são de servidor inteiro — não existe
+"cadastro aberto só para esta missão".

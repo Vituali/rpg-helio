@@ -2,10 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties, FormEvent } from "react";
 import { Link, Navigate } from "react-router-dom";
 import {
+  getAdminSettings,
   listAllAccounts,
   resetPassword,
+  saveAdminSettings,
   setAccountAdmin,
   type AdminAccount,
+  type AdminSettings,
 } from "../net/auth";
 import { useSession } from "../state/sessionStore";
 import { IconLock, IconSigil, IconUnlock } from "../components/icons";
@@ -32,11 +35,13 @@ function visto(iso: string): string {
 }
 
 /**
- * Painel do administrador (ADRs #23 e #24).
+ * Painel do administrador (ADRs #23, #24 e #25).
  *
  * Existe por um motivo só: **não há recuperação de senha**. Sem esta tela, o
  * jeito de devolver a conta a alguém seria mexer no banco na mão. Por isso ela
- * é pequena de propósito — lista contas, troca senha e delega a administração.
+ * é pequena de propósito — lista contas, troca senha, delega a administração e
+ * mexe nas duas configurações que antes exigiam `.env` + restart: o cadastro e a
+ * sala da casa.
  *
  * Quem vê esta página é decidido pelo servidor (o nome da conta ou a flag de
  * admin delegado), e não por este arquivo: a guarda daqui é conveniência, cada
@@ -52,6 +57,12 @@ export default function Admin() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [filtro, setFiltro] = useState("");
+
+  /** Configuração viva do servidor (ADR #25). `null` = ainda não chegou. */
+  const [servidor, setServidor] = useState<AdminSettings | null>(null);
+  const [salaDraft, setSalaDraft] = useState("");
+  const [servidorBusy, setServidorBusy] = useState(false);
+  const [servidorErro, setServidorErro] = useState("");
 
   const [target, setTarget] = useState<string | null>(null);
   const [password, setPassword] = useState("");
@@ -69,14 +80,20 @@ export default function Admin() {
     // Só o administrador precisa da lista — e só ele consegue pedi-la.
     if (!account?.admin) return;
     let alive = true;
-    void listAllAccounts().then((result) => {
+    void Promise.all([listAllAccounts(), getAdminSettings()]).then(([lista, cfg]) => {
       if (!alive) return;
       setLoading(false);
-      if (result.ok) {
-        setAccounts(result.accounts ?? []);
-        setAdminName(result.admin ?? "");
+      if (lista.ok) {
+        setAccounts(lista.accounts ?? []);
+        setAdminName(lista.admin ?? "");
       } else {
-        setLoadError(result.error ?? "Não deu para listar as contas.");
+        setLoadError(lista.error ?? "Não deu para listar as contas.");
+      }
+      if (cfg.ok && cfg.settings) {
+        setServidor(cfg.settings);
+        setSalaDraft(cfg.settings.defaultRoom);
+      } else {
+        setServidorErro(cfg.error ?? "Não deu para ler a configuração do servidor.");
       }
     });
     return () => {
@@ -157,10 +174,60 @@ export default function Admin() {
     );
   };
 
+  /** A configuração que o servidor devolveu é a fonte da verdade. */
+  const aplicarServidor = (s: AdminSettings) => {
+    setServidor(s);
+    setSalaDraft(s.defaultRoom);
+  };
+
+  const alternarCadastro = async () => {
+    if (!servidor || servidorBusy) return;
+    const abrir = servidor.registration === "closed";
+    setServidorBusy(true);
+    setServidorErro("");
+    setError("");
+    setFeito("");
+    const result = await saveAdminSettings({ registration: abrir });
+    setServidorBusy(false);
+    if (!result.ok || !result.settings) {
+      setServidorErro(result.error ?? "Não deu para mudar o cadastro.");
+      return;
+    }
+    aplicarServidor(result.settings);
+    // A tela de entrada lê `signup` do store: sem isto, o botão "criar conta"
+    // ficaria com a resposta velha até um F5.
+    useSession.setState({ signup: abrir });
+    setFeito(
+      abrir
+        ? "Cadastro aberto. Enquanto estiver assim, qualquer pessoa com a URL cria conta."
+        : "Cadastro fechado. Só entram contas que já existem.",
+    );
+  };
+
+  const salvarSala = async () => {
+    if (!servidor || servidorBusy) return;
+    setServidorBusy(true);
+    setServidorErro("");
+    setError("");
+    setFeito("");
+    const result = await saveAdminSettings({ defaultRoom: salaDraft });
+    setServidorBusy(false);
+    if (!result.ok || !result.settings) {
+      setServidorErro(result.error ?? "Não deu para salvar a sala da casa.");
+      return;
+    }
+    aplicarServidor(result.settings);
+    setFeito(
+      result.settings.defaultRoom
+        ? `Sala da casa: ${result.settings.defaultRoom}.`
+        : "Sem sala da casa: o lobby só mostra as missões de cada pessoa.",
+    );
+  };
+
   return (
     <Shell
       title="Painel do Administrador"
-      subtitle="Senha esquecida, administração delegada. Só quem já é administrador vê esta página."
+      subtitle="Senha esquecida, administração delegada, cadastro e sala da casa. Só quem já é administrador vê esta página."
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
         {/* Quem está olhando, e quantos administradores existem */}
@@ -188,6 +255,94 @@ export default function Admin() {
 
         {error ? <div style={{ fontSize: 11, color: "#fca5a5" }}>{error}</div> : null}
         {feito ? <div style={{ fontSize: 11, color: "#86efac" }}>{feito}</div> : null}
+
+        {/* Configuração viva do servidor (ADR #25) */}
+        <div
+          style={{
+            border: "1px solid rgba(139, 92, 246, 0.22)",
+            background: "rgba(8, 5, 16, 0.5)",
+            borderRadius: 10,
+            padding: "9px 12px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 9,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontSize: 12, color: "#fde68a", fontWeight: 600 }}>
+                Cadastro
+              </div>
+              <div
+                style={{
+                  fontSize: 10,
+                  lineHeight: 1.4,
+                  color: servidor?.registration === "open" ? "#f0abfc" : "#7e6ea8",
+                }}
+              >
+                {servidor === null
+                  ? "Lendo…"
+                  : servidor.registration === "open"
+                    ? "Aberto — qualquer pessoa com a URL cria conta."
+                    : "Fechado — só entram contas que já existem."}
+              </div>
+            </div>
+            <button
+              type="button"
+              className="occult-btn"
+              disabled={!servidor || servidorBusy}
+              onClick={() => void alternarCadastro()}
+              style={{ padding: "6px 10px", fontSize: 11, flexShrink: 0 }}
+            >
+              {servidorBusy ? "…" : servidor?.registration === "open" ? "Fechar" : "Abrir"}
+            </button>
+          </div>
+
+          <div style={{ borderTop: "1px solid rgba(139, 92, 246, 0.18)", paddingTop: 8 }}>
+            <label style={{ ...FIELD_LABEL, marginBottom: 4 }} htmlFor="sala-casa">
+              Sala da casa
+            </label>
+            <div style={{ display: "flex", gap: 6 }}>
+              <input
+                id="sala-casa"
+                className="occult-input"
+                value={salaDraft}
+                maxLength={32}
+                placeholder="Nenhuma (vazio)"
+                autoComplete="off"
+                onChange={(e) => setSalaDraft(e.target.value)}
+                style={{
+                  padding: "7px 10px",
+                  fontSize: 12,
+                  flex: 1,
+                  minWidth: 0,
+                  fontFamily: "var(--font-mono)",
+                }}
+              />
+              <button
+                type="button"
+                className="occult-btn"
+                disabled={
+                  !servidor ||
+                  servidorBusy ||
+                  salaDraft.trim().toUpperCase() === (servidor?.defaultRoom ?? "")
+                }
+                onClick={() => void salvarSala()}
+                style={{ padding: "7px 11px", fontSize: 11, flexShrink: 0 }}
+              >
+                Salvar
+              </button>
+            </div>
+            <div style={{ fontSize: 10, color: "#7e6ea8", marginTop: 5, lineHeight: 1.45 }}>
+              O selo que o lobby oferece a quem ainda não é membro. É só um atalho — as
+              missões continuam sendo criadas em <em>Missões</em>, quantas quiser.
+            </div>
+          </div>
+
+          {servidorErro ? (
+            <div style={{ fontSize: 11, color: "#fca5a5" }}>{servidorErro}</div>
+          ) : null}
+        </div>
 
         {/* Contas */}
         <div>

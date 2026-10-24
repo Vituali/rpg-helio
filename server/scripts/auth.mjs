@@ -13,6 +13,8 @@
  *   - o dono não é rebaixável;
  *   - **só a conta de administração** lista contas e troca senha (ADR #23), e ela
  *     pode **delegar** a administração, valendo na hora (ADR #24);
+ *   - **cadastro e sala da casa são configuração viva** (ADR #25): o painel muda
+ *     e o servidor obedece sem restart, sem tocar no `.env`;
  *   - cair e voltar mantém o mesmo papel e o mesmo nome.
  *
  *   npm start
@@ -113,6 +115,16 @@ const papelAoVivo = (c, nome) => c.state.last?.players.find((p) => p.name === no
 // 1) quem sou eu, sem cookie
 const anon = await get("/api/auth/me");
 check(anon.body?.ok === false, "sem cookie, /api/auth/me não conhece ninguém");
+
+// A configuração pública (ADR #25) responde antes do login: é dela que a tela de
+// entrada tira o "posso criar conta?" e o lobby, a sala da casa.
+const publico = await get("/api/settings");
+check(
+  publico.status === 200 &&
+    typeof publico.body?.defaultRoom === "string" &&
+    typeof publico.body?.signup === "boolean",
+  "o servidor publica cadastro e sala da casa sem exigir sessão",
+);
 
 /**
  * O servidor aceita cadastro novo? (ADR #19)
@@ -365,6 +377,16 @@ if (comum !== "") {
     comum,
   );
   check(semPoderAdmin.status === 403, "nem delega administração (403)");
+
+  const semPoderConfig = await get("/api/admin/settings", comum);
+  check(semPoderConfig.status === 403, "nem lê a configuração do servidor (403)");
+
+  const semPoderMudar = await post(
+    "/api/admin/settings",
+    { registration: true },
+    comum,
+  );
+  check(semPoderMudar.status === 403, "nem abre o cadastro (403)");
 } else {
   console.log("  nota: todas as contas de teste são administradoras — as recusas ficaram de fora");
 }
@@ -435,7 +457,10 @@ if (ADMIN_PASS && cookieB !== "") {
   );
 
   const rebaixarRaiz = await post(
-    `/api/admin/accounts/${encodeURIComponent(ADMIN_NAME)}/admin`,
+    // A raiz é a que o **servidor** diz que é (`ADMIN_ACCOUNT`), não necessariamente
+    // a conta com que o teste entrou: quem entrou pode ser um administrador
+    // delegado, e rebaixar esse seria mexer na configuração do dono do servidor.
+    `/api/admin/accounts/${encodeURIComponent(String(lista.body?.admin ?? ADMIN_NAME))}/admin`,
     { admin: false },
     adminCookie,
   );
@@ -484,6 +509,62 @@ if (ADMIN_PASS && cookieB !== "") {
   } else {
     console.log("  nota: a conta de teste é a raiz; a delegação ficou de fora");
   }
+
+  // 22c) configuração viva — cadastro e sala da casa (ADR #25)
+  //
+  // O teste mexe e **devolve** o que estava: a configuração é do servidor, não da
+  // suíte. Nada aqui cria conta, então rodar com o cadastro fechado é seguro.
+  const cfg0 = await get("/api/admin/settings", adminCookie);
+  check(
+    cfg0.status === 200 &&
+      (cfg0.body?.settings?.registration === "open" ||
+        cfg0.body?.settings?.registration === "closed") &&
+      typeof cfg0.body?.settings?.defaultRoom === "string",
+    "o administrador lê a configuração viva",
+  );
+  const registroOriginal = cfg0.body?.settings?.registration === "closed" ? "closed" : "open";
+  const salaOriginal = String(cfg0.body?.settings?.defaultRoom ?? "");
+
+  const abriu = await post("/api/admin/settings", { registration: true }, adminCookie);
+  check(
+    abriu.status === 200 && abriu.body?.settings?.registration === "open",
+    "o painel abre o cadastro",
+  );
+  check(
+    (await get("/api/auth/me")).body?.signup === true,
+    "e o servidor passa a aceitar conta nova na hora, sem novo login",
+  );
+
+  const fechou = await post("/api/admin/settings", { registration: false }, adminCookie);
+  check(
+    fechou.status === 200 && fechou.body?.settings?.registration === "closed",
+    "e fecha de novo",
+  );
+  check((await get("/api/auth/me")).body?.signup === false, "a tela de entrada vê o fechamento");
+
+  const salaFantasma = await post(
+    "/api/admin/settings",
+    { defaultRoom: "NAO-EXISTE-ESSA-SALA-00" },
+    adminCookie,
+  );
+  check(salaFantasma.status === 404, "sala da casa com selo inexistente é recusada (404)");
+
+  const sala = await post("/api/admin/settings", { defaultRoom: ROOM }, adminCookie);
+  check(
+    sala.status === 200 && sala.body?.settings?.defaultRoom === ROOM,
+    "o painel aponta a sala da casa para uma missão que existe",
+  );
+  check(
+    (await get("/api/settings")).body?.defaultRoom === ROOM,
+    "e o lobby recebe a sala da casa sem estar logado",
+  );
+
+  const restaurar = await post(
+    "/api/admin/settings",
+    { registration: registroOriginal === "open", defaultRoom: salaOriginal },
+    adminCookie,
+  );
+  check(restaurar.status === 200, "a configuração original volta no fim");
 
   // Devolve a senha original: a próxima execução entra com ela.
   const volta = await post(

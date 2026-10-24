@@ -35,9 +35,11 @@ import {
 } from "./accounts.js";
 import { roleChanged } from "./live.js";
 import { normalizeCode } from "./selo.js";
+import { registrationOpen, saveSettings, settings } from "./settings.js";
 import {
   createCampaign,
   deleteCampaign,
+  findCampaign,
   listCampaigns,
   setMemberRole,
   type CampaignInfo,
@@ -46,17 +48,6 @@ import type { Session } from "./auth.js";
 
 /** Teto do corpo de uma requisição de auth. Nome e senha não passam de 200 bytes. */
 const MAX_BODY = 4 * 1024;
-
-/**
- * Cadastro aberto? `REGISTRATION=closed` fecha a porta (ADR #19).
- *
- * Existe porque cadastro aberto é decisão de agora, não para sempre: quando o
- * grupo todo tiver conta, fechar é uma variável de ambiente e um restart. A
- * alternativa — tela de administração para aprovar conta — seria muito mais
- * código para um problema que dura uma tarde.
- */
-export const registrationOpen =
-  (process.env.REGISTRATION ?? "open").trim().toLowerCase() !== "closed";
 
 /**
  * A conta de administração (ADR #23).
@@ -268,7 +259,7 @@ export async function handleHttp(
     // E o cadastro também depende de haver sessão: sem `SESSION_SECRET` a rota
     // de contas responde 503, então oferecer o botão seria prometer o que o
     // servidor recusa.
-    const signup = registrationOpen && sessionEnabled;
+    const signup = registrationOpen() && sessionEnabled;
     if (!session) {
       send(res, 200, { ok: false, signup });
       return true;
@@ -293,6 +284,21 @@ export async function handleHttp(
     return true;
   }
 
+  // ── Configuração pública (ADR #25) ──
+  //
+  // A tela de entrada e o lobby precisam saber, sem sessão, se o servidor aceita
+  // conta nova e qual é a sala da casa. Nada aqui é segredo; e separar do
+  // `/auth/me` deixa o lobby funcionar mesmo antes do login.
+  if (path === "/settings" && method === "GET") {
+    const live = settings();
+    send(res, 200, {
+      ok: true,
+      signup: live.registrationOpen && sessionEnabled,
+      defaultRoom: live.defaultRoom,
+    });
+    return true;
+  }
+
   // ── Criar conta (ADR #19) ──
   //
   // Quem cria já sai logado: o cadastro termina com a mesma sessão do login, e
@@ -302,7 +308,7 @@ export async function handleHttp(
       send(res, 503, { ok: false, error: "Sessão desligada neste servidor." });
       return true;
     }
-    if (!registrationOpen) {
+    if (!registrationOpen()) {
       send(res, 403, { ok: false, error: "Cadastro fechado neste servidor." });
       return true;
     }
@@ -348,16 +354,17 @@ export async function handleHttp(
     return true;
   }
 
-  // ── Painel do administrador (ADRs #23 e #24) ──
+  // ── Painel do administrador (ADRs #23, #24 e #25) ──
   //
-  // Três rotas: listar contas, definir senha e delegar a administração. O resto
-  // que parecia "administração" já tem lugar melhor — papel é vínculo (ADR #22),
-  // apagar missão é do dono (ADR #18), e apagar conta deixaria missão órfã.
+  // Listar contas, definir senha, delegar a administração — e a configuração
+  // viva do servidor (cadastro e sala da casa). O resto que parecia
+  // "administração" já tem lugar melhor: papel é vínculo (ADR #22), apagar
+  // missão é do dono (ADR #18), e apagar conta deixaria missão órfã.
   //
   // A checagem é aqui, não no cliente: a tela só esconde o link, quem decide é
   // o servidor. O nome vem do cookie assinado; a flag de admin delegado vem do
   // banco (ADR #24), para valer na hora.
-  if (path === "/admin/accounts" || path.startsWith("/admin/accounts/")) {
+  if (path.startsWith("/admin/")) {
     const session = sessionOf(req);
     if (!session) {
       send(res, 401, { ok: false, error: "Entre com sua conta para isso." });
@@ -445,6 +452,73 @@ export async function handleHttp(
         `[admin] ${body.admin ? "deu" : "tirou"} admin: ${name} (por ${session.name})`,
       );
       send(res, 200, { ok: true, name, admin: body.admin });
+      return true;
+    }
+
+    // Configuração viva (ADR #25): cadastro e sala da casa.
+    if (path === "/admin/settings" && method === "GET") {
+      const live = settings();
+      send(res, 200, {
+        ok: true,
+        settings: {
+          registration: live.registrationOpen ? "open" : "closed",
+          defaultRoom: live.defaultRoom,
+        },
+      });
+      return true;
+    }
+
+    if (path === "/admin/settings" && method === "POST") {
+      const body = await readJson(req);
+      const registration =
+        typeof body?.registration === "boolean" ? body.registration : undefined;
+      const roomInput = typeof body?.defaultRoom === "string" ? body.defaultRoom : undefined;
+      if (registration === undefined && roomInput === undefined) {
+        send(res, 400, { ok: false, error: "Nada para mudar." });
+        return true;
+      }
+
+      const patch: { registration?: boolean; defaultRoom?: string } = {};
+      if (roomInput !== undefined) {
+        const room = normalizeCode(roomInput);
+        // Sala da casa é um convite de um clique: apontar para um selo que não
+        // existe só daria erro na cara de quem clicasse. "Banco fora" não é
+        // veredito (ADR #17), e aí o `saveSettings` é quem recusa.
+        if (room !== "") {
+          const lookup = await findCampaign(room, "");
+          if (lookup.checked && !lookup.campaign) {
+            send(res, 404, { ok: false, error: `Não existe missão com o selo "${room}".` });
+            return true;
+          }
+        }
+        patch.defaultRoom = room;
+      }
+      if (registration !== undefined) patch.registration = registration;
+
+      if (!(await saveSettings(patch))) {
+        send(res, 503, { ok: false, error: "Banco indisponível: não deu para salvar." });
+        return true;
+      }
+
+      if (patch.registration !== undefined) {
+        console.log(
+          `[admin] cadastro ${patch.registration ? "aberto" : "fechado"} (por ${session.name})`,
+        );
+      }
+      if (patch.defaultRoom !== undefined) {
+        console.log(
+          `[admin] sala da casa: ${patch.defaultRoom || "nenhuma"} (por ${session.name})`,
+        );
+      }
+
+      const live = settings();
+      send(res, 200, {
+        ok: true,
+        settings: {
+          registration: live.registrationOpen ? "open" : "closed",
+          defaultRoom: live.defaultRoom,
+        },
+      });
       return true;
     }
   }

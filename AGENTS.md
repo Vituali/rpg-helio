@@ -41,7 +41,8 @@ Servidor autoritativo de eventos em tempo real e persistência com fallback suav
 - [`validate.ts`](file:///c:/Users/Miiyh/Documents/GitHub/HELIO/server/src/validate.ts): Regras autoritativas de movimentação (`canMove`) verificando dono do token, paredes, permissão global e alcance de 1 passo.
 - [`accounts.ts`](file:///c:/Users/Miiyh/Documents/GitHub/HELIO/server/src/accounts.ts): Gestão de contas de usuário e vinculações de membros a campanhas (`membership`).
 - [`auth.ts`](file:///c:/Users/Miiyh/Documents/GitHub/HELIO/server/src/auth.ts): Criptografia de senhas com `scrypt`, emissão e validação de cookies de sessão assinados com `HMAC-SHA256`.
-- [`http.ts`](file:///c:/Users/Miiyh/Documents/GitHub/HELIO/server/src/http.ts): Rotas REST para login (`/auth/login`), cadastro (`/auth/signup`), logout, listagem e criação de campanhas (`/campaigns`).
+- [`http.ts`](file:///c:/Users/Miiyh/Documents/GitHub/HELIO/server/src/http.ts): Rotas REST de autenticação (`/auth/*`), configuração pública (`/api/settings`), campanhas (`/campaigns`), papéis (`/campaigns/:selo/role`) e painel do administrador (`/admin/*`: contas, senha, delegação e configuração viva).
+- [`settings.ts`](file:///c:/Users/Miiyh/Documents/GitHub/HELIO/server/src/settings.ts): Configuração viva do servidor (ADR #25) — cadastro aberto/fechado e sala da casa, persistidos em `app_setting` e aplicados sem restart; o `.env` é o padrão de fábrica.
 - [`db.ts`](file:///c:/Users/Miiyh/Documents/GitHub/HELIO/server/src/db.ts): Pool do Postgres (`pg`) com wrapper seguro `tryQuery` para não derrubar o servidor em caso de indisponibilidade do banco.
 - [`migrate.ts`](file:///c:/Users/Miiyh/Documents/GitHub/HELIO/server/src/migrate.ts): Executor de migrações SQL versionadas presentes em `server/migrations/`.
 - [`selo.ts`](file:///c:/Users/Miiyh/Documents/GitHub/HELIO/server/src/selo.ts): Gerador e normalizador de Selos de Missão mnemônicos (ex: `CORVO-AMBAR-VEU-74`).
@@ -54,8 +55,8 @@ Aplicação SPA com React 19, Zustand e renderizador Canvas 2D.
 - **Telas Principais**:
   - [`App.tsx`](file:///c:/Users/Miiyh/Documents/GitHub/HELIO/client/src/App.tsx): Roteamento (`/entrar`, `/mesa`, `/`, `/local`, `/admin`).
   - [`screens/Entrar.tsx`](file:///c:/Users/Miiyh/Documents/GitHub/HELIO/client/src/screens/Entrar.tsx): Tela 1 — Autenticação (Login e Criação de Conta na Ordem).
-  - [`screens/Mesa.tsx`](file:///c:/Users/Miiyh/Documents/GitHub/HELIO/client/src/screens/Mesa.tsx): Tela 2 — Seleção de Missão/Selo (`SANTO-CULTO-TUBARAO-26`), identificação do papel (`mestre` ou `agente`) e conexão.
-  - [`screens/Admin.tsx`](file:///c:/Users/Miiyh/Documents/GitHub/HELIO/client/src/screens/Admin.tsx): Painel de administração para redefinição de senhas de contas.
+  - [`screens/Mesa.tsx`](file:///c:/Users/Miiyh/Documents/GitHub/HELIO/client/src/screens/Mesa.tsx): Tela 2 — Seleção de Missão/Selo (último usado, missão mais recente ou a sala da casa definida no painel), identificação do papel (`mestre` ou `agente`) e conexão.
+  - [`screens/Admin.tsx`](file:///c:/Users/Miiyh/Documents/GitHub/HELIO/client/src/screens/Admin.tsx): Painel de administração — redefinição de senhas, delegação de admin e configuração do servidor (cadastro e sala da casa).
   - [`screens/Shell.tsx`](file:///c:/Users/Miiyh/Documents/GitHub/HELIO/client/src/screens/Shell.tsx): Wrapper visual estilizado com estética paranormal esotérica para as telas de entrada.
 - **Componentes do Tabuleiro**:
   - [`components/FogWarMap.tsx`](file:///c:/Users/Miiyh/Documents/GitHub/HELIO/client/src/components/FogWarMap.tsx): O componente central da mesa virtual.

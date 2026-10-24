@@ -4,6 +4,7 @@ import { Navigate, Link, useNavigate } from "react-router-dom";
 import {
   createCampaign,
   deleteCampaign,
+  getSettings,
   listCampaigns,
   logout,
   type Campaign,
@@ -53,9 +54,11 @@ export default function Mesa() {
   const status = useNetStore((s) => s.status);
 
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
-  const [code, setCode] = useState(
-    () => localStorage.getItem(SELO_STORAGE) ?? "SANTO-CULTO-TUBARAO-26",
-  );
+  // Sem selo fixo no cliente (ADR #25): vale o último usado neste navegador e,
+  // se não houver, a missão mais recente — o servidor diz isso na lista.
+  const [code, setCode] = useState(() => localStorage.getItem(SELO_STORAGE) ?? "");
+  /** Sala da casa, definida no painel; vazio = nenhuma. */
+  const [casa, setCasa] = useState("");
   const [gmKey, setGmKey] = useState(() => localStorage.getItem(GMKEY_STORAGE) ?? "");
   const [showKey, setShowKey] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -73,8 +76,13 @@ export default function Mesa() {
     // Sem conta não há lista (e a guarda abaixo já leva para /entrar).
     if (!account) return;
     let alive = true;
-    void listCampaigns().then((list) => {
-      if (alive) setCampaigns(list);
+    void Promise.all([listCampaigns(), getSettings()]).then(([list, cfg]) => {
+      if (!alive) return;
+      setCampaigns(list);
+      setCasa(cfg.defaultRoom);
+      // Selo salvo vence; sem ele, a missão mais recente. O cliente não guarda
+      // um código fixo — quem diz qual é a mesa é o servidor (ADR #25).
+      setCode((atual) => (atual !== "" ? atual : (list[0]?.code ?? cfg.defaultRoom)));
     });
     return () => {
       alive = false;
@@ -354,7 +362,15 @@ export default function Mesa() {
               })}
             </div>
           ) : (
-            /* Botão de atalho rápido para a sessão oficial Santo Culto Tubarão 26 */
+            <div style={{ fontSize: 11, color: "#7e6ea8" }}>
+              Você ainda não tem missão. Crie a primeira abaixo.
+            </div>
+          )}
+
+          {/* Sala da casa (ADR #25): o atalho que o painel define, para quem
+              ainda não é membro. Nada de selo fixo no cliente — o código vem do
+              servidor e pode mudar sem rebuild. */}
+          {casa !== "" && !campaigns.some((c) => c.code === casa) && (
             <div
               style={{
                 display: "flex",
@@ -366,18 +382,38 @@ export default function Mesa() {
                 border: "1px dashed rgba(245, 158, 11, 0.35)",
               }}
             >
-              <div style={{ fontSize: 11, color: "#d8cef0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <span>Sessão Principal (Padrão)</span>
-                <span style={{ fontSize: 9, color: "#a855f7", textTransform: "uppercase" }}>Ordem</span>
+              <div
+                style={{
+                  fontSize: 11,
+                  color: "#d8cef0",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                }}
+              >
+                <span>Sala da casa</span>
+                <span style={{ fontSize: 9, color: "#a855f7", textTransform: "uppercase" }}>
+                  atalho
+                </span>
               </div>
               <button
                 type="button"
                 className="occult-btn occult-btn--gold"
-                style={{ padding: "6px 10px", fontSize: 11, justifyContent: "flex-start", width: "100%" }}
-                onClick={() => setCode("SANTO-CULTO-TUBARAO-26")}
+                title="Entrar na missão que o administrador marcou como a mesa do grupo"
+                style={{
+                  padding: "6px 10px",
+                  fontSize: 11,
+                  justifyContent: "flex-start",
+                  width: "100%",
+                  fontFamily: "var(--font-mono)",
+                }}
+                onClick={() => {
+                  setCode(casa);
+                  setSeloNovo("");
+                }}
               >
                 <IconSigil size={13} />
-                <span>SANTO-CULTO-TUBARAO-26</span>
+                <span>{casa}</span>
               </button>
             </div>
           )}
@@ -416,13 +452,7 @@ export default function Mesa() {
 
           {missaoError ? (
             <div style={{ fontSize: 11, color: "#fca5a5" }}>{missaoError}</div>
-          ) : (
-            campaigns.length === 0 && (
-              <div style={{ fontSize: 10, color: "#7e6ea8", lineHeight: 1.4 }}>
-                Nenhuma missão ainda. Crie uma e o selo sai pronto para ditar.
-              </div>
-            )
-          )}
+          ) : null}
         </div>
 
         {/* Identificação na Ordem — quem entra. O nome é o da conta. */}

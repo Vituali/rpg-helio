@@ -6,9 +6,10 @@
  *
  *   /api/auth/*       entrar, sair e "quem sou eu" (ADR #16)
  *   /api/accounts     criar conta (ADR #19)
+ *   /api/settings     o que o servidor oferece hoje (ADR #25)
  *   /api/campaigns    criar, listar e apagar missões (ADR #18)
  *   /api/campaigns/:selo/role   dar/tirar o papel de mestre (ADR #22)
- *   /api/admin/*      listar contas e trocar senha (ADR #23)
+ *   /api/admin/*      contas, senha, administração e configuração (ADRs #23–#25)
  *
  * O cookie de sessão vai e volta sozinho (mesma origem), e é ele que o Socket.IO
  * lê no handshake — depois do login, o `connect()` não precisa saber de nada
@@ -102,6 +103,30 @@ export async function loadSession(): Promise<SessionInfo> {
   if (!body) return { account: null, signup: false };
   const account = body.ok ? ((body.account as Account | undefined) ?? null) : null;
   return { account, signup: body.signup === true };
+}
+
+/** O que o servidor oferece agora — sem sessão (ADR #25). */
+export interface ServerSettings {
+  /** Aceita conta nova neste instante? */
+  signup: boolean;
+  /** Selo da "sala da casa"; vazio = nenhuma. */
+  defaultRoom: string;
+}
+
+/**
+ * Configuração pública do servidor (ADR #25).
+ *
+ * Separada do `/auth/me` porque o lobby pergunta antes (e independente) de haver
+ * login. `defaultRoom` é o selo que o painel marcou como a mesa do grupo; quem
+ * ainda não é membro vê um atalho para ele.
+ */
+export async function getSettings(): Promise<ServerSettings> {
+  const body = await request("/api/settings");
+  if (!body) return { signup: false, defaultRoom: "" };
+  return {
+    signup: body.signup === true,
+    defaultRoom: typeof body.defaultRoom === "string" ? body.defaultRoom : "",
+  };
 }
 
 export async function login(name: string, password: string): Promise<AuthResult> {
@@ -270,4 +295,54 @@ export async function setAccountAdmin(
     return { ok: false, error: String(body.error ?? "Não deu para mudar a administração.") };
   }
   return { ok: true };
+}
+
+/** A configuração do servidor como o painel a vê (ADR #25). */
+export interface AdminSettings {
+  registration: "open" | "closed";
+  /** Selo da sala da casa; vazio = nenhuma. */
+  defaultRoom: string;
+}
+
+export interface AdminSettingsResult {
+  ok: boolean;
+  settings?: AdminSettings;
+  error?: string;
+}
+
+function readSettings(body: Record<string, unknown> | null): AdminSettingsResult {
+  if (!body) return { ok: false, error: "Servidor não respondeu." };
+  if (!body.ok) {
+    return { ok: false, error: String(body.error ?? "Não deu para falar da configuração.") };
+  }
+  const raw = (body.settings ?? {}) as Partial<AdminSettings>;
+  return {
+    ok: true,
+    settings: {
+      registration: raw.registration === "closed" ? "closed" : "open",
+      defaultRoom: typeof raw.defaultRoom === "string" ? raw.defaultRoom : "",
+    },
+  };
+}
+
+export async function getAdminSettings(): Promise<AdminSettingsResult> {
+  return readSettings(await request("/api/admin/settings"));
+}
+
+/**
+ * Muda cadastro e/ou sala da casa (ADR #25). Vale na hora, sem restart.
+ *
+ * A sala da casa é validada no servidor: selo inexistente dá 404 em vez de virar
+ * um atalho que não abre.
+ */
+export async function saveAdminSettings(patch: {
+  registration?: boolean;
+  defaultRoom?: string;
+}): Promise<AdminSettingsResult> {
+  return readSettings(
+    await request("/api/admin/settings", {
+      method: "POST",
+      body: JSON.stringify(patch),
+    }),
+  );
 }

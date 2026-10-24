@@ -50,10 +50,12 @@ Portado para o projeto de verdade:
 - **Conta e persistência**: Postgres guarda conta, missão e cena — o F5 e o restart do container não
   apagam a mesa. A **conta é obrigatória** (não existe convidado), o nome na mesa é o da conta e o papel
   de mestre vem do **vínculo** com a missão — e o mestre pode **promover** um agente na hora. A conta
-  `admin` troca senha e delega a administração em `/admin` (não há "esqueci minha senha" automático).
-  `GM_KEY` é legado, mantido até existir recuperação de senha self-service e revogação de sessão.
-- **Páginas de verdade**: `/entrar` (conta), `/mesa` (missão), `/admin` (senhas, só a conta admin), `/`
-  (a mesa) e `/local` (preparar sem servidor) — cada uma com URL própria e uma pergunta só.
+  `admin` troca senha, delega a administração e muda cadastro e sala da casa em `/admin`, na hora (não há
+  "esqueci minha senha" automático). `GM_KEY` é legado, mantido até existir recuperação de senha
+  self-service e revogação de sessão.
+- **Páginas de verdade**: `/entrar` (conta), `/mesa` (missão), `/admin` (senhas e configuração, só a
+  conta admin), `/` (a mesa) e `/local` (preparar sem servidor) — cada uma com URL própria e uma pergunta
+  só.
 
 O que ainda falta está em [`docs/ROADMAP.md`](docs/ROADMAP.md), e o quadro do momento em
 [`docs/KANBAN.md`](docs/KANBAN.md). O próximo item é o fog por jogador (Fase 3).

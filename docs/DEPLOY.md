@@ -307,8 +307,9 @@ Três variáveis novas no `.env` (detalhe em `.env.example`):
 | `SESSION_SECRET` | assina o cookie de sessão (ADR #16) — **sem ela ninguém entra** |
 | `SEED_MASTER_USER` / `SEED_MASTER_PASS` | conta de mestre criada no primeiro boot, se não existir |
 | `GM_KEY` | escapatória de mestre, opcional; **vazia = nenhuma escapatória** (ADR #20) |
-| `REGISTRATION` / `REGISTER_PER_MINUTE` | cadastro de conta aberto ou fechado, e o teto por minuto (ADR #19) |
+| `REGISTRATION` / `REGISTER_PER_MINUTE` | cadastro de conta (padrão de fábrica; o painel `/admin` muda na hora, ADR #25) e o teto por minuto (ADR #19) |
 | `ADMIN_ACCOUNT` | nome da conta que abre `/admin` e troca senha (ADR #23); padrão `admin`, vazio desliga |
+| `ROOM_CODE` | **sala da casa**: o selo do atalho do lobby, criado só no boot de um banco vazio (ADR #25) |
 
 A porta 5432 é publicada **só no loopback** (`127.0.0.1`): dá para abrir um cliente de banco nesta
 máquina, mas nada na rede alcança. É de propósito — um banco com senha não é lugar para repetir a
@@ -339,7 +340,7 @@ A entrada tem duas telas (ADR #21), e cada uma faz uma pergunta:
 |---|---|---|
 | `/entrar` | *quem é você?* | entrar ou criar conta; endereço do servidor em "opções avançadas"; link do modo local |
 | `/mesa` | *em qual missão?* | a conta (e **Sair**), as missões com criar/escolher/apagar, a "Identificação na Ordem" só leitura, o selo e **Ingressar** |
-| `/admin` | *cuidar das contas* | lista de contas (com o último acesso), troca de senha e delegação — **só administradores** (ADRs #23 e #24) |
+| `/admin` | *cuidar das contas* | lista de contas (com o último acesso), troca de senha, delegação e a configuração do servidor (cadastro e sala da casa) — **só administradores** (ADRs #23–#25) |
 | `/` | *a mesa* | o mapa, só com conexão viva |
 | `/local` | *preparar sozinho* | o mapa sem servidor |
 
@@ -354,9 +355,11 @@ Três consequências práticas:
 - **Selo errado não abre a mesa**, e não cria nada — a mensagem diz para conferir com o mestre. Errar
   20 vezes na mesma conexão derruba a conexão.
 - **Perdeu o selo?** Ele está na lista *Missões de \<conta\>* em `/mesa`, para quem está logado.
-- **`ROOM_CODE` é só o selo sugerido.** Ele é criado no boot **quando o banco está vazio** (primeiro
-  boot), para o grupo não precisar criar a missão antes de entrar. Com outras missões já existindo,
-  apagar a padrão funciona e ela não volta.
+- **Sala nova não precisa de `.env`.** Cada missão criada em `/mesa` é uma sala com o próprio selo —
+  quantas quiser, ao mesmo tempo. O `ROOM_CODE` é só a **sala da casa**: o atalho que o lobby mostra a quem
+  ainda não é membro. Ele é criado no boot **quando o banco está vazio** (para o grupo não precisar criar a
+  primeira missão), e a sala da casa pode ser trocada no painel `/admin` sem restart (ADR #25). Com outras
+  missões já existindo, apagar a padrão funciona e ela não volta.
 
 ### O cadastro de conta (entregas 4 e 5)
 
@@ -365,28 +368,24 @@ deixa a pessoa logada. Com conta, o nome não é redigitado a cada sessão e o *
 vínculo com a missão** — sem a senha compartilhada. **Sem conta não se entra**: o caminho do convidado
 foi fechado (ADR #20).
 
-O cadastro nasce **aberto**, com teto de tentativas e um interruptor:
+O cadastro nasce **aberto**, com teto de tentativas e um interruptor no painel:
 
 | Variável | Padrão | Para que |
 |---|---|---|
-| `REGISTRATION` | `open` | `closed` fecha o cadastro: `/entrar` para de oferecer "criar conta" e o servidor responde 403 |
+| `REGISTRATION` | `open` | **padrão de fábrica** do cadastro: `closed` nasce com a porta fechada. O painel `/admin` muda na hora (ADR #25) |
 | `REGISTER_PER_MINUTE` | `10` | teto global de cadastros por minuto (contra entupir o `scrypt`) |
 
-**Quando o grupo todo tiver conta, feche a porta** — é uma linha no `deploy/.env` e um restart:
-
-```powershell
-# em deploy/.env
-REGISTRATION=closed
-
-docker compose up -d app     # o log deve dizer: cadastro: FECHADO
-```
+**Quando o grupo todo tiver conta, feche a porta** — em `/admin`, no cartão **Cadastro**, um clique. Vale na
+hora: o servidor responde 403 a `POST /api/accounts` e a tela de entrada para de oferecer "criar conta" sem
+ninguém precisar recarregar o `.env` (ADR #25). O `REGISTRATION` do `.env` continua sendo o padrão para um
+banco novo ou para quando o banco está fora.
 
 Entrar continua funcionando; só criar conta nova é que para. **Desde a entrega 5, fechar o cadastro é
 fechar a porta para gente nova**: quem ainda não tem conta não tem como entrar. Se alguém novo chegar
-depois, reabra, deixe a pessoa se cadastrar e feche de novo. Fechar o cadastro **não** protege a mesa
-(quem protege é o selo), mas corta a única porta que um estranho com a URL pode usar sem convite.
+depois, abra pelo painel, deixe a pessoa se cadastrar e feche de novo. Fechar o cadastro **não** protege a
+mesa (quem protege é o selo), mas corta a única porta que um estranho com a URL pode usar sem convite.
 
-### Senha esquecida: o painel do administrador (ADRs #23 e #24)
+### Senha esquecida e configuração: o painel do administrador (ADRs #23–#25)
 
 Não existe "esqueci minha senha" automático. O caminho de volta é **`/admin`**, aberto para a conta
 **raiz** — cujo nome é `ADMIN_ACCOUNT` (padrão `admin`) — e para quem ela **delegar**:
@@ -397,6 +396,15 @@ Não existe "esqueci minha senha" automático. O caminho de volta é **`/admin`*
 
 A lista mostra nome, missões que a conta possui, mesas em que tem vínculo e **quando entrou pela última
 vez** — o suficiente para não mexer na conta errada. O campo de filtro acha a pessoa sem rolar a lista.
+
+**Configuração do servidor.** Acima da lista, o cartão **Cadastro** abre e fecha o cadastro de conta na hora,
+e **Sala da casa** troca o selo que o lobby oferece a quem ainda não é membro (vazio = nenhum atalho). As
+duas mudanças valem **sem restart** e ficam gravadas no banco (ADR #25); o `.env` é só o padrão de fábrica.
+Se o banco estiver fora, o servidor recusa a mudança (503) em vez de fingir que trocou.
+
+**Sala da casa não é "a única sala".** Missões continuam sendo criadas em `/mesa`, quantas quiser — cada uma
+é uma mesa com o próprio selo. A sala da casa é só o atalho de um clique para o grupo novo, e pode apontar
+para qualquer missão existente (o servidor recusa selo que não existe).
 
 **Delegar administração.** O cadeado à direita de cada conta dá ou tira a administração na hora. A conta
 que recebeu passa a ver o link *Painel* ao recarregar a página; o servidor confere a cada chamada, então
@@ -418,8 +426,9 @@ consequências:
   missão (ADRs #19 e #22), não deste nome.
 - **Quem criar a conta primeiro, é o administrador.** Se o cadastro estiver aberto e ninguém tiver essa
   conta ainda, um estranho com a URL pode criá-la. Por isso: use uma senha boa e mantenha o cadastro
-  fechado quando o grupo todo já tiver conta (`REGISTRATION=closed`). Se quiser outro nome para a raiz,
-  defina `ADMIN_ACCOUNT` no `deploy/.env`; vazio desliga o painel.
+  fechado quando o grupo todo já tiver conta (**um clique no painel**, ou `REGISTRATION=closed` como padrão
+  de fábrica). Se quiser outro nome para a raiz, defina `ADMIN_ACCOUNT` no `deploy/.env`; vazio desliga o
+  painel.
 
 ### Backup
 
