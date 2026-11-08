@@ -227,6 +227,29 @@ export async function deleteCampaign(
   return "ok";
 }
 
+/** Renomeia uma campanha. Só o dono (gm_account_id) pode. */
+export async function renameCampaign(
+  code: string,
+  gmAccountId: string,
+  name: string,
+): Promise<"ok" | "notfound" | "error"> {
+  if (!dbEnabled) return "error";
+  const trimmed = name.trim().slice(0, 40);
+  if (trimmed === "") return "error";
+  const rows = await tryQuery<{ id: string }>(
+    `update campaign
+     set name = $1
+     where code = $2 and gm_account_id = $3
+     returning id`,
+    [trimmed, code, gmAccountId],
+    `renomear campanha ${code}`,
+  );
+  if (rows === null) return "error";
+  if (!rows[0]) return "notfound";
+  console.log(`[campanha] renomeada: ${code} -> "${trimmed}"`);
+  return "ok";
+}
+
 export type RoleResult = "ok" | "notfound" | "account" | "owner" | "error";
 
 /**
@@ -379,6 +402,8 @@ interface PersistedScene {
   actors: PersistedActor[];
   sectors: Sector[];
   savedMaps?: Record<string, PersistedMapState>;
+  handouts: { id: string; title: string; content: string; to: string[] }[];
+  initiative?: { order: string[]; currentIndex: number };
 }
 
 export function persistableScene(room: Room): PersistedScene {
@@ -401,6 +426,8 @@ export function persistableScene(room: Room): PersistedScene {
       .map(({ ownerId: _o, path: _p, ...rest }) => rest),
     sectors: s.sectors,
     savedMaps: s.savedMaps ?? {},
+    handouts: s.handouts ?? [],
+    initiative: s.initiative,
   };
 }
 
@@ -491,6 +518,24 @@ export function sceneFromPersisted(raw: unknown): ServerScene | null {
 
   if (d.savedMaps && typeof d.savedMaps === "object") {
     scene.savedMaps = d.savedMaps as Record<string, PersistedMapState>;
+  }
+
+  if (Array.isArray(d.handouts)) {
+    scene.handouts = d.handouts.filter(
+      (h): h is { id: string; title: string; content: string; to: string[] } =>
+        typeof h?.id === "string" &&
+        typeof h?.title === "string" &&
+        typeof h?.content === "string" &&
+        Array.isArray(h.to) &&
+        h.to.every((t): t is string => typeof t === "string"),
+    );
+  }
+
+  if (d.initiative && Array.isArray(d.initiative.order) && typeof d.initiative.currentIndex === "number") {
+    scene.initiative = {
+      order: d.initiative.order.filter((o): o is string => typeof o === "string"),
+      currentIndex: Math.max(0, Math.min(d.initiative.currentIndex, d.initiative.order.length - 1 || 0)),
+    };
   }
 
   return scene;

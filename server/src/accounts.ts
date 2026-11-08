@@ -233,3 +233,15 @@ export async function setAccountAdmin(
   if (rows === null) return "error";
   return rows[0] ? "ok" : "notfound";
 }
+
+/** Exclui uma conta. Não apaga a conta raiz de administração. */
+export async function deleteAccount(name: string): Promise<"ok" | "notfound" | "error"> {
+  if (!dbEnabled) return "error";
+  const rows = await tryQuery<{ name: string }>(
+    `delete from account where lower(name) = lower($1) returning name`,
+    [name],
+    `apagar conta ${name}`,
+  );
+  if (rows === null) return "error";
+  return rows[0] ? "ok" : "notfound";
+}

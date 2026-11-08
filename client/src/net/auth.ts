@@ -191,6 +191,29 @@ export async function deleteCampaign(code: string): Promise<CampaignsResult> {
   return { ok: true };
 }
 
+export async function renameCampaign(code: string, name: string): Promise<CampaignsResult> {
+  const body = await request(
+    `/api/campaigns/${encodeURIComponent(code)}/name`,
+    { method: "PATCH", body: JSON.stringify({ name }) },
+  );
+  if (!body) return { ok: false, error: "Servidor não respondeu." };
+  if (!body.ok) {
+    return { ok: false, error: String(body.error ?? "Não foi possível renomear a missão.") };
+  }
+  return { ok: true, campaign: body.campaign as Campaign };
+}
+
+export async function deleteAccount(name: string): Promise<{ ok: boolean; error?: string }> {
+  const body = await request(`/admin/accounts/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  });
+  if (!body) return { ok: false, error: "Servidor não respondeu." };
+  if (!body.ok) {
+    return { ok: false, error: String(body.error ?? "Não foi possível excluir a conta.") };
+  }
+  return { ok: true };
+}
+
 /**
  * Dá ou tira o papel de mestre de uma conta nesta missão (ADR #22).
  *

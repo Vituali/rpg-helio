@@ -483,3 +483,33 @@ export function IconTeleport({ size = 16, ...props }: IconProps) {
     </svg>
   );
 }
+
+/** Enviar mensagem */
+export function IconSend({ size = 14, ...props }: IconProps) {
+  return (
+    <svg {...base(size, props)}>
+      <path d="M5 4l4.5 6-4.5 6L5 20v-4H2l7-6-7-6H5z" />
+    </svg>
+  );
+}
+
+/** Disquete / Salvar */
+export function IconSave({ size = 14, ...props }: IconProps) {
+  return (
+    <svg {...base(size, props)}>
+      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z" />
+      <polyline points="17 21 17 13 7 13 7 21" />
+      <polyline points="7 3 7 8 15 8" />
+    </svg>
+  );
+}
+
+/** Balão de conversa */
+export function IconChat({ size = 14, ...props }: IconProps) {
+  return (
+    <svg {...base(size, props)}>
+      <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7c-5.8 0-10.4-4.6-10.4-10.4a9.8 9.8 0 0 1 1-2.9 8.5 8.5 0 0 1 2.2-3.6 8.5 8.5 0 0 1 3-2.4c.7-.2 1.5-.4 2.2-.4z" />
+      <path d="M23 11a10 10 0 0 0-.69-2.81L18.6 4.6a23 23 0 0 0-2.74-1.12c-3.42-.51-6.92-.52-10.32-.15a23 23 0 0 0-2.89 1.09L5 11l5 2.5a10 10 0 0 0 5 1.26c2.74 0 5.4-.59 7.89-1.71l3.62-2.5A23 23 0 0 0 23 11z" />
+    </svg>
+  );
+}

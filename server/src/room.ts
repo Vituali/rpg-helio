@@ -5,7 +5,7 @@ import {
   makeFog,
   makeWalls,
 } from "@helio/shared";
-import type { Actor, Facing, FogMode, Role, Sector } from "@helio/shared";
+import type { Actor, Facing, FogMode, Handout, Initiative, Role, Sector } from "@helio/shared";
 
 export interface MapState {
   cols: number;
@@ -49,6 +49,10 @@ export interface ServerScene {
   version: number;
   /** Estados independentes por cenário/mapa (armazenados pelo bgImage) */
   savedMaps?: Record<string, MapState>;
+  /** Handouts entregues pelo mestre a jogadores específicos. */
+  handouts: Handout[];
+  /** Ordem de turno da mesa. */
+  initiative?: Initiative;
 }
 
 export interface Player {
@@ -122,6 +126,8 @@ export function createScene(): ServerScene {
     sectors: [],
     version: 0,
     savedMaps: {},
+    handouts: [],
+    initiative: { order: [], currentIndex: 0 },
   };
 }
 

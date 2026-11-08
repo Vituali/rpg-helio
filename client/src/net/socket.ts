@@ -12,7 +12,7 @@
 
 import { io, type Socket } from "socket.io-client";
 import { FOG_NONE, FOG_VIS } from "@helio/shared";
-import type { Cell } from "@helio/shared";
+import type { Cell, ChatMessage } from "@helio/shared";
 import { useGameStore, type ServerScene } from "../state/gameStore";
 import { flashNotice, useNetStore, type NetPlayer } from "../state/netStore";
 import { setSender } from "./bridge";
@@ -88,6 +88,10 @@ export function connect(opts: JoinOptions): void {
 
   s.on("room:state", (state: ServerState) => applyState(state));
 
+  s.on("chat:message", (msg: ChatMessage) => {
+    useNetStore.getState().addMessage(msg);
+  });
+
   s.on("error", (e: { code?: string; msg?: string; actorId?: string }) => {
     flashNotice(e?.msg ?? "Ação recusada pelo servidor.");
     if (e?.code === "MOVE_DENIED" && e.actorId) {
@@ -117,6 +121,11 @@ export function disconnect(): void {
 // ── Interno ──────────────────────────────────────────────────────────────────
 function sendIntent(event: string, payload: unknown): void {
   socket?.emit(event, payload);
+}
+
+/** Envia uma mensagem de chat para a sala. */
+export function sendChat(text: string): void {
+  sendIntent("chat:message", { text });
 }
 
 function applyState(state: ServerState): void {

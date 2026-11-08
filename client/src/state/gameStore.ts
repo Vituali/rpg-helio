@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
+import type { Handout, Initiative } from "@helio/shared";
 import {
   ACTOR_COLORS,
   DEFAULT_CELL,
@@ -54,6 +55,8 @@ export interface ServerScene {
   actors: Actor[];
   sectors: Sector[];
   version: number;
+  handouts: Handout[];
+  initiative?: Initiative;
 }
 
 /** Todas as células do mapa — para "limpar paredes" / "esconder fog". */
@@ -111,6 +114,10 @@ export interface GameState {
   edgeWindows: string[];
   actors: Actor[];
   sectors: Sector[];
+  /** Handouts entregues pelo mestre (filtrados pelo cliente por destinatário). */
+  handouts: Handout[];
+  /** Ordem de turno da mesa. */
+  initiative?: Initiative;
 
   // seleção
   activeActorId: string | null;
@@ -181,6 +188,8 @@ export const useGameStore = create<GameState>()(
       edgeWindows: [],
       actors: INITIAL_ACTORS,
       sectors: [],
+      handouts: [],
+      initiative: { order: [], currentIndex: 0 },
 
       activeActorId: INITIAL_ACTORS[0].id,
 
@@ -572,6 +581,8 @@ export const useGameStore = create<GameState>()(
             edgeWalls: scene.edgeWalls ?? [],
             edgeWindows: scene.edgeWindows ?? [],
             sectors: scene.sectors,
+            handouts: scene.handouts ?? [],
+            initiative: scene.initiative ?? { order: [], currentIndex: 0 },
             // O servidor guarda o fog no mesmo formato do cliente (0/1/3);
             // a visão atual (2) é recalculada logo abaixo.
             fog: scene.fogExplored,

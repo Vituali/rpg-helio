@@ -10,6 +10,7 @@ import {
   getSettings,
   listCampaigns,
   logout,
+  renameCampaign,
   type Campaign,
 } from "../net/auth";
 import { connect } from "../net/socket";
@@ -67,6 +68,8 @@ export default function Mesa() {
   const [showKey, setShowKey] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [missaoError, setMissaoError] = useState("");
+  const [novoNomeDaMissao, setNovoNomeDaMissao] = useState("");
+  const [renomeando, setRenomeando] = useState(false);
   /** Selo recém-criado, para destacar o que o mestre precisa ditar. */
   const [seloNovo, setSeloNovo] = useState("");
 
@@ -86,6 +89,19 @@ export default function Mesa() {
       await reloadCampaigns();
     } else {
       setMissaoError(result.error ?? "Não foi possível criar a missão.");
+    }
+  };
+
+  const onRenomearMissao = async () => {
+    if (!code.trim()) return;
+    setRenomeando(true);
+    const result = await renameCampaign(code, novoNomeDaMissao.trim());
+    setRenomeando(false);
+    if (result.ok) {
+      await reloadCampaigns();
+      setNovoNomeDaMissao("");
+    } else {
+      setMissaoError(result.error ?? "Não foi possível renomear a missão.");
     }
   };
 
@@ -454,6 +470,35 @@ export default function Mesa() {
               </button>
             </form>
           </div>
+
+          {/* Renomear missão (só o mestre da missão selecionada) */}
+          {campaigns.some((c) => c.code === code && c.role === "gm") && (
+            <div style={{ display: "flex", gap: 6, marginTop: 10, paddingTop: 8, borderTop: "1px dashed rgba(245, 158, 11, 0.25)" }}>
+              <input
+                className="occult-input"
+                value={novoNomeDaMissao}
+                onChange={(e) => setNovoNomeDaMissao(e.target.value)}
+                placeholder="Novo nome da missão"
+                maxLength={40}
+                disabled={renomeando}
+                style={{
+                  padding: "7px 9px",
+                  fontSize: 12,
+                  flex: 1,
+                  minWidth: 0,
+                }}
+              />
+              <button
+                type="button"
+                onClick={onRenomearMissao}
+                disabled={renomeando || !novoNomeDaMissao.trim()}
+                className="occult-btn occult-btn--gold"
+                style={{ padding: "7px 12px", fontSize: 12, flexShrink: 0 }}
+              >
+                {renomeando ? "…" : "Renomear"}
+              </button>
+            </div>
+          )}
 
           {seloNovo && (
             <div style={{ fontSize: 11, color: "#fde68a", lineHeight: 1.5 }}>

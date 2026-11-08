@@ -43,6 +43,8 @@ export interface Actor {
   canMove: boolean;
   /** Fila de células a percorrer (predição local; o servidor valida cada passo). */
   path: Cell[];
+  /** Ficha de atributos livre (chave-valor). Dono do ator ou GM escrevem. */
+  sheet?: Record<string, string | number>;
 }
 
 export interface Sector {
@@ -83,6 +85,32 @@ export interface SceneConfig {
  * Fotografia completa do estado de jogo — o que viaja na rede na Fase 2
  * (na rede, `fog`/`walls` vão comprimidos; ver docs/ARQUITETURA.md).
  */
+/** Handout (documento/pista) entregue pelo mestre a jogadores específicos. */
+export interface Handout {
+  id: string;
+  title: string;
+  content: string;
+  /** IDs dos jogadores que podem ver este handout. */
+  to: string[];
+}
+
+/** Ordem de turno da mesa. */
+export interface Initiative {
+  /** IDs dos atores na ordem de turno. */
+  order: string[];
+  /** Índice do ator cuja vez é agora. */
+  currentIndex: number;
+}
+
+/** Mensagem de chat trocada na sala. */
+export interface ChatMessage {
+  id: string;
+  author: string;
+  role: Role;
+  text: string;
+  createdAt: number;
+}
+
 export interface GameSnapshot extends SceneConfig {
   fog: FogValue[][];
   walls: boolean[][];

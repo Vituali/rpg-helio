@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Role } from "@helio/shared";
+import type { Role, ChatMessage } from "@helio/shared";
 
 /**
  * Estado da conexão — separado do estado do jogo.
@@ -32,6 +32,9 @@ export interface NetState {
   /** Último endereço usado, para o botão de reconectar. */
   serverUrl: string;
 
+  /** Mensagens de chat da sessão (limpas ao sair da sala). */
+  messages: ChatMessage[];
+
   setStatus: (status: NetStatus) => void;
   setRoom: (room: {
     code: string;
@@ -41,6 +44,8 @@ export interface NetState {
     players: NetPlayer[];
   }) => void;
   setPlayers: (players: NetPlayer[]) => void;
+  addMessage: (msg: ChatMessage) => void;
+  clearMessages: () => void;
   setNotice: (notice: string | null) => void;
   setServerUrl: (url: string) => void;
   reset: () => void;
@@ -55,11 +60,14 @@ export const useNetStore = create<NetState>()((set) => ({
   players: [],
   notice: null,
   serverUrl: "",
+  messages: [],
 
   setStatus: (status) => set({ status }),
   setRoom: ({ code, mission, you, role, players }) =>
-    set({ code, mission, you, role, players }),
+    set({ code, mission, you, role, players, messages: [] }),
   setPlayers: (players) => set({ players }),
+  addMessage: (msg) => set((s) => ({ messages: [...s.messages, msg] })),
+  clearMessages: () => set({ messages: [] }),
   setNotice: (notice) => set({ notice }),
   setServerUrl: (serverUrl) => set({ serverUrl }),
   reset: () =>
@@ -71,6 +79,7 @@ export const useNetStore = create<NetState>()((set) => ({
       role: null,
       players: [],
       notice: null,
+      messages: [],
     }),
 }));
 

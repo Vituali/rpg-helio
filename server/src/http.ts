@@ -32,6 +32,7 @@ import {
   setAccountAdmin,
   setAccountPassword,
   touchLogin,
+  deleteAccount,
 } from "./accounts.js";
 import { roleChanged } from "./live.js";
 import { normalizeCode } from "./selo.js";
@@ -41,6 +42,7 @@ import {
   deleteCampaign,
   findCampaign,
   listCampaigns,
+  renameCampaign,
   setMemberRole,
   type CampaignInfo,
 } from "./store.js";
@@ -455,6 +457,36 @@ export async function handleHttp(
       return true;
     }
 
+    // Excluir conta (administrador) ──
+    if (path.startsWith("/admin/accounts/") && method === "DELETE") {
+      const name = decodeURIComponent(
+        path.slice("/admin/accounts/".length),
+      ).trim();
+      if (name === "") {
+        send(res, 400, { ok: false, error: "Diga a conta." });
+        return true;
+      }
+      if (isAdminAccount(name)) {
+        send(res, 400, {
+          ok: false,
+          error: "A conta raiz de administração não pode ser excluída.",
+        });
+        return true;
+      }
+      const result = await deleteAccount(name);
+      if (result === "error") {
+        send(res, 503, { ok: false, error: "Banco indisponível: não deu para excluir." });
+        return true;
+      }
+      if (result === "notfound") {
+        send(res, 404, { ok: false, error: "Conta não encontrada." });
+        return true;
+      }
+      console.log(`[admin] conta excluída: ${name} (por ${session.name})`);
+      send(res, 200, { ok: true, name });
+      return true;
+    }
+
     // Configuração viva (ADR #25): cadastro e sala da casa.
     if (path === "/admin/settings" && method === "GET") {
       const live = settings();
@@ -571,6 +603,32 @@ export async function handleHttp(
       return true;
     }
     send(res, 200, { ok: true });
+    return true;
+  }
+
+  // ── Renomear missão (mestre) ──
+  if (path.startsWith("/campaigns/") && path.endsWith("/name") && method === "PATCH") {
+    const session = sessionOf(req);
+    if (!session) {
+      send(res, 401, { ok: false, error: "Entre com sua conta para isso." });
+      return true;
+    }
+    const code = normalizeCode(
+      decodeURIComponent(path.slice("/campaigns/".length, -"/name".length)),
+    );
+    const body = await readJson(req);
+    const name = typeof body?.name === "string" ? body.name.trim() : "";
+    const result = await renameCampaign(code, session.accountId, name);
+    if (result === "error") {
+      send(res, 503, { ok: false, error: "Banco indisponível: não deu para renomear." });
+      return true;
+    }
+    if (result === "notfound") {
+      send(res, 404, { ok: false, error: "Missão não encontrada." });
+      return true;
+    }
+    const updated = await findCampaign(code, session.accountId);
+    send(res, 200, { ok: true, name: updated?.campaign?.name ?? name });
     return true;
   }
 

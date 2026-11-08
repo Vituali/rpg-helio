@@ -12,3 +12,4 @@ export * from "./grid";
 export * from "./vision";
 export * from "./pathfinding";
 export * from "./id";
+export * from "./lib/dice";

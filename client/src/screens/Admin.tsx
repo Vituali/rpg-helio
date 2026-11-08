@@ -11,9 +11,10 @@ import {
   setAccountAdmin,
   type AdminAccount,
   type AdminSettings,
+  deleteAccount,
 } from "../net/auth";
 import { useSession } from "../state/sessionStore";
-import { IconLock, IconSigil, IconUnlock } from "../components/icons";
+import { IconLock, IconSigil, IconTrash, IconUnlock } from "../components/icons";
 import Shell from "./Shell";
 import { resetPasswordSchema, type ResetPasswordInput } from "../lib/validation";
 
@@ -66,6 +67,7 @@ export default function Admin() {
   const [salaDraft, setSalaDraft] = useState("");
   const [servidorBusy, setServidorBusy] = useState(false);
   const [servidorErro, setServidorErro] = useState("");
+  const [excluindo, setExcluindo] = useState<string | null>(null);
 
   const [target, setTarget] = useState<string | null>(null);
   const [busyAdmin, setBusyAdmin] = useState<string | null>(null);
@@ -167,6 +169,21 @@ export default function Admin() {
         ? `"${a.name}" agora é administrador(a). A pessoa vê o painel ao recarregar a página.`
         : `"${a.name}" deixou de ser administrador(a).`,
     );
+  };
+
+  const excluirConta = async (name: string) => {
+    if (!window.confirm(`Tem certeza que deseja excluir a conta "${name}"? Esta ação não pode ser desfeita.`))
+      return;
+    setExcluindo(name);
+    const result = await deleteAccount(name);
+    setExcluindo(null);
+    if (!result.ok) {
+      setError(result.error ?? "Não deu para excluir a conta.");
+      return;
+    }
+    setAccounts((prev) => prev.filter((x) => x.name !== name));
+    setFeito(`Conta "${name}" excluída.`);
+    if (target === name) setTarget(null);
   };
 
   /** A configuração que o servidor devolveu é a fonte da verdade. */
@@ -497,6 +514,29 @@ export default function Admin() {
                         <IconUnlock size={12} />
                       )}
                     </button>
+
+                    {!root && a.name !== account.name && (
+                      <button
+                        type="button"
+                        onClick={() => void excluirConta(a.name)}
+                        disabled={excluindo === a.name}
+                        title="Excluir esta conta (irreversível)"
+                        style={{
+                          flexShrink: 0,
+                          width: 30,
+                          borderRadius: 6,
+                          border: "1px solid rgba(167, 139, 250, 0.35)",
+                          background: "rgba(8, 5, 16, 0.6)",
+                          color: "#a78bfa",
+                          cursor: excluindo === a.name ? "default" : "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}
+                      >
+                        {excluindo === a.name ? "…" : <IconTrash size={12} />}
+                      </button>
+                    )}
                   </div>
                 );
               })}

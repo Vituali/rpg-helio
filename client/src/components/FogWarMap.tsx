@@ -26,6 +26,10 @@ import { loadAssets, type AssetManifests, type MapEntry } from "../render/assets
 import { useGameStore } from "../state/gameStore";
 import { useNetStore } from "../state/netStore";
 import PlayersPanel from "./PlayersPanel";
+import Chat from "./Chat";
+import Sheet from "./Sheet";
+import Handouts from "./Handouts";
+import Initiative from "./Initiative";
 import {
   IconChevron,
   IconClose,
@@ -56,6 +60,9 @@ import {
   IconWallThin,
   IconWindow,
   IconTeleport,
+  IconChat,
+  IconSave,
+  IconSend,
 } from "./icons";
 import { stepAnimations, type AnimMap } from "../render/animation";
 import { getImage } from "../render/images";
@@ -125,6 +132,7 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
   const removeSector = useGameStore((s) => s.removeSector);
   const snapshot = useGameStore((s) => s.snapshot);
   const loadSnapshot = useGameStore((s) => s.loadSnapshot);
+  const moveActorTo = useGameStore((s) => s.moveActorTo);
 
   // ── Estado de UI (local) ──────────────────────────────────────────────────
   const [tool, setTool] = useState<UiTool>(TOOLS.MOVE);
@@ -149,6 +157,11 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [showMinimap, setShowMinimap] = useState(true);
   const [showDpad, setShowDpad] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [sheetActorId, setSheetActorId] = useState<string | null>(null);
+  const [handoutsOpen, setHandoutsOpen] = useState(false);
+  const [initiativeOpen, setInitiativeOpen] = useState(false);
 
   // Arte gerada por tools/optimize-assets.ps1 (tokens e mapas)
   const [assets, setAssets] = useState<AssetManifests>({ tokens: [], maps: [] });
@@ -180,6 +193,10 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
   const hasMovedBeyondThreshold = useRef(false);
   const lastPaint = useRef<Cell | null>(null);
   const sectorStart = useRef<Cell | null>(null);
+
+  // Arrasto de token com o mouse (Item 5 do PRD v1.1)
+  const dragActorId = useRef<string | null>(null);
+  const dragLastCell = useRef<Cell | null>(null);
   const anims = useRef<AnimMap>(new Map());
 
   // Multitouch (Pinch-to-zoom & pan com 2 dedos no celular)
@@ -809,6 +826,28 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
       pointerDownPos.current = { x: e.clientX, y: e.clientY };
       hasMovedBeyondThreshold.current = false;
 
+      // Arrasto de token com o mouse: se clicou num token que pode mover,
+      // iniciamos o arrasto em vez de preparar o pan.
+      if (
+        tool === TOOLS.MOVE &&
+        e.button === 0 &&
+        !e.altKey
+      ) {
+        const g = canvasToGrid(e.clientX, e.clientY);
+        if (g) {
+          const actor = actors.find((a) => a.row === g.row && a.col === g.col);
+          const canDrag =
+            actor &&
+            (userRole === "gm" || actor.ownerId === youId || actor.id === activeActorId);
+          if (canDrag && actor) {
+            dragActorId.current = actor.id;
+            dragLastCell.current = { row: actor.row, col: actor.col };
+            dragTool.current = tool;
+            return;
+          }
+        }
+      }
+
       // Se for a ferramenta Mover: preparamos o pan com arrasto e deixamos o clique rápido mover
       if (tool === TOOLS.MOVE || tool === "teleport") {
         panStart.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
@@ -873,6 +912,16 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
           x: e.clientX - panStart.current.x,
           y: e.clientY - panStart.current.y,
         });
+        return;
+      }
+
+      // Arrasto ativo de token: segue o mouse célula por célula.
+      if (dragActorId.current) {
+        const g = canvasToGrid(e.clientX, e.clientY);
+        if (g && (!dragLastCell.current || g.row !== dragLastCell.current.row || g.col !== dragLastCell.current.col)) {
+          moveActorTo(dragActorId.current, g);
+          dragLastCell.current = g;
+        }
         return;
       }
 
@@ -941,6 +990,8 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
       isDragging.current = false;
       panStart.current = null;
       dragTool.current = null;
+      dragActorId.current = null;
+      dragLastCell.current = null;
       pointerDownPos.current = null;
       hasMovedBeyondThreshold.current = false;
       lastPaint.current = null;
@@ -1405,11 +1456,29 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
         <button
           type="button"
           className="occult-btn"
-          onClick={fitView}
-          title="[0] Centralizar e enquadrar mapa"
+          onClick={() => setChatOpen((p) => !p)}
+          title="Abrir chat da mesa"
         >
-          <IconFit size={15} />
-          <span>Enquadrar</span>
+          <IconChat size={15} />
+          <span>Chat</span>
+        </button>
+        <button
+          type="button"
+          className="occult-btn"
+          onClick={() => setHandoutsOpen((p) => !p)}
+          title="Documentos e pistas (handouts)"
+        >
+          <IconSend size={15} />
+          <span>Handouts</span>
+        </button>
+        <button
+          type="button"
+          className="occult-btn"
+          onClick={() => setInitiativeOpen((p) => !p)}
+          title="Ordem de turno (iniciativa)"
+        >
+          <IconSend size={15} />
+          <span>Iniciativa</span>
         </button>
 
         {isMaster && (
@@ -2100,6 +2169,19 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
                             <IconClose size={12} />
                           </button>
                         )}
+                        <button
+                          type="button"
+                          className="occult-btn"
+                          style={{ padding: "4px 6px", minHeight: 26, fontSize: 10 }}
+                          title={`Ficha de ${actor.name}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSheetActorId(actor.id);
+                            setSheetOpen(true);
+                          }}
+                        >
+                          <IconSave size={12} style={{ marginRight: 4 }} /> Ficha
+                        </button>
                       </div>
 
                       {/* Alcance de Visão */}
@@ -2505,6 +2587,14 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
           </div>
         </div>
       )}
+      <Chat open={chatOpen} onClose={() => setChatOpen(false)} />
+      <Sheet
+        actor={actors.find((a) => a.id === sheetActorId) ?? null}
+        open={sheetOpen}
+        onClose={() => setSheetOpen(false)}
+      />
+      <Handouts open={handoutsOpen} onClose={() => setHandoutsOpen(false)} />
+      <Initiative open={initiativeOpen} onClose={() => setInitiativeOpen(false)} />
     </div>
   );
 }

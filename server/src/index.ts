@@ -17,10 +17,11 @@ import {
   clamp,
   facingBetween,
   resizeGrid,
+  roll,
   uid,
   visibleCellsFrom,
 } from "@helio/shared";
-import type { Actor, Cell, Role } from "@helio/shared";
+import type { Actor, Cell, ChatMessage, Role } from "@helio/shared";
 import { touchMembership } from "./accounts.js";
 import { SESSION_COOKIE, cookieValue, readSession, sessionEnabled } from "./auth.js";
 import { dbEnabled } from "./db.js";
@@ -567,6 +568,83 @@ io.on("connection", (socket) => {
     bump(m.room);
   });
 
+  // ── Ficha de ator (character sheet) ──
+  //
+  // O dono do ator (ou o GM) edita a ficha livremente. Qualquer um pode ler
+  // (ela viaja na room:state), mas só o dono/GM escreve.
+  socket.on("actor:sheet", (msg) => {
+    const m = me();
+    if (!m) return;
+    const actorId = String((msg as { actorId?: unknown })?.actorId ?? "");
+    const patch = (msg as { sheet?: unknown })?.sheet;
+    const actor = m.room.scene.actors.find((a) => a.id === actorId);
+    if (!actor) return;
+    if (m.player.role !== "gm" && actor.ownerId !== m.player.id) return;
+    if (!patch || typeof patch !== "object" || Array.isArray(patch)) return;
+    const next: Record<string, string | number> = { ...(actor.sheet ?? {}) };
+    for (const [k, v] of Object.entries(patch as Record<string, unknown>)) {
+      if (typeof v === "string" || typeof v === "number") next[k] = v;
+      else delete next[k];
+    }
+    actor.sheet = next;
+    bump(m.room);
+  });
+
+  // ── Handout (documento/pista) ──
+  //
+  // Só o mestre cria. O handout viaja na room:state (está na ServerScene) e o
+  // cliente filtra pelos destinatários (`to` contendo o seu socket.id).
+  socket.on("handout:create", (msg) => {
+    const room = requireGm();
+    if (!room) return;
+    const m = (msg as {
+      title?: unknown;
+      content?: unknown;
+      to?: unknown;
+    }) ?? {};
+    const title = String(m.title ?? "").trim();
+    const content = String(m.content ?? "").trim();
+    const to = Array.isArray(m.to) ? m.to.filter((t): t is string => typeof t === "string") : [];
+    if (!title || !content) return;
+    if (to.length > 50) return;
+    room.scene.handouts.push({
+      id: uid("hnd"),
+      title: title.slice(0, 80),
+      content: content.slice(0, 2000),
+      to,
+    });
+    bump(room);
+  });
+
+  // ── Iniciativa / ordem de turno ──
+  //
+  // Só o mestre define a ordem e avança a vez. Viaja na room:state via
+  // scene.initiative.
+  socket.on("initiative:set", (msg) => {
+    const room = requireGm();
+    if (!room) return;
+    const m = (msg as {
+      order?: unknown;
+      currentIndex?: unknown;
+    }) ?? {};
+    const order = Array.isArray(m.order) ? m.order.filter((o): o is string => typeof o === "string") : [];
+    const currentIndex = Number.isFinite(Number(m.currentIndex)) ? Number(m.currentIndex) : 0;
+    room.scene.initiative = {
+      order,
+      currentIndex: Math.max(0, Math.min(currentIndex, order.length > 0 ? order.length - 1 : 0)),
+    };
+    bump(room);
+  });
+
+  socket.on("initiative:next", () => {
+    const room = requireGm();
+    if (!room) return;
+    const ini = room.scene.initiative;
+    if (!ini || ini.order.length === 0) return;
+    ini.currentIndex = (ini.currentIndex + 1) % ini.order.length;
+    bump(room);
+  });
+
   // ── Fog que o token do jogador acabou de enxergar ──
   //
   // O cliente NÃO decide o que foi revelado: ele só sugere. O servidor calcula
@@ -587,6 +665,61 @@ io.on("connection", (socket) => {
       }
     }
     if (changed) bump(m.room);
+  });
+
+  // ── Chat da sala ──
+  //
+  // Qualquer pessoa na sala pode enviar; o servidor apenas carimba autor e
+  // repassa para todos da mesma sala. Não valida conteúdo (é um chat de mesa,
+  // não um fórum público).
+  socket.on("chat:message", (msg) => {
+    const m = me();
+    if (!m) return;
+    const text = String((msg as { text?: unknown })?.text ?? "").trim();
+    if (!text || text.length > 500) return;
+
+    // Comando de rolagem de dados: /r <expressão>
+    // O servidor é a autoridade do resultado aleatório.
+    if (text.startsWith("/r ")) {
+      const expr = text.slice(3).trim();
+      const resultado = roll(expr);
+      if (!resultado) {
+        const erro: ChatMessage = {
+          id: uid("msg"),
+          author: "Sistema",
+          role: "gm",
+          text: `Expressão de dados inválida: "${expr}". Use ex.: /r 1d20+5`,
+          createdAt: Date.now(),
+        };
+        io.to(m.room.code).emit("chat:message", erro);
+        return;
+      }
+      const detalhes = resultado.details
+        .map((d) =>
+          d.kind === "die"
+            ? `${d.count}d${d.faces} [${d.rolls.join(", ")}] = ${d.subtotal}`
+            : d.value >= 0 ? `+${d.value}` : `${d.value}`
+        )
+        .join(" ");
+      const rolagem: ChatMessage = {
+        id: uid("msg"),
+        author: `${m.player.name} (dados)`,
+        role: m.player.role,
+        text: `rolou ${resultado.expression} = ${resultado.total} (${detalhes})`,
+        createdAt: Date.now(),
+      };
+      io.to(m.room.code).emit("chat:message", rolagem);
+      return;
+    }
+
+    const message: ChatMessage = {
+      id: uid("msg"),
+      author: m.player.name,
+      role: m.player.role,
+      text,
+      createdAt: Date.now(),
+    };
+    io.to(m.room.code).emit("chat:message", message);
   });
 
   // ── Edição de mapa (mestre) ──
