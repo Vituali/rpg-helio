@@ -115,6 +115,10 @@ export default function PlayersPanel() {
   const setPerm = (playerId: string, canMoveGlobal: boolean) =>
     send("perm:set", { playerId, canMoveGlobal });
 
+  /** Libera ou trava o movimento de um ator específico para um jogador. */
+  const setActorPerm = (actorId: string, canMove: boolean) =>
+    send("perm:set", { actorId, canMove });
+
   /**
    * Vincula ou desvincula um ator de um jogador (mestre apenas).
    * Vai por Socket.IO porque muda a cena (ownerId do ator).
@@ -477,6 +481,51 @@ export default function PlayersPanel() {
                         )}
                       </>
                     )}
+                  </div>
+                )}
+
+                {/* Permissão de movimento por ator (mestre apenas). */}
+                {isGm && p.role === "player" && actor && (
+                  <div
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 3,
+                      flexShrink: 0,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      title={
+                        actor.canMove
+                          ? `Travar movimento de ${actor.name}`
+                          : `Liberar movimento de ${actor.name}`
+                      }
+                      disabled={assignBusy === p.id}
+                      onClick={() => setActorPerm(actor.id, !actor.canMove)}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 3,
+                        fontSize: 10,
+                        padding: "2px 6px",
+                        borderRadius: 4,
+                        border: `1px solid ${
+                          actor.canMove
+                            ? "rgba(34, 197, 94, 0.55)"
+                            : "rgba(220, 38, 38, 0.45)"
+                        }`,
+                        background: actor.canMove
+                          ? "rgba(5, 46, 22, 0.8)"
+                          : "rgba(69, 10, 10, 0.8)",
+                        color: actor.canMove ? "#86efac" : "#fca5a5",
+                        cursor: assignBusy === p.id ? "wait" : "pointer",
+                        opacity: assignBusy === p.id ? 0.5 : 1,
+                      }}
+                    >
+                      {actor.canMove ? <IconWalk size={11} /> : <IconLock size={11} />}
+                      {actor.name}
+                    </button>
                   </div>
                 )}
               </span>
