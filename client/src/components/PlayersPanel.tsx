@@ -13,6 +13,48 @@ import {
   IconWalk,
 } from "./icons";
 
+/** Ícone inline de vinculação (alicerce de corrente). */
+function IconLink({ size = 14, ...props }: any) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.75}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.72-1.71" />
+    </svg>
+  );
+}
+
+/** Ícone inline de desvinculação. */
+function IconUnlink({ size = 14, ...props }: any) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.75}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+      <path d="M15 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.72-1.71" />
+      <path d="M11 17H3" />
+      <path d="M13 7H7" />
+    </svg>
+  );
+}
+
 /**
  * Painel da mesa: quem está na sala e quem pode andar.
  *
@@ -29,6 +71,10 @@ export default function PlayersPanel() {
   const actors = useGameStore((s) => s.actors);
   /** Nome da conta cujo papel está sendo gravado (para não clicar duas vezes). */
   const [papelBusy, setPapelBusy] = useState<string | null>(null);
+  /** Id do jogador cujo ator está sendo vinculado/desvinculado. */
+  const [assignBusy, setAssignBusy] = useState<string | null>(null);
+  /** Id do ator atualmente selecionado para vinculação (dropdown aberto). */
+  const [assignOpen, setAssignOpen] = useState<string | null>(null);
 
   if (status !== "online") {
     return (
@@ -68,6 +114,28 @@ export default function PlayersPanel() {
 
   const setPerm = (playerId: string, canMoveGlobal: boolean) =>
     send("perm:set", { playerId, canMoveGlobal });
+
+  /**
+   * Vincula ou desvincula um ator de um jogador (mestre apenas).
+   * Vai por Socket.IO porque muda a cena (ownerId do ator).
+   */
+  const assignActor = (playerId: string, actorId: string | null) => {
+    if (assignBusy !== null) return;
+    setAssignBusy(playerId);
+    send("player:assign", { playerId, actorId });
+    setAssignBusy(null);
+    setAssignOpen(null);
+  };
+
+  /**
+   * Atores disponíveis para vinculação: sem ownerId (NPCs do mestre)
+   * ou já vinculados a este mesmo jogador (para trocar/desvincular).
+   */
+  const availableActors = (pId: string) =>
+    actors.filter(
+      (a) => !a.ownerId || a.ownerId === pId,
+    );
+
 
   /**
    * Dá ou tira o papel de mestre de uma conta nesta missão (ADR #22).
@@ -304,6 +372,112 @@ export default function PlayersPanel() {
                   >
                     {p.role === "gm" ? <IconSwords size={12} /> : <IconEye size={13} />}
                   </button>
+                )}
+
+                {/* Vincular / desvincular ator do jogador (mestre apenas). */}
+                {isGm && p.role === "player" && (
+                  <div
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 3,
+                      flexShrink: 0,
+                    }}
+                  >
+                    {assignOpen === p.id ? (
+                      <select
+                        value=""
+                        onChange={(e) => {
+                          const id = e.target.value || null;
+                          assignActor(p.id, id);
+                        }}
+                        style={{
+                          fontSize: 10,
+                          padding: "2px 6px",
+                          borderRadius: 4,
+                          border: "1px solid rgba(245, 158, 11, 0.45)",
+                          background: "rgba(12, 8, 24, 0.8)",
+                          color: "#fde68a",
+                          cursor: "pointer",
+                        }}
+                      >
+                        <option value="">Desvincular</option>
+                        {availableActors(p.id).map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.name}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <>
+                        {actor ? (
+                          <button
+                            type="button"
+                            title="Desvincular token deste agente"
+                            disabled={assignBusy === p.id}
+                            onClick={() => assignActor(p.id, null)}
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 3,
+                              fontSize: 10,
+                              padding: "2px 6px",
+                              borderRadius: 4,
+                              border: "1px solid rgba(220, 38, 38, 0.45)",
+                              background: "rgba(69, 10, 10, 0.8)",
+                              color: "#fca5a5",
+                              cursor: assignBusy === p.id ? "wait" : "pointer",
+                              opacity: assignBusy === p.id ? 0.5 : 1,
+                            }}
+                          >
+                            <IconUnlink size={11} />
+                            {actor.name}
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            title="Vincular token a este agente"
+                            disabled={assignBusy === p.id}
+                            onClick={() =>
+                              assignOpen === p.id
+                                ? setAssignOpen(null)
+                                : setAssignOpen(p.id)
+                            }
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 3,
+                              fontSize: 10,
+                              padding: "2px 6px",
+                              borderRadius: 4,
+                              border: `1px solid ${
+                                availableActors(p.id).length > 0
+                                  ? "rgba(34, 197, 94, 0.55)"
+                                  : "rgba(139, 92, 246, 0.3)"
+                              }`,
+                              background: "rgba(5, 46, 22, 0.8)",
+                              color: availableActors(p.id).length > 0
+                                ? "#86efac"
+                                : "#9d8ec4",
+                              cursor:
+                                assignBusy === p.id ||
+                                availableActors(p.id).length === 0
+                                  ? "not-allowed"
+                                : "pointer",
+                              opacity:
+                                assignBusy === p.id ||
+                                availableActors(p.id).length === 0
+                                  ? 0.5
+                                  : 1,
+                            }}
+                          >
+                            <IconLink size={11} />
+                            Vincular token
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
                 )}
               </span>
             </div>
