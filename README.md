@@ -1,5 +1,7 @@
 # HELIO — VTT multiplayer para RPG de mesa
 
+[![CI](https://github.com/Vituali/rpg-helio/actions/workflows/ci.yml/badge.svg)](https://github.com/Vituali/rpg-helio/actions/workflows/ci.yml)
+
 Mesa virtual (VTT — *Virtual Tabletop*) para RPG de mesa — baseada em **Ordem Paranormal**, mas com
 sistema personalizado. O mestre vê tudo e controla o mapa; os jogadores veem apenas o que o token
 deles enxerga.
