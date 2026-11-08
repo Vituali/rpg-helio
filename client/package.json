@@ -5,15 +5,19 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "vite build",
+    "build:typecheck": "tsc -b",
     "lint": "oxlint",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@hookform/resolvers": "^7.0.3",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "react-hook-form": "^7.91.0",
     "react-router-dom": "^7.18.4",
     "socket.io-client": "^4.8.4",
+    "zod": "^4.6.7",
     "zustand": "^5.0.15"
   },
   "devDependencies": {

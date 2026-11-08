@@ -1,13 +1,20 @@
 import { useEffect, useState } from "react";
-import type { CSSProperties, FormEvent } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { Link, useNavigate } from "react-router-dom";
 import { createAccount, login } from "../net/auth";
 import { useNetStore } from "../state/netStore";
 import { useSession } from "../state/sessionStore";
 import { IconChevron, IconMap, IconServer } from "../components/icons";
 import Shell from "./Shell";
+import {
+  createAccountSchema,
+  loginSchema,
+  type CreateAccountInput,
+  type LoginInput,
+} from "../lib/validation";
 
-const FIELD_LABEL: CSSProperties = {
+const FIELD_LABEL: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 600,
   letterSpacing: "0.08em",
@@ -20,9 +27,9 @@ const FIELD_LABEL: CSSProperties = {
 /**
  * Página 1 — a conta (ADR #20/#21).
  *
- * Só isto: entrar ou criar conta. A missão, o selo e a senha de mestre ficam na
- * página seguinte — era essa mistura que fazia a tela única parecer um
- * formulário de imposto.
+ * Validação com Zod + React Hook Form: as mesmas regras do servidor
+ * (`nameProblem` / `passwordProblem` em `server/src/http.ts`) são declaradas
+ * uma única vez em `client/src/lib/validation.ts` e reutilizadas aqui.
  */
 export default function Entrar() {
   const navigate = useNavigate();
@@ -33,15 +40,45 @@ export default function Entrar() {
   const accept = useSession((s) => s.accept);
 
   const serverUrl = useNetStore((s) => s.serverUrl);
-  const [url, setUrl] = useState(serverUrl);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
-  const [mode, setMode] = useState<"entrar" | "criar">("entrar");
-  const [user, setUser] = useState("");
-  const [password, setPassword] = useState("");
-  const [password2, setPassword2] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  // ── Formulário de entrar ───────────────────────────────────────────────────
+  const loginForm = useForm<LoginInput>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: { name: "", password: "" },
+  });
+
+  const onLogin = async (data: LoginInput) => {
+    const result = await login(data.name.trim(), data.password);
+    if (result.ok && result.account) {
+      accept(result.account);
+      navigate("/mesa", { replace: true });
+      return;
+    }
+    loginForm.setError("root", {
+      type: "server",
+      message: result.error ?? "Não foi possível entrar.",
+    });
+  };
+
+  // ── Formulário de criar conta ──────────────────────────────────────────────
+  const createForm = useForm<CreateAccountInput>({
+    resolver: zodResolver(createAccountSchema),
+    defaultValues: { name: "", password: "", password2: "" },
+  });
+
+  const onCreate = async (data: CreateAccountInput) => {
+    const result = await createAccount(data.name.trim(), data.password);
+    if (result.ok && result.account) {
+      accept(result.account);
+      navigate("/mesa", { replace: true });
+      return;
+    }
+    createForm.setError("root", {
+      type: "server",
+      message: result.error ?? "Não foi possível criar a conta.",
+    });
+  };
 
   // O cookie pode já estar no navegador de uma visita anterior.
   useEffect(() => {
@@ -53,30 +90,7 @@ export default function Entrar() {
     if (ready && account) navigate("/mesa", { replace: true });
   }, [ready, account, navigate]);
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (busy) return;
-    if (mode === "criar" && password !== password2) {
-      setError("As duas senhas não são iguais.");
-      return;
-    }
-    setBusy(true);
-    setError("");
-    const result =
-      mode === "criar"
-        ? await createAccount(user.trim(), password)
-        : await login(user.trim(), password);
-    setBusy(false);
-    if (result.ok && result.account) {
-      accept(result.account);
-      navigate("/mesa", { replace: true });
-      return;
-    }
-    setError(result.error ?? (mode === "criar" ? "Não foi possível criar a conta." : "Não foi possível entrar."));
-  };
-
-  const podeEnviar =
-    !busy && user.trim() !== "" && password !== "" && (mode === "entrar" || password2 !== "");
+  const [mode, setMode] = useState<"entrar" | "criar">("entrar");
 
   return (
     <Shell
@@ -97,7 +111,14 @@ export default function Entrar() {
         </div>
       ) : (
         <form
-          onSubmit={(e) => void submit(e)}
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (mode === "entrar") {
+              void loginForm.handleSubmit(onLogin)(e);
+            } else {
+              void createForm.handleSubmit(onCreate)(e);
+            }
+          }}
           style={{ display: "flex", flexDirection: "column", gap: 15 }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -113,14 +134,13 @@ export default function Entrar() {
             >
               {mode === "criar" ? "Criar conta" : "Entrar com conta"}
             </span>
-            {/* Sem cadastro aberto no servidor, este botão não existe: a tela
-                não oferece o que o servidor vai recusar (ADR #19). */}
             {signup && (
               <button
                 type="button"
                 onClick={() => {
                   setMode(mode === "criar" ? "entrar" : "criar");
-                  setError("");
+                  loginForm.reset();
+                  createForm.reset();
                 }}
                 style={{
                   background: "none",
@@ -137,76 +157,140 @@ export default function Entrar() {
             )}
           </div>
 
-          <div>
-            <label style={FIELD_LABEL} htmlFor="conta-nome">
-              Nome na Ordem
-            </label>
-            <input
-              id="conta-nome"
-              className="occult-input"
-              style={{ padding: "10px 12px", fontSize: 13 }}
-              value={user}
-              placeholder="Como o grupo te chama"
-              maxLength={24}
-              autoComplete="username"
-              autoFocus
-              onChange={(e) => setUser(e.target.value)}
-            />
-          </div>
+          {mode === "entrar" ? (
+            <>
+              <div>
+                <label style={FIELD_LABEL} htmlFor="conta-nome">
+                  Nome na Ordem
+                </label>
+                <input
+                  id="conta-nome"
+                  className="occult-input"
+                  style={{ padding: "10px 12px", fontSize: 13 }}
+                  placeholder="Como o grupo te chama"
+                  maxLength={24}
+                  autoComplete="username"
+                  autoFocus
+                  {...loginForm.register("name")}
+                />
+                {loginForm.formState.errors.name && (
+                  <div style={{ fontSize: 11, color: "#fca5a5", marginTop: 4 }}>
+                    {loginForm.formState.errors.name?.message}
+                  </div>
+                )}
+              </div>
 
-          <div>
-            <label style={FIELD_LABEL} htmlFor="conta-senha">
-              Senha
-            </label>
-            <input
-              id="conta-senha"
-              className="occult-input"
-              style={{ padding: "10px 12px", fontSize: 13 }}
-              type="password"
-              value={password}
-              placeholder="Pelo menos 6 caracteres"
-              maxLength={200}
-              autoComplete={mode === "criar" ? "new-password" : "current-password"}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-          </div>
+              <div>
+                <label style={FIELD_LABEL} htmlFor="conta-senha">
+                  Senha
+                </label>
+                <input
+                  id="conta-senha"
+                  className="occult-input"
+                  style={{ padding: "10px 12px", fontSize: 13 }}
+                  type="password"
+                  placeholder="Pelo menos 6 caracteres"
+                  maxLength={200}
+                  autoComplete="current-password"
+                  {...loginForm.register("password")}
+                />
+                {loginForm.formState.errors.password && (
+                  <div style={{ fontSize: 11, color: "#fca5a5", marginTop: 4 }}>
+                    {loginForm.formState.errors.password?.message}
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <label style={FIELD_LABEL} htmlFor="conta-nome">
+                  Nome na Ordem
+                </label>
+                <input
+                  id="conta-nome"
+                  className="occult-input"
+                  style={{ padding: "10px 12px", fontSize: 13 }}
+                  placeholder="Como o grupo te chama"
+                  maxLength={24}
+                  autoComplete="username"
+                  autoFocus
+                  {...createForm.register("name")}
+                />
+                {createForm.formState.errors.name && (
+                  <div style={{ fontSize: 11, color: "#fca5a5", marginTop: 4 }}>
+                    {createForm.formState.errors.name?.message}
+                  </div>
+                )}
+              </div>
 
-          {mode === "criar" && (
-            <div>
-              <label style={FIELD_LABEL} htmlFor="conta-senha2">
-                Repita a senha
-              </label>
-              <input
-                id="conta-senha2"
-                className="occult-input"
-                style={{ padding: "10px 12px", fontSize: 13 }}
-                type="password"
-                value={password2}
-                placeholder="A mesma senha"
-                maxLength={200}
-                autoComplete="new-password"
-                onChange={(e) => setPassword2(e.target.value)}
-              />
-              {password !== "" && password2 !== "" && password !== password2 && (
-                <div style={{ fontSize: 11, color: "#fca5a5", marginTop: 4 }}>
-                  As duas senhas não são iguais.
-                </div>
-              )}
-            </div>
+              <div>
+                <label style={FIELD_LABEL} htmlFor="conta-senha">
+                  Senha
+                </label>
+                <input
+                  id="conta-senha"
+                  className="occult-input"
+                  style={{ padding: "10px 12px", fontSize: 13 }}
+                  type="password"
+                  placeholder="Pelo menos 6 caracteres"
+                  maxLength={200}
+                  autoComplete="new-password"
+                  {...createForm.register("password")}
+                />
+                {createForm.formState.errors.password && (
+                  <div style={{ fontSize: 11, color: "#fca5a5", marginTop: 4 }}>
+                    {createForm.formState.errors.password?.message}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label style={FIELD_LABEL} htmlFor="conta-senha2">
+                  Repita a senha
+                </label>
+                <input
+                  id="conta-senha2"
+                  className="occult-input"
+                  style={{ padding: "10px 12px", fontSize: 13 }}
+                  type="password"
+                  placeholder="A mesma senha"
+                  maxLength={200}
+                  autoComplete="new-password"
+                  {...createForm.register("password2")}
+                />
+                {createForm.formState.errors.password2 && (
+                  <div style={{ fontSize: 11, color: "#fca5a5", marginTop: 4 }}>
+                    {createForm.formState.errors.password2?.message}
+                  </div>
+                )}
+              </div>
+
+              <div style={{ fontSize: 10, color: "#7e6ea8", lineHeight: 1.4 }}>
+                Entra já logado. <strong>Não há recuperação de senha</strong> — nem o
+                mestre vê ou troca a sua. Anote.
+              </div>
+            </>
           )}
 
-          {mode === "criar" && (
-            <div style={{ fontSize: 10, color: "#7e6ea8", lineHeight: 1.4 }}>
-              Entra já logado. <strong>Não há recuperação de senha</strong> — nem o
-              mestre vê ou troca a sua. Anote.
+          {loginForm.formState.errors.root && (
+            <div style={{ fontSize: 11, color: "#fca5a5" }}>
+              {loginForm.formState.errors.root.message}
             </div>
           )}
-
-          {error && <div style={{ fontSize: 11, color: "#fca5a5" }}>{error}</div>}
+          {createForm.formState.errors.root && (
+            <div style={{ fontSize: 11, color: "#fca5a5" }}>
+              {createForm.formState.errors.root.message}
+            </div>
+          )}
 
           <button
             type="submit"
-            disabled={!podeEnviar}
+            disabled={
+              mode === "entrar"
+                ? loginForm.formState.isSubmitting
+                : createForm.formState.isSubmitting
+            }
             style={{
               width: "100%",
               padding: "12px 16px",
@@ -219,14 +303,18 @@ export default function Entrar() {
               fontSize: 13,
               letterSpacing: "0.14em",
               textTransform: "uppercase",
-              cursor: podeEnviar ? "pointer" : "not-allowed",
-              opacity: podeEnviar ? 1 : 0.55,
+              cursor: "pointer",
+              opacity: 1,
               boxShadow:
                 "0 6px 24px rgba(147, 51, 234, 0.45), inset 0 1px 0 rgba(254, 243, 199, 0.35)",
               transition: "all 0.2s ease",
             }}
           >
-            {busy ? "Consultando…" : mode === "criar" ? "Criar conta e entrar" : "Entrar"}
+            {loginForm.formState.isSubmitting || createForm.formState.isSubmitting
+              ? "Consultando…"
+              : mode === "criar"
+                ? "Criar conta e entrar"
+                : "Entrar"}
           </button>
 
           <button
@@ -257,10 +345,9 @@ export default function Entrar() {
             >
               <input
                 className="occult-input"
-                value={url}
+                value={serverUrl}
                 placeholder="Vazio = usar este mesmo servidor"
                 onChange={(e) => {
-                  setUrl(e.target.value);
                   // O mesmo endereço vale para as rotas de conta e para o jogo
                   // (ADR #16): quem digita aqui espera entrar NAQUELE servidor.
                   useNetStore.getState().setServerUrl(e.target.value);

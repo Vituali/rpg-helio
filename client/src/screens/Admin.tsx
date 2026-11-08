@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import type { CSSProperties, FormEvent } from "react";
+import type { CSSProperties } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { Link, Navigate } from "react-router-dom";
 import {
   getAdminSettings,
@@ -8,11 +10,11 @@ import {
   saveAdminSettings,
   setAccountAdmin,
   type AdminAccount,
-  type AdminSettings,
 } from "../net/auth";
 import { useSession } from "../state/sessionStore";
 import { IconLock, IconSigil, IconUnlock } from "../components/icons";
 import Shell from "./Shell";
+import { resetPasswordSchema, type ResetPasswordInput } from "../lib/validation";
 
 const FIELD_LABEL: CSSProperties = {
   fontSize: 11,
@@ -65,9 +67,6 @@ export default function Admin() {
   const [servidorErro, setServidorErro] = useState("");
 
   const [target, setTarget] = useState<string | null>(null);
-  const [password, setPassword] = useState("");
-  const [password2, setPassword2] = useState("");
-  const [busy, setBusy] = useState(false);
   const [busyAdmin, setBusyAdmin] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [feito, setFeito] = useState("");
@@ -127,31 +126,26 @@ export default function Admin() {
 
   const escolher = (name: string) => {
     setTarget(name);
-    setPassword("");
-    setPassword2("");
+    senhaForm.reset({ password: "", password2: "" });
     setError("");
     setFeito("");
   };
 
-  const trocar = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!target || busy) return;
-    if (password !== password2) {
-      setError("As duas senhas não são iguais.");
-      return;
-    }
-    setBusy(true);
-    setError("");
-    setFeito("");
-    const result = await resetPassword(target, password);
-    setBusy(false);
+  // ── Formulário de trocar senha ─────────────────────────────────────────────
+  const senhaForm = useForm<ResetPasswordInput>({
+    resolver: zodResolver(resetPasswordSchema),
+    defaultValues: { password: "", password2: "" },
+  });
+
+  const onTrocarSenha = async (data: ResetPasswordInput) => {
+    if (!target) return;
+    const result = await resetPassword(target, data.password);
     if (!result.ok) {
       setError(result.error ?? "Não deu para trocar a senha.");
       return;
     }
     setFeito(`Senha de "${target}" trocada.`);
-    setPassword("");
-    setPassword2("");
+    senhaForm.reset({ password: "", password2: "" });
   };
 
   const alternarAdmin = async (a: AdminAccount) => {
@@ -511,7 +505,10 @@ export default function Admin() {
 
         {/* Senha da conta escolhida */}
         <form
-          onSubmit={(e) => void trocar(e)}
+          onSubmit={(e) => {
+            e.preventDefault();
+            void senhaForm.handleSubmit(onTrocarSenha)(e);
+          }}
           style={{ display: "flex", flexDirection: "column", gap: 8 }}
         >
           <label style={FIELD_LABEL} htmlFor="nova-senha">
@@ -521,34 +518,49 @@ export default function Admin() {
             id="nova-senha"
             className="occult-input"
             type="password"
-            value={password}
             maxLength={200}
             placeholder="Senha nova"
             autoComplete="new-password"
             disabled={!escolhida}
-            onChange={(e) => setPassword(e.target.value)}
+            {...senhaForm.register("password")}
             style={{ padding: "9px 11px", fontSize: 12 }}
           />
+          {senhaForm.formState.errors.password && (
+            <div style={{ fontSize: 10, color: "#fca5a5", marginTop: 2 }}>
+              {senhaForm.formState.errors.password?.message}
+            </div>
+          )}
           <input
             className="occult-input"
             type="password"
-            value={password2}
             maxLength={200}
             placeholder="Repita a senha"
             autoComplete="new-password"
             disabled={!escolhida}
-            onChange={(e) => setPassword2(e.target.value)}
+            {...senhaForm.register("password2")}
             style={{ padding: "9px 11px", fontSize: 12 }}
           />
+          {senhaForm.formState.errors.password2 && (
+            <div style={{ fontSize: 10, color: "#fca5a5", marginTop: 2 }}>
+              {senhaForm.formState.errors.password2?.message}
+            </div>
+          )}
+          {senhaForm.formState.errors.root && (
+            <div style={{ fontSize: 10, color: "#fca5a5", marginTop: 2 }}>
+              {senhaForm.formState.errors.root?.message}
+            </div>
+          )}
 
           <button
             type="submit"
             className="occult-btn"
-            disabled={!escolhida || busy || password === "" || password2 === ""}
+            disabled={
+              !escolhida || busy || senhaForm.formState.isSubmitting
+            }
             style={{ width: "100%", padding: "9px 12px" }}
           >
             <IconSigil size={13} />
-            {busy ? "Gravando…" : "Trocar senha"}
+            {senhaForm.formState.isSubmitting ? "Gravando…" : "Trocar senha"}
           </button>
         </form>
 

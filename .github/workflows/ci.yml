@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+env:
+  # Node 20 LTS
+  NODE_VERSION: "20"
+
+jobs:
+  typecheck:
+    name: Typecheck (shared + server + client)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install shared deps
+        run: npm install
+        working-directory: ./shared
+
+      - name: Install server deps
+        run: npm install
+        working-directory: ./server
+
+      - name: Install client deps
+        run: npm install
+        working-directory: ./client
+
+      - name: Typecheck shared
+        run: npm run typecheck
+        working-directory: ./shared
+
+      - name: Typecheck server
+        run: npm run typecheck
+        working-directory: ./server
+
+      - name: Typecheck client
+        run: npx tsc --noEmit
+        working-directory: ./client
+
+  test:
+    name: Tests (shared)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install shared deps
+        run: npm install
+        working-directory: ./shared
+
+      - name: Run shared tests
+        run: npm run test
+        working-directory: ./shared
+
+  build:
+    name: Build client (Vite)
+    runs-on: ubuntu-latest
+    needs: typecheck
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install shared deps
+        run: npm install
+        working-directory: ./shared
+
+      - name: Install client deps
+        run: npm install
+        working-directory: ./client
+
+      - name: Build client
+        run: npm run build
+        working-directory: ./client

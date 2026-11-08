@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import type { CSSProperties, FormEvent } from "react";
+import type { CSSProperties } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { Navigate, Link, useNavigate } from "react-router-dom";
 import {
   createCampaign,
@@ -20,6 +22,7 @@ import {
   IconSwords,
 } from "../components/icons";
 import Shell from "./Shell";
+import { createCampaignSchema, type CreateCampaignInput } from "../lib/validation";
 
 /** Último selo digitado neste navegador — o convite não se redigita toda vez. */
 const SELO_STORAGE = "helio.selo";
@@ -62,11 +65,28 @@ export default function Mesa() {
   const [gmKey, setGmKey] = useState(() => localStorage.getItem(GMKEY_STORAGE) ?? "");
   const [showKey, setShowKey] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [newName, setNewName] = useState("");
-  const [missaoBusy, setMissaoBusy] = useState(false);
   const [missaoError, setMissaoError] = useState("");
   /** Selo recém-criado, para destacar o que o mestre precisa ditar. */
   const [seloNovo, setSeloNovo] = useState("");
+
+  // ── Formulário de criar missão ───────────────────────────────────────────
+  const criarForm = useForm<CreateCampaignInput>({
+    resolver: zodResolver(createCampaignSchema),
+    defaultValues: { name: "" },
+  });
+
+  const onCriarMissao = async (data: CreateCampaignInput) => {
+    const name = data.name?.trim() || undefined;
+    const result = await createCampaign(name);
+    if (result.ok && result.campaign) {
+      setSeloNovo(result.campaign.code);
+      setCode(result.campaign.code); // já deixa a missão nova escolhida
+      criarForm.reset({ name: "" });
+      await reloadCampaigns();
+    } else {
+      setMissaoError(result.error ?? "Não foi possível criar a missão.");
+    }
+  };
 
   useEffect(() => {
     if (!ready) void load();
@@ -113,22 +133,6 @@ export default function Mesa() {
   const connecting = status === "connecting";
 
   const reloadCampaigns = async () => setCampaigns(await listCampaigns());
-
-  const criarMissao = async () => {
-    if (missaoBusy) return;
-    setMissaoBusy(true);
-    setMissaoError("");
-    const result = await createCampaign(newName.trim());
-    setMissaoBusy(false);
-    if (result.ok && result.campaign) {
-      setSeloNovo(result.campaign.code);
-      setCode(result.campaign.code); // já deixa a missão nova escolhida
-      setNewName("");
-      await reloadCampaigns();
-    } else {
-      setMissaoError(result.error ?? "Não foi possível criar a missão.");
-    }
-  };
 
   const apagarMissao = async (c: Campaign) => {
     // Apagar leva a cena junto: a confirmação diz isso com todas as letras.
@@ -420,23 +424,34 @@ export default function Mesa() {
 
           {/* Criação de novas campanhas restrita ou opcional */}
           <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
-            <input
-              className="occult-input"
-              style={{ padding: "7px 9px", fontSize: 12 }}
-              value={newName}
-              placeholder="Criar nova missão (Mestres)"
-              maxLength={40}
-              onChange={(e) => setNewName(e.target.value)}
-            />
-            <button
-              type="button"
-              className="occult-btn"
-              style={{ padding: "7px 12px", fontSize: 12, flexShrink: 0 }}
-              disabled={missaoBusy || !newName.trim()}
-              onClick={() => void criarMissao()}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void criarForm.handleSubmit(onCriarMissao)(e);
+              }}
+              style={{ display: "flex", gap: 6 }}
             >
-              {missaoBusy ? "..." : "+ Criar"}
-            </button>
+              <input
+                className="occult-input"
+                style={{ padding: "7px 9px", fontSize: 12, flex: 1, minWidth: 0 }}
+                placeholder="Criar nova missão (Mestres)"
+                maxLength={40}
+                {...criarForm.register("name")}
+              />
+              {criarForm.formState.errors.name && (
+                <div style={{ fontSize: 10, color: "#fca5a5", marginTop: 2 }}>
+                  {criarForm.formState.errors.name?.message}
+                </div>
+              )}
+              <button
+                type="submit"
+                className="occult-btn"
+                disabled={criarForm.formState.isSubmitting}
+                style={{ padding: "7px 12px", fontSize: 12, flexShrink: 0 }}
+              >
+                {criarForm.formState.isSubmitting ? "…" : "+ Criar"}
+              </button>
+            </form>
           </div>
 
           {seloNovo && (

@@ -74,6 +74,7 @@ export function hasLOS(
   r2: number,
   c2: number,
   edgeWalls?: Set<string> | string[],
+  _edgeWindows?: Set<string> | string[],
 ): boolean {
   if (r1 === r2 && c1 === c2) return true;
 
@@ -83,6 +84,11 @@ export function hasLOS(
       if (edgeIntersectsRay(key, r1, c1, r2, c2)) return false;
     }
   }
+
+  // Janelas por aresta bloqueiam movimento, NÃO visão — portanto não entram
+  // no cálculo de LOS. São aceitas aqui só para assinatura consistente com
+  // o pathfinding (que sim as considera bloqueadoras de movimento).
+  void _edgeWindows;
 
   const rows = walls.length;
   const cols = walls[0]?.length ?? 0;
@@ -158,6 +164,7 @@ export function visibleCellsFrom(
   rows: number,
   cols: number,
   edgeWalls?: Set<string> | string[],
+  _edgeWindows?: Set<string> | string[],
 ): Cell[] {
   const out: Cell[] = [];
   const vr = vision;
@@ -176,6 +183,7 @@ export function visibleCellsFrom(
       }
     }
   }
+  void _edgeWindows;
   return out;
 }
 
@@ -195,6 +203,7 @@ export function computeVision(
   rows: number,
   cols: number,
   edgeWalls?: Set<string> | string[],
+  _edgeWindows?: Set<string> | string[],
 ): FogValue[][] {
   const next = fog.map((row) =>
     row.map((v) => (v === FOG_VIS ? FOG_SEEN : v) as FogValue),
@@ -218,6 +227,7 @@ export function computeVision(
       }
     }
   }
+  void _edgeWindows;
   return next;
 }
 
