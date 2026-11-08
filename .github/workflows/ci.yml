@@ -23,17 +23,21 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
+          cache-dependency-path: |
+            shared/package-lock.json
+            server/package-lock.json
+            client/package-lock.json
 
       - name: Install shared deps
-        run: npm install
+        run: npm ci
         working-directory: ./shared
 
       - name: Install server deps
-        run: npm install
+        run: npm ci
         working-directory: ./server
 
       - name: Install client deps
-        run: npm install
+        run: npm ci
         working-directory: ./client
 
       - name: Typecheck shared
@@ -60,9 +64,10 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
+          cache-dependency-path: shared/package-lock.json
 
       - name: Install shared deps
-        run: npm install
+        run: npm ci
         working-directory: ./shared
 
       - name: Run shared tests
@@ -82,13 +87,16 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
+          cache-dependency-path: |
+            shared/package-lock.json
+            client/package-lock.json
 
       - name: Install shared deps
-        run: npm install
+        run: npm ci
         working-directory: ./shared
 
       - name: Install client deps
-        run: npm install
+        run: npm ci
         working-directory: ./client
 
       - name: Build client
