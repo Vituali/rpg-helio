@@ -188,18 +188,22 @@ function cellsOf(msg: unknown): Cell[] {
 }
 
 /**
- * O teto do que um jogador pode revelar: a união do que TODOS os atores
- * enxergam agora, calculada aqui com a MESMA função que o cliente usa.
+ * O teto do que um jogador pode revelar: o que os TOKENS DELE enxergam agora,
+ * calculado aqui com a MESMA função que o cliente usa.
  *
- * Isto é o que um cliente honesto reporta — `reportNewFog` manda a visão
- * compartilhada — então nada legítimo é recusado. Mas ninguém consegue mais
- * marcar o mapa inteiro numa mensagem e apagar o fog de guerra da mesa.
+ * Fase 3: o corte é por jogador. Antes o teto era a união de todos os atores
+ * (confiança no grupo); agora um jogador não consegue revelar — nem descobrir —
+ * células que só o token de outra pessoa vê. O mestre continua com a cena toda.
  * Quem decide o que foi revelado é o servidor, não o cliente.
  */
-function discoverableCells(room: Room): Set<string> {
+function discoverableCells(room: Room, player: Player): Set<string> {
   const s = room.scene;
   const out = new Set<string>();
-  for (const a of s.actors) {
+  const mine =
+    player.role === "gm"
+      ? s.actors
+      : s.actors.filter((a) => a.ownerId === player.id || a.id === player.actorId);
+  for (const a of mine) {
     const seen = visibleCellsFrom(
       s.walls,
       { row: a.row, col: a.col },
@@ -207,6 +211,7 @@ function discoverableCells(room: Room): Set<string> {
       s.rows,
       s.cols,
       s.edgeWalls,
+      s.edgeWindows,
     );
     for (const c of seen) out.add(`${c.row},${c.col}`);
   }
@@ -562,7 +567,7 @@ io.on("connection", (socket) => {
     const m = me();
     if (!m) return;
     const grid = m.room.scene.fogExplored;
-    const allowed = discoverableCells(m.room);
+    const allowed = discoverableCells(m.room, m.player);
     let changed = false;
     for (const { row, col } of cellsOf(msg)) {
       if (!allowed.has(`${row},${col}`)) continue;

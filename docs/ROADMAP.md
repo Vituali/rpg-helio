@@ -89,12 +89,12 @@ pessoa. ✅
 
 ---
 
-## Fase 3 — Papéis, permissão e fog por jogador 🔜
+## Fase 3 — Papéis, permissão e fog por jogador ✅
 
-O mestre manda; o jogador obedece. **Metade disto já saiu junto com a Fase 2** — a lista abaixo
-separa o que existe do que falta.
+O mestre manda; o jogador obedece. A Fase 3 estava quase toda pronta junto com a Fase 2; o que
+faltava era o corte da visão por jogador.
 
-Já feito:
+Feito:
 
 - ✅ `role: "gm" | "player"` e `ownerId` nos atores
 - ✅ GM libera movimento global (`canMoveGlobal`) e por token (`canMove`)
@@ -102,19 +102,21 @@ Já feito:
 - ✅ UI do GM: painel de jogadores com botões de liberar/travar (individual e em massa)
 - ✅ Movimento rejeitado tratado (cancela a fila, volta o sprite para a posição confirmada)
 - ✅ `fog:discover` enviando células novas ao servidor
+- ✅ Fog dividido: `visibleNow` por jogador (união do explorado + raio dos **meus** tokens)
+- ✅ GM vê tudo; jogador vê só os tokens dele
+- ✅ Vincular um jogador a um token que já existe (`player:assign`, com seletor no painel da mesa)
+- ✅ RBAC por token na UI (`canMove` por ator, além do global)
 
-Falta:
+Falta (não bloqueia o critério da fase):
 
-- 🔜 Fog dividido: `visibleNow` por jogador, sem vazar a visão dos outros tokens
-- 🔜 GM vê tudo; jogador vê só o token dele
-- 🔜 Vincular um jogador a um token que já existe (hoje o token nasce com ele)
-- 🔜 Arrastar token do mestre para o jogador (hoje é automático)
-- 🔜 Ficha de personagem ligada ao token
+- ⬜ Arrastar token do mestre para o jogador (hoje o vínculo é pelo seletor do painel)
+- ⬜ Ficha de personagem ligada ao token
 
-**Pronto quando:** o fog de cada um é individual.
+**Pronto quando:** o fog de cada um é individual. ✅ (implementado e coberto pelo `smoke.mjs`)
 
-**Endurecimento opcional:** servidor passa a calcular `visibleNow` (anti-cheat) e só envia o
-resultado.
+**Endurecimento opcional:** o servidor já calcula o teto por jogador e recusa `fog:discover` fora
+do raio dos tokens dele. O passo seguinte — o servidor calcular `visibleNow` e enviar só o
+resultado, sem mandar a cena inteira — continua opcional e não muda a experiência do grupo.
 
 ---
 

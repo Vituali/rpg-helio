@@ -95,10 +95,13 @@ Duas coisas que a prática corrigiu, e uma delas vale para sempre:
 - **A missão padrão só nasce com o banco vazio.** Antes ela voltava a cada boot: apagar e ver
   reaparecer faz duvidar do que ficou salvo.
 
-**Fog por jogador (Fase 3) fica fora deste slice**, de propósito: é lógica de jogo, não persistência,
-e entraria só para inflar o WIP.
+**Fog por jogador (Fase 3) ficou fora deste slice**, de propósito: é lógica de jogo, não persistência.
 
-**Slice fechado, 6 de 6.** O próximo WIP não está escolhido; o caminho natural é a **Fase 3**.
+**Slice fechado, 6 de 6.** A **Fase 3 também fechou**: o fog é individual (`visibleNow` calculado só
+com os tokens do jogador), o servidor recusa `fog:discover` fora do raio desses tokens, o mestre vê a
+cena inteira, e o painel da mesa permite vincular/desvincular um ator a um jogador (`player:assign`)
+e travar/liberar o movimento por token. O critério — "o fog de cada um é individual" — está coberto
+pelo `smoke.mjs`. O próximo WIP natural é a **Fase 4**.
 
 O que a entrega 6 deixou de fora, de propósito: o painel só oferece promoção para quem está **na sala**,
 mas a rota funciona para qualquer conta da missão — quem foi promovido desconectado entra como mestre na
@@ -120,7 +123,7 @@ O mesmo painel passou a guardar a **configuração viva** (migration 003): cadas
 
 | # | Item | Onde | Pronto quando |
 |---|---|---|---|
-| S3 | **Testes de `shared/`** | `shared/` | Colisão, LOS, pathfinding e validação cobertas, rodando sem dependência nova |
+| S3 | **Testes de `shared/`** | `shared/` | ✅ suíte vitest em `shared/src/__tests__` (grid, LOS/visão, pathfinding, constantes, id) |
 
 Que aconteceu com os outros:
 
@@ -136,8 +139,7 @@ Que aconteceu com os outros:
 
 **Liberado pela refatoração de UI** (é onde está a graça):
 
-- Fog por jogador (`visibleNow`) — definição de pronto da Fase 3
-- Vincular um jogador a um token que já existe
+- Arrastar token do mestre para o jogador (o vínculo pelo seletor do painel já existe)
 - Ficha de personagem (regras customizadas)
 - Rolagem de dados com histórico
 - Chat e log de eventos
@@ -156,7 +158,7 @@ Que aconteceu com os outros:
 
 - Domínio + Cloudflare Access + túnel nomeado (URL fixa e acesso convidado)
 - Escolher o nome do projeto e o domínio
-- Push para o GitHub + CI (smoke + testes de `shared/`)
+- Push para o GitHub + CI (typecheck, testes de `shared/` e build do cliente já no workflow; falta o smoke com banco)
 - Imagem de produção em registry
 
 **Só se incomodar na prática:**

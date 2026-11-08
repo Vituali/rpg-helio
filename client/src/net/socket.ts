@@ -122,7 +122,28 @@ function sendIntent(event: string, payload: unknown): void {
 function applyState(state: ServerState): void {
   if (!state?.scene) return;
 
+  /*
+   * Identidade ANTES da cena.
+   *
+   * `applyServerScene` recalcula a visão por jogador, e essa conta depende de
+   * `you`/`role` no netStore. Aplicar a cena primeiro usaria a identidade da
+   * conexão anterior (ou nenhuma, no primeiro join) — e o jogador veria o mapa
+   * inteiro até a próxima mensagem. Ver docs/ARQUITETURA.md, Fase 3.
+   */
+  const me = state.players.find((p) => p.id === state.you);
+  const store = useNetStore.getState();
+  store.setRoom({
+    code: state.code,
+    mission: state.name,
+    you: state.you,
+    role: me?.role ?? "player",
+    players: state.players,
+  });
+  store.setStatus("online");
+
   const game = useGameStore.getState();
+  game.setGmMode(me?.role === "gm");
+  setSender(sendIntent);
   game.applyServerScene(state.scene);
 
   for (const a of state.scene.actors) {
@@ -135,20 +156,6 @@ function applyState(state: ServerState): void {
     if (state.scene.fogExplored[r]?.[c] === FOG_NONE) reportedFog.delete(key);
   }
 
-  const me = state.players.find((p) => p.id === state.you);
-  game.setGmMode(me?.role === "gm");
-
-  const store = useNetStore.getState();
-  store.setRoom({
-    code: state.code,
-    mission: state.name,
-    you: state.you,
-    role: me?.role ?? "player",
-    players: state.players,
-  });
-  store.setStatus("online");
-
-  setSender(sendIntent);
   reportNewFog();
 }
 

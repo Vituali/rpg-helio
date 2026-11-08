@@ -11,7 +11,7 @@ Isto é um **VTT**, não um RPG eletrônico.
 O computador **não joga**: ele apresenta o mapa e as ferramentas. Quem narra é o mestre; quem decide
 é o grupo. O que o software faz:
 
-- mapa com grade e **fog of war** (explorado compartilhado; visão por jogador chega na Fase 3);
+- mapa com grade e **fog of war** (explorado compartilhado; visão **individual por jogador**);
 - **tokens** que o mestre e os jogadores movem pelo mapa;
 - **permissão**: o mestre libera quem pode andar;
 - ferramentas de apoio: paredes, setores nomeados, medição, dados, fichas, handouts.
@@ -58,7 +58,8 @@ Portado para o projeto de verdade:
   só.
 
 O que ainda falta está em [`docs/ROADMAP.md`](docs/ROADMAP.md), e o quadro do momento em
-[`docs/KANBAN.md`](docs/KANBAN.md). O próximo item é o fog por jogador (Fase 3).
+[`docs/KANBAN.md`](docs/KANBAN.md). A Fase 3 (fog individual por jogador) está concluída; o próximo
+passo natural é a Fase 4.
 
 ## Arte
 
@@ -79,9 +80,9 @@ seletores de token e de mapa no painel lateral. O manifesto do mapa guarda tamb�
 altura** da imagem: com isso o botão `⊞` ao lado do mapa ajusta a grade ao formato dele — sem isso
 a imagem aparece esticada.
 
-O servidor multiplayer existe, e persistência, conta, Selo da Missão, entrada em páginas e promoção a
-mestre também (as seis entregas do slice "a sessão que sobrevive"). O próximo passo é a visão por
-jogador (Fase 3).
+O servidor multiplayer existe, e persistência, conta, Selo da Missão, entrada em páginas, promoção a
+mestre e **fog individual por jogador** também (as seis entregas do slice "a sessão que sobrevive" e
+a Fase 3). O próximo passo natural é a Fase 4.
 
 ## Rodando
 

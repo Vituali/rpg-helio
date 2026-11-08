@@ -20,7 +20,6 @@ import {
   PALETTE,
   TOOLS,
   clamp,
-  computeVision,
 } from "@helio/shared";
 import type { Cell, Tool, WallDisplayMode } from "@helio/shared";
 import { loadAssets, type AssetManifests, type MapEntry } from "../render/assets";
@@ -98,7 +97,6 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
   const fogMode = useGameStore((s) => s.fogMode);
   const gmMode = useGameStore((s) => s.gmMode);
   const fog = useGameStore((s) => s.fog);
-  const visibleNow = useGameStore((s) => s.visibleNow);
   const walls = useGameStore((s) => s.walls);
   const actors = useGameStore((s) => s.actors);
   const sectors = useGameStore((s) => s.sectors);
@@ -132,7 +130,7 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
   const [tool, setTool] = useState<UiTool>(TOOLS.MOVE);
   const [wallMode] = useState<WallDisplayMode>("invisible");
   const [showGmWallLines, setShowGmWallLines] = useState(true);
-  const [sharedVision, setSharedVision] = useState(false);
+
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [sectorDraft, setSectorDraft] = useState<
@@ -196,9 +194,9 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
   } | null>(null);
 
   // UI lida pelo loop de render (sem re-assinar callbacks)
-  const ui = useRef({ pan, zoom, tool, sectorDraft, wallMode, showGmWallLines, sharedVision, isMaster, youId });
+  const ui = useRef({ pan, zoom, sectorDraft, wallMode, showGmWallLines });
   useEffect(() => {
-    ui.current = { pan, zoom, tool, sectorDraft, wallMode, showGmWallLines, sharedVision, isMaster, youId };
+    ui.current = { pan, zoom, sectorDraft, wallMode, showGmWallLines };
   });
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -212,6 +210,7 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
     const { pan: p, zoom: z, sectorDraft: sd } = ui.current;
     const {
       fog: f,
+      visibleNow: vn,
       walls: w,
       edgeWalls: ew = [],
       edgeWindows: ewin = [],
@@ -533,9 +532,10 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
 
     // ── Fog of War ──
     if (!gm) {
-      // Jogador vê apenas o que seu token enxerga (visibleNow, calculado pelo store).
-      // GM vê tudo (bloco abaixo pula o fog inteiro).
-      const vf = visibleNow;
+      // Jogador vê apenas o que seu token enxerga (visibleNow, calculado pelo
+      // store e lido do getState() para não congelar no primeiro render).
+      // GM vê tudo (este bloco é pulado quando `gm`).
+      const vf = vn;
 
       if (fm === "hard") {
         for (let r = 0; r < nr; r++) {
@@ -1365,17 +1365,6 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
             >
               <IconMist size={15} />
               <span>{fogMode === "soft" ? "Bruma Suave" : "Bruma Densa"}</span>
-            </button>
-
-            <button
-              type="button"
-              className="occult-btn"
-              data-active={sharedVision}
-              onClick={() => setSharedVision((p) => !p)}
-              title="Alternar visão compartilhada de todos os agentes"
-            >
-              <IconEye size={14} />
-              <span>{sharedVision ? "Visão Grupo" : "Visão Individual"}</span>
             </button>
 
             {/* Alternar visualização das paredes invisíveis para o mestre */}

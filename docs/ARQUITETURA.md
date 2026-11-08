@@ -480,31 +480,30 @@ abrir a sala.
 
 ## Visão (fog of war) por jogador
 
-**Estado hoje (Fase 2):** o servidor já guarda `fogExplored` (o que a mesa já viu, compartilhado) e
-o cliente já reporta o que descobriu (`fog:discover`). O que **ainda não** está separado é a visão
-*atual*: `computeVision` continua rodando com todos os atores que o cliente recebe. Numa mesa de
-amigos isso é aceitável — o corte por jogador é a Fase 3, e está descrito abaixo.
-
-O protótipo original fazia `computeVision` com **todos** os tokens — isso vaza a visão dos outros.
-Em multiplayer a visão se divide em duas:
+**Estado hoje (Fase 3):** o servidor guarda `fogExplored` (o que a mesa já viu, compartilhado) e o
+cliente reporta o que descobriu (`fog:discover`). A visão *atual* é calculada **por jogador**: em
+partida online, `recomputeVision` usa só os atores com `ownerId` igual ao `you` da sessão; o mestre
+(modo local incluído) continua usando todos os atores. O `visibleNow` do store é a união do
+explorado com o raio atual dos tokens do jogador.
 
 | Conceito | Escopo | Onde vive | Persistente? |
 |---|---|---|---|
 | `fogExplored` | sala (todos veem o mesmo já-explorado) | servidor | sim |
-| `visibleNow` | ** por jogador** (raio do token dele) | cliente (Fase 3) | não |
+| `visibleNow` | **por jogador** (raio dos tokens dele) | cliente (store `gameStore`) | não |
 
 Render do fog para um jogador = união: `explored` (escuro, 62% de opacidade) + `visibleNow` (nítido).
 
-**Fase 1/3 inicial — confiança no grupo:** o servidor guarda `fogExplored`; o cliente calcula
-`visibleNow` localmente com o próprio token e envia ao servidor as células novas descobertas
-(`fog:discover`). Mas **o cliente não decide o que foi revelado**: o servidor recalcula a visão de
-todos os atores com `visibleCellsFrom` (a mesma função que o cliente usa) e descarta qualquer célula
-fora dela. Sem essa checagem, um jogador mandava o tabuleiro inteiro numa mensagem e apagava o fog
-de guerra de todo mundo. Ver `DECISOES.md` #15.
+**O que o servidor garante:** o cliente calcula o `visibleNow` localmente e envia as células novas
+(`fog:discover`), mas **não decide o que foi revelado**. Para cada jogador, o servidor recalcula com
+`visibleCellsFrom` o raio dos **tokens daquele jogador** (mestre: cena toda) e descarta qualquer
+célula fora dele. Sem essa checagem, um jogador mandava o tabuleiro inteiro numa mensagem e apagava
+o fog de guerra de todo mundo; sem o corte por jogador, ele revelava também o que só o token do
+colega via. Ver `DECISOES.md` #15.
 
-**Anti-cheat completo (depois):** o servidor calcula `visibleNow` **por jogador** e manda só o
+**Anti-cheat completo (depois):** o servidor calcula `visibleNow` por jogador e manda só o
 resultado pro cliente — aí o jogador nunca recebe o mapa inteiro. Custa CPU (raycast de ~660 células
-por token a cada passo), mas é barato na escala real. Documentado em `ROADMAP.md` Fase 3.
+por token a cada passo), mas é barato na escala real. Continua marcado como endurecimento opcional
+no `ROADMAP.md`.
 
 O GM ignora tudo isso: `gmMode` mostra o mapa inteiro.
 
@@ -609,8 +608,10 @@ Ainda não feito (anotado no ROADMAP):
   `server/scripts/harness.mjs`) — é o único ponto da suíte que fala com o banco em vez de falar HTTP.
 - **Missão não tem renomear.** O nome é escolhido na criação e o `PATCH` ainda não existe: quem
   errou o nome cria outra missão. Barato de resolver, e não interfere em nada.
-- **Visão por jogador (`visibleNow`):** hoje `fogExplored` é compartilhado e o cliente recebe **todos**
-  os atores, então um jogador vê o raio de visão dos outros tokens, não só o do dele.
+- **Anti-cheat de fog completo:** o jogador já vê só o raio dos tokens dele e o servidor já recusa
+  `fog:discover` fora desse raio, mas o cliente ainda recebe a cena inteira (geometria, atores) e
+  calcula `visibleNow` localmente. Esconder o mapa inteiro do cliente é o endurecimento opcional
+  descrito na Fase 3 do `ROADMAP.md`.
 - **O selo é o convite, e convite vaza.** Quem tem o endereço e o selo entra como jogador; o selo não
   é segredo forte, é difícil de adivinhar. Ser mestre exige **vínculo com a missão** (ou a senha de
   mestre, que é legado). Para mesa fechada de verdade, use a Opção C (Tailscale) do Caddyfile.

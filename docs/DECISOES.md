@@ -108,6 +108,12 @@ o servidor mesclando as células descobertas; anti-cheat (servidor calcula) fica
 **Consequências.** Cada jogador vê o que deveria. Custo de CPU no raycast é irrelevante nesta
 escala. Anti-cheat é um passo incremental, não uma reescrita.
 
+**Atualização (Fase 3).** Implementado: o cliente calcula `visibleNow` só com os atores cujo
+`ownerId` é o jogador da sessão (mestre e modo local usam todos); o servidor recalcula, no
+`fog:discover`, o raio dos tokens daquele jogador (mestre: cena toda) e recusa qualquer célula fora
+dele. O que continua opcional é o servidor **enviar só o recorte visível** — hoje o cliente ainda
+recebe a cena inteira.
+
 ---
 
 ## #7 — Sprites: PNG opcional com fallback procedural

@@ -229,6 +229,35 @@ check(
   "fog fora da visão de qualquer ator é recusado",
 );
 
+// 9b) Fase 3: o teto do jogador são os TOKENS DELE, não a união de todos.
+// Um NPC do mestre longe do jogador enxerga uma célula que o jogador não pode
+// descobrir — e o mestre continua podendo, porque a visão dele é a cena toda.
+const npcCell = { row: jogador.last.scene.rows - 1, col: jogador.last.scene.cols - 2 };
+gm.socket.emit("actor:add", {
+  actor: {
+    name: "NPC Fog",
+    row: npcCell.row,
+    col: npcCell.col + 1,
+    vision: 2,
+  },
+});
+await until(
+  () => gm.last.scene.actors.some((a) => a.name === "NPC Fog"),
+  "o NPC do mestre aparece",
+);
+jogador.socket.emit("fog:discover", { cells: [npcCell] });
+await sleep(400);
+check(
+  gm.last.scene.fogExplored[npcCell.row][npcCell.col] === 0,
+  "jogador não descobre o raio de visão de um NPC do mestre",
+);
+gm.socket.emit("fog:discover", { cells: [npcCell] });
+await until(
+  () => gm.last.scene.fogExplored[npcCell.row][npcCell.col] === 1,
+  "o mestre revela a célula vista pelo NPC",
+);
+check(true, "o mestre continua dono da cena inteira");
+
 // o ataque que existia antes: mandar o tabuleiro inteiro numa mensagem e
 // apagar o fog de guerra de todo mundo de uma vez.
 const tudo = [];

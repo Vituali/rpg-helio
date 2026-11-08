@@ -6,7 +6,8 @@ import {
   DEFAULT_COLS,
   DEFAULT_ROWS,
   FOG_NONE,
-  FOG_VIS,
+  FOG_REVEAL,
+  FOG_SEEN,
   SECTOR_COLORS,
   clamp,
   computeVision,
@@ -16,11 +17,10 @@ import {
   makeWalls,
   resizeGrid,
   uid,
-  visibleCellsFrom,
 } from "@helio/shared";
 import type { Actor, Cell, FogMode, FogValue, GameSnapshot, Sector } from "@helio/shared";
 import { isOnline, send } from "../net/bridge";
-import { useNetStore } from "../state/netStore";
+import { useNetStore } from "./netStore";
 
 /**
  * Store do jogo — a fonte da verdade NO CLIENTE.
@@ -321,28 +321,64 @@ export const useGameStore = create<GameState>()(
       },
 
       recomputeVision: () => {
-        const { fog, walls, edgeWalls, edgeWindows, actors, rows, cols } = get();
+        const { fog, walls, edgeWalls, edgeWindows, rows, cols } = get();
+        const { actors } = get();
+        const { status, role, you } = useNetStore.getState();
+
+        /*
+         * Fase 3: em partida online, `fog` guarda a união de duas coisas —
+         * o que o servidor já conhece (0/1/3) e a visão ATUAL dos meus tokens
+         * (2). Só os meus: usar a lista inteira faria o fog de cada jogador
+         * incluir o raio de visão dos colegas (docs/ARQUITETURA.md).
+         *
+         * No modo local (sem servidor) e para o mestre, todos os atores contam.
+         */
+        const mine =
+          status === "online" && role === "player"
+            ? actors.filter((a) => a.ownerId === you)
+            : actors;
+
         set({
-          fog: computeVision(fog, walls, actors, rows, cols, edgeWalls, edgeWindows),
+          fog: computeVision(fog, walls, mine, rows, cols, edgeWalls, edgeWindows),
         });
       },
       computeMyVisibleNow: () => {
-        const { walls, edgeWalls, edgeWindows, actors, rows, cols } = get();
-        const you = useNetStore.getState().you;
-        // Jogador vê apenas o que seus próprios atores enxergam.
-        // Se não houver `you` (modo local), usa todos os atores (compatível com Fase 0/1).
-        const myActors = you
-          ? actors.filter((a) => a.ownerId === you || a.id === get().activeActorId)
-          : actors;
+        const { fog, walls, edgeWalls, edgeWindows, actors, rows, cols } = get();
+        const { status, role, you } = useNetStore.getState();
+
+        // Mestre (e modo local) enxerga a cena inteira — o render nem aplica fog.
+        if (status !== "online" || role !== "player" || !you) {
+          set({ visibleNow: fog });
+          return;
+        }
+
+        // Visão ATUAL: só os tokens deste jogador.
+        const mine = actors.filter((a) => a.ownerId === you);
         const fresh = computeVision(
-          get().fog.map((row) => row.map((v) => FOG_NONE)),
+          fog.map((row) => row.map(() => FOG_NONE)),
           walls,
-          myActors,
+          mine,
           rows,
           cols,
           edgeWalls,
           edgeWindows,
         );
+
+        /*
+         * Memória: o que já foi explorado continua no mapa, só que escuro.
+         * FOG_REVEAL fica nítido (revelação permanente do mestre).
+         * FOG_VIS aqui é histórico local — `recomputeVision` acabou de
+         * converter o VIS anterior em SEEN antes de chegarmos aqui.
+         */
+        for (let r = 0; r < rows; r += 1) {
+          for (let c = 0; c < cols; c += 1) {
+            if (fresh[r][c] !== FOG_NONE) continue;
+            const explored = fog[r]?.[c] ?? FOG_NONE;
+            if (explored === FOG_REVEAL) fresh[r][c] = FOG_REVEAL;
+            else if (explored !== FOG_NONE) fresh[r][c] = FOG_SEEN;
+          }
+        }
+
         set({ visibleNow: fresh });
       },
 
