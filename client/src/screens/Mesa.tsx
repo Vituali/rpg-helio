@@ -1,3 +1,4 @@
+import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { useForm } from "react-hook-form";
@@ -77,7 +78,7 @@ export default function Mesa() {
 
   const onCriarMissao = async (data: CreateCampaignInput) => {
     const name = data.name?.trim() || undefined;
-    const result = await createCampaign(name);
+    const result = await createCampaign(name ?? "");
     if (result.ok && result.campaign) {
       setSeloNovo(result.campaign.code);
       setCode(result.campaign.code); // já deixa a missão nova escolhida

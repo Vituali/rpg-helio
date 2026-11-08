@@ -10,6 +10,7 @@ import {
   saveAdminSettings,
   setAccountAdmin,
   type AdminAccount,
+  type AdminSettings,
 } from "../net/auth";
 import { useSession } from "../state/sessionStore";
 import { IconLock, IconSigil, IconUnlock } from "../components/icons";
@@ -555,7 +556,7 @@ export default function Admin() {
             type="submit"
             className="occult-btn"
             disabled={
-              !escolhida || busy || senhaForm.formState.isSubmitting
+              !escolhida || !!busyAdmin || senhaForm.formState.isSubmitting
             }
             style={{ width: "100%", padding: "9px 12px" }}
           >

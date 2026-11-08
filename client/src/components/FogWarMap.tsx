@@ -209,7 +209,6 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
     const st = useGameStore.getState();
     const { pan: p, zoom: z, sectorDraft: sd } = ui.current;
     const {
-      fog: f,
       visibleNow: vn,
       walls: w,
       edgeWalls: ew = [],
