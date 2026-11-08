@@ -461,3 +461,25 @@ export function IconWallThin({ size = 16, ...props }: IconProps) {
     </svg>
   );
 }
+
+/** Janela / Grade Transparente */
+export function IconWindow({ size = 16, ...props }: IconProps) {
+  return (
+    <svg {...base(size, props)}>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <line x1="12" y1="3" x2="12" y2="21" />
+      <line x1="3" y1="12" x2="21" y2="12" />
+    </svg>
+  );
+}
+
+/** Teleporte / Portal */
+export function IconTeleport({ size = 16, ...props }: IconProps) {
+  return (
+    <svg {...base(size, props)}>
+      <circle cx="12" cy="12" r="9" strokeDasharray="3 3" />
+      <path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
+      <circle cx="12" cy="12" r="3" fill="currentColor" />
+    </svg>
+  );
+}

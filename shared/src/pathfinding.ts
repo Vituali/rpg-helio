@@ -28,29 +28,31 @@ export function isEdgeBlocked(
   edgeWalls: Set<string> | string[] | undefined,
   from: Cell,
   to: Cell,
+  edgeWindows?: Set<string> | string[] | undefined,
 ): boolean {
-  if (!edgeWalls) return false;
-  const set = edgeWalls instanceof Set ? edgeWalls : new Set(edgeWalls);
+  if (!edgeWalls && !edgeWindows) return false;
+  const setW = edgeWalls ? (edgeWalls instanceof Set ? edgeWalls : new Set(edgeWalls)) : null;
+  const setWin = edgeWindows ? (edgeWindows instanceof Set ? edgeWindows : new Set(edgeWindows)) : null;
   const dr = to.row - from.row;
   const dc = to.col - from.col;
 
+  let key = "";
   if (dr === -1 && dc === 0) {
     // movendo para cima (norte): cruza borda horizontal norte de `from` (row, col, 'h')
-    return set.has(`${from.row},${from.col},h`);
-  }
-  if (dr === 1 && dc === 0) {
+    key = `${from.row},${from.col},h`;
+  } else if (dr === 1 && dc === 0) {
     // movendo para baixo (sul): cruza borda horizontal norte de `to` (to.row, to.col, 'h')
-    return set.has(`${to.row},${to.col},h`);
-  }
-  if (dr === 0 && dc === -1) {
+    key = `${to.row},${to.col},h`;
+  } else if (dr === 0 && dc === -1) {
     // movendo para esquerda (oeste): cruza borda vertical oeste de `from` (row, col, 'v')
-    return set.has(`${from.row},${from.col},v`);
-  }
-  if (dr === 0 && dc === 1) {
+    key = `${from.row},${from.col},v`;
+  } else if (dr === 0 && dc === 1) {
     // movendo para direita (leste): cruza borda vertical oeste de `to` (to.row, to.col, 'v')
-    return set.has(`${to.row},${to.col},v`);
+    key = `${to.row},${to.col},v`;
   }
-  return false;
+
+  if (!key) return false;
+  return !!((setW && setW.has(key)) || (setWin && setWin.has(key)));
 }
 
 /**
@@ -67,6 +69,7 @@ export function findPath(
   rows: number,
   cols: number,
   edgeWalls?: Set<string> | string[],
+  edgeWindows?: Set<string> | string[],
 ): Cell[] | null {
   if (sameCell(start, goal)) return [];
 
@@ -76,6 +79,7 @@ export function findPath(
   if (blocked(goal.row, goal.col)) return null;
 
   const edges = edgeWalls ? (edgeWalls instanceof Set ? edgeWalls : new Set(edgeWalls)) : null;
+  const windows = edgeWindows ? (edgeWindows instanceof Set ? edgeWindows : new Set(edgeWindows)) : null;
 
   const key = (r: number, c: number) => r * cols + c;
   const startKey = key(start.row, start.col);
@@ -97,7 +101,7 @@ export function findPath(
       const nr = cur.row + dr;
       const nc = cur.col + dc;
       if (blocked(nr, nc)) continue;
-      if (edges && isEdgeBlocked(edges, cur, { row: nr, col: nc })) continue;
+      if (isEdgeBlocked(edges ?? undefined, cur, { row: nr, col: nc }, windows ?? undefined)) continue;
       const k = key(nr, nc);
       if (seen.has(k)) continue;
       seen.add(k);

@@ -62,6 +62,7 @@ export type Tool =
   | "move"
   | "wall"
   | "wall_edge"
+  | "wall_window"
   | "erase"
   | "reveal"
   | "hide"
@@ -85,8 +86,10 @@ export interface SceneConfig {
 export interface GameSnapshot extends SceneConfig {
   fog: FogValue[][];
   walls: boolean[][];
-  /** Paredes em arestas/bordas: "r,c,h" (borda horizontal norte) ou "r,c,v" (borda vertical oeste) */
+  /** Paredes em arestas/bordas (bloqueia movimento e visão): "r,c,h" ou "r,c,v" */
   edgeWalls?: string[];
+  /** Janelas/grades em arestas (bloqueia movimento MAS permite visão): "r,c,h" ou "r,c,v" */
+  edgeWindows?: string[];
   actors: Actor[];
   sectors: Sector[];
 }

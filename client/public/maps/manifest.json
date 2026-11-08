@@ -1,16 +1,16 @@
-﻿[
-    {
-        "id":  "dbase",
-        "name":  "D\u0027Base",
-        "src":  "/maps/dbase.jpg",
-        "w":  2400,
-        "h":  1579
-    },
-    {
-        "id":  "maze",
-        "name":  "Maze",
-        "src":  "/maps/maze.jpg",
-        "w":  2400,
-        "h":  2400
-    }
+[
+  {
+    "id": "dbase",
+    "name": "D'Base",
+    "src": "/maps/dbase.jpg",
+    "w": 6000,
+    "h": 3947
+  },
+  {
+    "id": "maze",
+    "name": "Maze",
+    "src": "/maps/maze.jpg",
+    "w": 6000,
+    "h": 6000
+  }
 ]

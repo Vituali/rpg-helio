@@ -5,7 +5,21 @@ import {
   makeFog,
   makeWalls,
 } from "@helio/shared";
-import type { Actor, FogMode, Role, Sector } from "@helio/shared";
+import type { Actor, Facing, FogMode, Role, Sector } from "@helio/shared";
+
+export interface MapState {
+  cols: number;
+  rows: number;
+  cell: number;
+  offsetX?: number;
+  offsetY?: number;
+  walls: boolean[][];
+  edgeWalls?: string[];
+  edgeWindows?: string[];
+  fogExplored: number[][];
+  /** Posições salvas dos atores neste mapa específico (chave: actor.id ou actor.name) */
+  actorPositions?: Record<string, { row: number; col: number; facing: Facing }>;
+}
 
 /**
  * Estado autoritativo da cena (servidor).
@@ -25,12 +39,16 @@ export interface ServerScene {
   walls: boolean[][];
   /** Paredes em aresta/borda ("r,c,h" ou "r,c,v") */
   edgeWalls?: string[];
+  /** Janelas em aresta/borda ("r,c,h" ou "r,c,v") */
+  edgeWindows?: string[];
   /** 0 = nunca visto · 1 = já explorado (compartilhado, permanente) */
   fogExplored: number[][];
   actors: Actor[];
   sectors: Sector[];
   /** Incrementa a cada mudança autoritativa — base para reconciliar no futuro. */
   version: number;
+  /** Estados independentes por cenário/mapa (armazenados pelo bgImage) */
+  savedMaps?: Record<string, MapState>;
 }
 
 export interface Player {
@@ -82,10 +100,12 @@ export function createScene(): ServerScene {
     fogMode: "soft",
     walls: makeWalls(DEFAULT_ROWS, DEFAULT_COLS),
     edgeWalls: [],
+    edgeWindows: [],
     fogExplored: makeFog(DEFAULT_ROWS, DEFAULT_COLS),
     actors: [],
     sectors: [],
     version: 0,
+    savedMaps: {},
   };
 }
 

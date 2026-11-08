@@ -1,6 +1,6 @@
 # CODE_MAP.MD — MAPA AUTOMATIZADO DO CÓDIGO (HELIO)
 
-> Gerado automaticamente por `tools/docgen.mjs` em: **2026-10-24T22:28:20.089Z**.
+> Gerado automaticamente por `tools/docgen.mjs` em: **2026-10-25T00:08:31.588Z**.
 > Não edite manualmente. Para atualizar este arquivo, execute: `node tools/docgen.mjs`.
 
 ## Pacote: Shared (`shared/src`)
@@ -143,7 +143,6 @@
 > Rotas HTTP do servidor (ADR #16, #18 e #19). Duas famílias: **auth** (entrar, sair, quem sou eu, criar conta) e **campanhas** (criar, listar e apagar missões) — mais o **painel do administrador** (ADR #23), que só lista contas e troca senha. O jogo em si não passa por aqui — continua no Socket.IO. A divisão é deliberada: tempo real e CRUD em módulos separados, para trocar um sem encostar no outro. O cookie é o ponto todo: como o Socket.IO lê os cookies do handshake, a identidade chega na conexão sem inventar mensagem nova.
 
 **Exports principais:**
-- `const registrationOpen`
 - `const adminAccount`
 - `fn isAdminAccount()`
 - `fn handleHttp()`
@@ -177,6 +176,7 @@
 > Sem descrição de cabeçalho.
 
 **Exports principais:**
+- `type MapState`
 - `type ServerScene`
 - `type Player`
 - `type Room`
@@ -193,6 +193,19 @@
 **Exports principais:**
 - `fn normalizeCode()`
 - `fn newSelo()`
+
+---
+
+### `server/src/settings.ts`
+> Configuração viva do servidor (ADR #25). Cadastro aberto e sala da casa nasceram como variáveis de ambiente: mudar exigia editar o `deploy/.env` e reiniciar o `app`. São decisões de operação — "fecha o cadastro agora", "a mesa do grupo virou outra" —, e reiniciar por isso é caro demais quando já existe um painel. O banco guarda o que o painel mudou (`app_setting`); o ambiente é o **padrão de fábrica**: vale num banco novo e quando o banco está fora. A partir do primeiro clique no painel, o banco manda — se o `.env` discordar, o painel ganha. O boot diz o que está valendo, para não haver dúvida. Sem banco não há como gravar: a rota do painel responde 503 e **nada muda na memória**. Dizer "troquei" e voltar no próximo boot seria pior do que recusar.
+
+**Exports principais:**
+- `type Settings`
+- `fn settings()`
+- `fn registrationOpen()`
+- `fn loadSettings()`
+- `type SettingsPatch`
+- `fn saveSettings()`
 
 ---
 
@@ -256,7 +269,7 @@
 - `fn IconReveal()`
 - `fn IconHide()`
 - `fn IconSector()`
-- *...e mais 25 declarações.*
+- *...e mais 27 declarações.*
 
 ---
 
@@ -282,7 +295,7 @@
 ---
 
 ### `client/src/net/auth.ts`
-> A API do servidor — contas e missões (docs/DECISOES.md #16, #18 e #19). Tudo vive sob `/api` (o Caddy manda o prefixo inteiro para o app), e as duas famílias são: /api/auth/*       entrar, sair e "quem sou eu" (ADR #16) /api/accounts     criar conta (ADR #19) /api/campaigns    criar, listar e apagar missões (ADR #18) /api/campaigns/:selo/role   dar/tirar o papel de mestre (ADR #22) /api/admin/*      listar contas e trocar senha (ADR #23) O cookie de sessão vai e volta sozinho (mesma origem), e é ele que o Socket.IO lê no handshake — depois do login, o `connect()` não precisa saber de nada disso. A senha NUNCA é guardada aqui: nem em estado, nem em localStorage. Só existe durante a requisição. O que fica no navegador é o cookie `HttpOnly`, que o JavaScript não enxerga de propósito.
+> A API do servidor — contas e missões (docs/DECISOES.md #16, #18 e #19). Tudo vive sob `/api` (o Caddy manda o prefixo inteiro para o app), e as duas famílias são: /api/auth/*       entrar, sair e "quem sou eu" (ADR #16) /api/accounts     criar conta (ADR #19) /api/settings     o que o servidor oferece hoje (ADR #25) /api/campaigns    criar, listar e apagar missões (ADR #18) /api/campaigns/:selo/role   dar/tirar o papel de mestre (ADR #22) /api/admin/*      contas, senha, administração e configuração (ADRs #23–#25) O cookie de sessão vai e volta sozinho (mesma origem), e é ele que o Socket.IO lê no handshake — depois do login, o `connect()` não precisa saber de nada disso. A senha NUNCA é guardada aqui: nem em estado, nem em localStorage. Só existe durante a requisição. O que fica no navegador é o cookie `HttpOnly`, que o JavaScript não enxerga de propósito.
 
 **Exports principais:**
 - `type Account`
@@ -291,11 +304,11 @@
 - `type CampaignsResult`
 - `type SessionInfo`
 - `fn loadSession()`
+- `type ServerSettings`
+- `fn getSettings()`
 - `fn login()`
 - `fn createAccount()`
-- `fn logout()`
-- `fn listCampaigns()`
-- *...e mais 8 declarações.*
+- *...e mais 14 declarações.*
 
 ---
 

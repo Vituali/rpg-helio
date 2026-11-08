@@ -31,13 +31,13 @@ export function canMove(
     return { ok: false, reason: "O mestre ainda não liberou seu movimento." };
   }
 
-  const { rows, cols, walls, edgeWalls } = room.scene;
+  const { rows, cols, walls, edgeWalls, edgeWindows } = room.scene;
   if (to.row < 0 || to.row >= rows || to.col < 0 || to.col >= cols) {
     return { ok: false, reason: "Fora do mapa." };
   }
   if (walls[to.row]?.[to.col]) return { ok: false, reason: "Parede." };
-  if (edgeWalls && isEdgeBlocked(edgeWalls, { row: actor.row, col: actor.col }, to)) {
-    return { ok: false, reason: "Bloqueado por parede do labirinto." };
+  if (isEdgeBlocked(edgeWalls, { row: actor.row, col: actor.col }, to, edgeWindows)) {
+    return { ok: false, reason: "Bloqueado por parede ou janela." };
   }
   if (!isAdjacent({ row: actor.row, col: actor.col }, to)) {
     return { ok: false, reason: "Um passo por vez." };

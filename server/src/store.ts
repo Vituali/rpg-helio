@@ -350,6 +350,19 @@ export async function ensureDefaultCampaign(code: string): Promise<void> {
  */
 interface PersistedActor extends Omit<Actor, "ownerId" | "path"> {}
 
+interface PersistedMapState {
+  cols: number;
+  rows: number;
+  cell: number;
+  offsetX?: number;
+  offsetY?: number;
+  walls: boolean[][];
+  edgeWalls?: string[];
+  edgeWindows?: string[];
+  fogExplored: number[][];
+  actorPositions?: Record<string, { row: number; col: number; facing: Facing }>;
+}
+
 interface PersistedScene {
   schemaVersion: number;
   cols: number;
@@ -361,9 +374,11 @@ interface PersistedScene {
   fogMode: FogMode;
   walls: boolean[][];
   edgeWalls?: string[];
+  edgeWindows?: string[];
   fogExplored: number[][];
   actors: PersistedActor[];
   sectors: Sector[];
+  savedMaps?: Record<string, PersistedMapState>;
 }
 
 export function persistableScene(room: Room): PersistedScene {
@@ -379,11 +394,13 @@ export function persistableScene(room: Room): PersistedScene {
     fogMode: s.fogMode,
     walls: s.walls,
     edgeWalls: s.edgeWalls ?? [],
+    edgeWindows: s.edgeWindows ?? [],
     fogExplored: s.fogExplored,
     actors: s.actors
       .filter((a) => a.ownerId === null && !room.pcActors.has(a.id))
       .map(({ ownerId: _o, path: _p, ...rest }) => rest),
     sectors: s.sectors,
+    savedMaps: s.savedMaps ?? {},
   };
 }
 
@@ -416,18 +433,19 @@ export function sceneFromPersisted(raw: unknown): ServerScene | null {
   const d = raw as Partial<PersistedScene>;
   if (numberOr(d.schemaVersion, 0) !== SCENE_SCHEMA) return null;
 
-  const rows = clamp(numberOr(d.rows, 22), 5, 60);
-  const cols = clamp(numberOr(d.cols, 30), 5, 80);
+  const rows = clamp(numberOr(d.rows, 22), 5, 120);
+  const cols = clamp(numberOr(d.cols, 30), 5, 120);
   const scene = createScene();
 
   scene.rows = rows;
   scene.cols = cols;
-  scene.cell = clamp(numberOr(d.cell, 48), 16, 96);
+  scene.cell = clamp(numberOr(d.cell, 48), 12, 160);
   scene.offsetX = numberOr(d.offsetX, 0);
   scene.offsetY = numberOr(d.offsetY, 0);
   scene.bgImage = typeof d.bgImage === "string" ? d.bgImage : null;
   scene.fogMode = d.fogMode === "hard" ? "hard" : "soft";
   scene.edgeWalls = Array.isArray(d.edgeWalls) ? d.edgeWalls.filter((x): x is string => typeof x === "string") : [];
+  scene.edgeWindows = Array.isArray(d.edgeWindows) ? d.edgeWindows.filter((x): x is string => typeof x === "string") : [];
 
   const walls = asGrid(d.walls).map((row) => row.map((v) => v === true));
   scene.walls = resizeGrid(walls, rows, cols, false);
@@ -470,6 +488,10 @@ export function sceneFromPersisted(raw: unknown): ServerScene | null {
       color: stringOr(p.color, "#d4a017").slice(0, 32),
     };
   });
+
+  if (d.savedMaps && typeof d.savedMaps === "object") {
+    scene.savedMaps = d.savedMaps as Record<string, PersistedMapState>;
+  }
 
   return scene;
 }

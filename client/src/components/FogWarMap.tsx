@@ -55,18 +55,22 @@ import {
   IconUpload,
   IconWall,
   IconWallThin,
+  IconWindow,
+  IconTeleport,
 } from "./icons";
 import { stepAnimations, type AnimMap } from "../render/animation";
 import { getImage } from "../render/images";
 import { drawActor, getSheet } from "../render/sprites";
 
-type UiTool = Tool | "pan";
+type UiTool = Tool | "pan" | "teleport";
 
 const TOOL_LIST: { id: UiTool; label: string; short: string; key: string; icon: ReactNode }[] = [
   { id: TOOLS.MOVE, label: "Mover", short: "Mover", key: "M", icon: <IconMove size={15} /> },
+  { id: "teleport", label: "Teleportar Token", short: "Teleporte", key: "T", icon: <IconTeleport size={15} /> },
   { id: "pan", label: "Câmera", short: "Câmera", key: "Espaço", icon: <IconPan size={15} /> },
   { id: TOOLS.WALL, label: "Bloco", short: "Bloco", key: "W", icon: <IconWall size={15} /> },
-  { id: TOOLS.WALL_EDGE, label: "Aresta", short: "Aresta", key: "A", icon: <IconWallThin size={15} /> },
+  { id: TOOLS.WALL_EDGE, label: "Parede Aresta", short: "Aresta", key: "A", icon: <IconWallThin size={15} /> },
+  { id: TOOLS.WALL_WINDOW, label: "Janela (Visão Livre)", short: "Janela", key: "J", icon: <IconWindow size={15} /> },
   { id: TOOLS.ERASE, label: "Apagar", short: "Apagar", key: "E", icon: <IconErase size={15} /> },
   { id: TOOLS.REVEAL, label: "Revelar", short: "Luz", key: "R", icon: <IconReveal size={15} /> },
   { id: TOOLS.HIDE, label: "Ocultar", short: "Névoa", key: "H", icon: <IconHide size={15} /> },
@@ -102,6 +106,7 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
   const online = useNetStore((s) => s.status === "online");
   const userRole = useNetStore((s) => s.role);
   const youId = useNetStore((s) => s.you);
+  const players = useNetStore((s) => s.players);
   const isMaster = !online || userRole === "gm";
 
   const setDims = useGameStore((s) => s.setDims);
@@ -166,6 +171,8 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
   const panStart = useRef<{ x: number; y: number } | null>(null);
   const dragTool = useRef<UiTool | null>(null);
   const isDragging = useRef(false);
+  const pointerDownPos = useRef<{ x: number; y: number } | null>(null);
+  const hasMovedBeyondThreshold = useRef(false);
   const lastPaint = useRef<Cell | null>(null);
   const sectorStart = useRef<Cell | null>(null);
   const anims = useRef<AnimMap>(new Map());
@@ -200,6 +207,7 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
       fog: f,
       walls: w,
       edgeWalls: ew = [],
+      edgeWindows: ewin = [],
       actors: t,
       sectors: sec,
       fogMode: fm,
@@ -217,6 +225,11 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
     const H = canvas.height;
     ctx.clearRect(0, 0, W, H);
     ctx.save();
+
+    // Habilita interpolação bicúbica de alta definição para o canvas e imagens
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+
     ctx.translate(p.x, p.y);
     ctx.scale(z, z);
 
@@ -366,6 +379,52 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
       }
     }
 
+    // ── Janelas / Grades por Aresta (Edge Windows - Ciano translúcido) ──
+    if (ewin.length > 0) {
+      const canRenderWindows =
+        ui.current.wallMode !== "invisible" || (gm && ui.current.showGmWallLines);
+
+      if (canRenderWindows) {
+        ctx.save();
+        for (const edge of ewin) {
+          const parts = edge.split(",");
+          if (parts.length < 3) continue;
+          const r = parseInt(parts[0], 10);
+          const c = parseInt(parts[1], 10);
+          const dir = parts[2];
+
+          const x = oxGrid + c * cs;
+          const y = oyGrid + r * cs;
+
+          ctx.beginPath();
+          if (dir === "h") {
+            ctx.moveTo(x, y);
+            ctx.lineTo(x + cs, y);
+          } else {
+            ctx.moveTo(x, y);
+            ctx.lineTo(x, y + cs);
+          }
+
+          if (ui.current.wallMode === "invisible") {
+            ctx.strokeStyle = "rgba(34, 211, 238, 0.55)";
+            ctx.lineWidth = 1.8;
+            ctx.setLineDash([4, 2]);
+            ctx.stroke();
+          } else {
+            ctx.strokeStyle = "rgba(6, 182, 212, 0.35)";
+            ctx.lineWidth = 5;
+            ctx.stroke();
+
+            ctx.strokeStyle = "#38bdf8";
+            ctx.lineWidth = 2.5;
+            ctx.setLineDash([5, 3]);
+            ctx.stroke();
+          }
+        }
+        ctx.restore();
+      }
+    }
+
     // ── Setores ──
     for (const s of sec) {
       const x1 = oxGrid + s.c1 * cs;
@@ -430,13 +489,6 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
 
       const cx = oxGrid + anim.rx * cs + cs / 2;
       const cy = oyGrid + anim.ry * cs + cs / 2;
-
-      // Anel do raio de visão
-      ctx.beginPath();
-      ctx.arc(cx, cy, actor.vision * cs, 0, Math.PI * 2);
-      ctx.strokeStyle = `${actor.color}28`;
-      ctx.lineWidth = 1;
-      ctx.stroke();
 
       // Caminho pendente (predição)
       if (actor.path.length > 0) {
@@ -679,6 +731,9 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
     if (t === TOOLS.MOVE) {
       const id = store.activeActorId;
       if (id) store.moveActorTo(id, g);
+    } else if (t === "teleport") {
+      const id = store.activeActorId;
+      if (id) store.teleportActor(id, g);
     } else if (t === TOOLS.WALL) {
       store.paintWalls([g], true);
     } else if (t === TOOLS.WALL_EDGE) {
@@ -686,11 +741,19 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
         const edge = canvasToEdge(clientX, clientY);
         if (edge) store.paintEdgeWalls([edge], "toggle");
       }
+    } else if (t === TOOLS.WALL_WINDOW) {
+      if (clientX !== undefined && clientY !== undefined) {
+        const edge = canvasToEdge(clientX, clientY);
+        if (edge) store.paintEdgeWindows([edge], "toggle");
+      }
     } else if (t === TOOLS.ERASE) {
       store.paintWalls([g], false);
       if (clientX !== undefined && clientY !== undefined) {
         const edge = canvasToEdge(clientX, clientY);
-        if (edge) store.paintEdgeWalls([edge], "clear");
+        if (edge) {
+          store.paintEdgeWalls([edge], "clear");
+          store.paintEdgeWindows([edge], "clear");
+        }
       }
     } else if (t === TOOLS.REVEAL) {
       store.paintFog([g], FOG_REVEAL);
@@ -754,6 +817,16 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
         return;
       }
 
+      pointerDownPos.current = { x: e.clientX, y: e.clientY };
+      hasMovedBeyondThreshold.current = false;
+
+      // Se for a ferramenta Mover: preparamos o pan com arrasto e deixamos o clique rápido mover
+      if (tool === TOOLS.MOVE || tool === "teleport") {
+        panStart.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
+        dragTool.current = tool;
+        return;
+      }
+
       const g = canvasToGrid(e.clientX, e.clientY);
       if (!g) return;
 
@@ -797,6 +870,15 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
         return;
       }
 
+      // Mede deslocamento desde o pointerDown
+      if (pointerDownPos.current) {
+        const dist = Math.hypot(e.clientX - pointerDownPos.current.x, e.clientY - pointerDownPos.current.y);
+        if (dist > 6) {
+          hasMovedBeyondThreshold.current = true;
+        }
+      }
+
+      // Pan com ferramenta câmera, botão do meio ou Alt
       if (dragTool.current === "pan" && panStart.current) {
         setPan({
           x: e.clientX - panStart.current.x,
@@ -804,6 +886,18 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
         });
         return;
       }
+
+      // Na ferramenta Mover ou Teleportar, se arrastou além do threshold de 6px, move a câmera!
+      if ((dragTool.current === TOOLS.MOVE || dragTool.current === "teleport") && panStart.current) {
+        if (hasMovedBeyondThreshold.current) {
+          setPan({
+            x: e.clientX - panStart.current.x,
+            y: e.clientY - panStart.current.y,
+          });
+        }
+        return;
+      }
+
       if (!isDragging.current) return;
       const g = canvasToGrid(e.clientX, e.clientY);
       if (!g) return;
@@ -817,7 +911,7 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
         });
         return;
       }
-      if (tool === TOOLS.MOVE || tool === "pan") return;
+      if (tool === TOOLS.MOVE || tool === "teleport" || tool === "pan") return;
 
       // Evita repintar a mesma célula enquanto arrasta
       const lp = lastPaint.current;
@@ -835,6 +929,16 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
         pinchState.current = null;
       }
 
+      // Se for a ferramenta Mover ou Teleportar: se NÃO arrastou além do threshold (foi um clique seco), aplica a ação!
+      if (dragTool.current === TOOLS.MOVE || dragTool.current === "teleport") {
+        if (!hasMovedBeyondThreshold.current) {
+          const g = canvasToGrid(e.clientX, e.clientY);
+          if (g) {
+            applyToolAt(g, dragTool.current, e.clientX, e.clientY);
+          }
+        }
+      }
+
       if (dragTool.current === TOOLS.SECTOR && sectorStart.current) {
         const g = canvasToGrid(e.clientX, e.clientY);
         if (g) {
@@ -848,9 +952,11 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
       isDragging.current = false;
       panStart.current = null;
       dragTool.current = null;
+      pointerDownPos.current = null;
+      hasMovedBeyondThreshold.current = false;
       lastPaint.current = null;
     },
-    [canvasToGrid],
+    [canvasToGrid, applyToolAt],
   );
 
   // ── Zoom (Scroll e Botões HUD) ────────────────────────────────────────────
@@ -912,6 +1018,7 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
       const k = e.key.toLowerCase();
 
       if (k === "m") setTool(TOOLS.MOVE);
+      if (k === "t" && isMaster) setTool("teleport");
       if (k === " ") {
         e.preventDefault();
         setTool((prev) => (prev === "pan" ? TOOLS.MOVE : "pan"));
@@ -1189,7 +1296,7 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
                 position: "absolute",
                 top: "calc(100% + 6px)",
                 left: 0,
-                zIndex: 100,
+                zIndex: 9999,
                 background: "rgba(18, 10, 32, 0.98)",
                 border: "1px solid rgba(217, 119, 6, 0.45)",
                 borderRadius: 8,
@@ -1411,7 +1518,11 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
           <div className="vtt-vignette" />
 
           {/* HUD Inferior Esquerdo: Controles de Zoom + Minimapa */}
-          <div className="vtt-hud-bottom-left">
+          <div
+            className="vtt-hud-bottom-left"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="vtt-zoom-pill">
               <button
                 type="button"
@@ -1513,7 +1624,11 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
 
           {/* D-Pad Tático para caminhar 1 casa (ótimo para Mobile) */}
           {showDpad && (
-            <div className="vtt-dpad">
+            <div
+              className="vtt-dpad"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+            >
               <div />
               <button
                 type="button"
@@ -2063,7 +2178,7 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
                             marginTop: 6,
                           }}
                         >
-                          <span style={{ color: "#9d8ec4", fontSize: 11, minWidth: 38 }}>
+                          <span style={{ color: "#9d8ec4", fontSize: 11, minWidth: 42 }}>
                             Token
                           </span>
                           <select
@@ -2075,7 +2190,7 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
                             }
                             onClick={(e) => e.stopPropagation()}
                           >
-                            <option value="">— Miniatura Procedural —</option>
+                            <option value="">— Miniatura Ritualística —</option>
                             {assets.tokens.map((t) => (
                               <option key={t.id} value={t.src}>
                                 {t.name}
@@ -2085,40 +2200,79 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
                         </div>
                       )}
 
-                      {/* Sprite & Coordenada (Apenas Mestre) */}
+                      {/* Controle do Token: Atribuir Jogador & Teleporte (Mestre) */}
                       {isMaster && (
                         <div
                           style={{
                             display: "flex",
                             alignItems: "center",
-                            justifyContent: "space-between",
-                            gap: 8,
+                            gap: 6,
                             marginTop: 6,
                           }}
                         >
-                          <span style={{ color: "#9d8ec4", fontSize: 11, minWidth: 38 }}>
-                            Sprite
+                          <span style={{ color: "#9d8ec4", fontSize: 11, minWidth: 42 }}>
+                            Dono
                           </span>
-                          <input
+                          <select
                             className="occult-input"
-                            style={{ width: 90, padding: "3px 6px", fontSize: 11 }}
-                            value={actor.sprite}
-                            onChange={(e) => updateActor(actor.id, { sprite: e.target.value })}
+                            style={{ flex: 1, minWidth: 0, padding: "3px 6px", fontSize: 11 }}
+                            value={actor.ownerId ?? ""}
+                            onChange={(e) => {
+                              const val = e.target.value || null;
+                              updateActor(actor.id, { ownerId: val });
+                            }}
                             onClick={(e) => e.stopPropagation()}
-                            title="Chave do spritesheet em /sprites/<chave>.png"
-                          />
-                          <span
-                            style={{
-                              color: "#8474a8",
-                              fontFamily: "var(--font-mono)",
-                              fontSize: 10,
-                              marginLeft: "auto",
+                            title="Entregar controle deste token para um jogador"
+                          >
+                            <option value="">— NPC / Mestre —</option>
+                            {players
+                              .filter((p) => p.role === "player")
+                              .map((p) => (
+                                <option key={p.id} value={p.id}>
+                                  👤 {p.name}
+                                </option>
+                              ))}
+                          </select>
+
+                          <button
+                            type="button"
+                            className="occult-btn occult-btn--gold"
+                            style={{ padding: "3px 7px", minHeight: 24, fontSize: 10 }}
+                            title="Teleportar este token"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setActiveActor(actor.id);
+                              setTool("teleport");
                             }}
                           >
-                            [{actor.col}, {actor.row}]
-                          </span>
+                            <IconTeleport size={11} />
+                            <span>Teleportar</span>
+                          </button>
                         </div>
                       )}
+
+                      {/* Coordenadas atuais */}
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          marginTop: 4,
+                          fontSize: 10,
+                          color: "#8474a8",
+                        }}
+                      >
+                        <span>
+                          {actor.ownerId
+                            ? `Controlado por: ${
+                                players.find((p) => p.id === actor.ownerId)?.name ?? "Jogador"
+                              }`
+                            : "Entidade Livre / NPC"}
+                        </span>
+                        <span style={{ fontFamily: "var(--font-mono)", color: "#c084fc" }}>
+                          [{actor.col}, {actor.row}]
+                        </span>
+                      </div>
                     </div>
                   );
                 })}

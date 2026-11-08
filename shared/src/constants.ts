@@ -25,6 +25,7 @@ export const TOOLS = {
   MOVE: "move",
   WALL: "wall",
   WALL_EDGE: "wall_edge",
+  WALL_WINDOW: "wall_window",
   ERASE: "erase",
   REVEAL: "reveal",
   HIDE: "hide",

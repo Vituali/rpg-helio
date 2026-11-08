@@ -45,6 +45,7 @@ export interface ServerScene {
   fogMode: FogMode;
   walls: boolean[][];
   edgeWalls?: string[];
+  edgeWindows?: string[];
   fogExplored: FogValue[][];
   actors: Actor[];
   sectors: Sector[];
@@ -102,6 +103,7 @@ export interface GameState {
   fog: FogValue[][];
   walls: boolean[][];
   edgeWalls: string[];
+  edgeWindows: string[];
   actors: Actor[];
   sectors: Sector[];
 
@@ -122,6 +124,7 @@ export interface GameState {
   clearWalls: () => void;
   paintWalls: (cells: Cell[], value: boolean) => void;
   paintEdgeWalls: (edges: string[], op: "set" | "clear" | "toggle") => void;
+  paintEdgeWindows: (edges: string[], op: "set" | "clear" | "toggle") => void;
   paintFog: (cells: Cell[], value: FogValue) => void;
   recomputeVision: () => void;
 
@@ -129,6 +132,7 @@ export interface GameState {
   addActor: (partial?: Partial<Actor>) => void;
   removeActor: (id: string) => void;
   updateActor: (id: string, patch: Partial<Actor>) => void;
+  teleportActor: (id: string, to: Cell) => void;
   setActiveActor: (id: string | null) => void;
   /** Enfileira caminho até `goal` (predição local; servidor valida na Fase 2). */
   moveActorTo: (id: string, goal: Cell) => void;
@@ -164,6 +168,7 @@ export const useGameStore = create<GameState>()((set, get) => ({
   fog: INITIAL_FOG,
   walls: INITIAL_WALLS,
   edgeWalls: [],
+  edgeWindows: [],
   actors: INITIAL_ACTORS,
   sectors: [],
 
@@ -260,6 +265,25 @@ export const useGameStore = create<GameState>()((set, get) => ({
     get().recomputeVision();
   },
 
+  paintEdgeWindows: (edges, op) => {
+    if (isOnline()) {
+      return send("map:edge-windows", { op, edges });
+    }
+    set((s) => {
+      const setEdges = new Set(s.edgeWindows);
+      for (const edge of edges) {
+        if (op === "set") setEdges.add(edge);
+        else if (op === "clear") setEdges.delete(edge);
+        else if (op === "toggle") {
+          if (setEdges.has(edge)) setEdges.delete(edge);
+          else setEdges.add(edge);
+        }
+      }
+      return { edgeWindows: Array.from(setEdges) };
+    });
+    get().recomputeVision();
+  },
+
   paintFog: (cells, value) => {
     if (isOnline()) {
       return send("map:fog", {
@@ -325,10 +349,18 @@ export const useGameStore = create<GameState>()((set, get) => ({
     }));
   },
 
+  teleportActor: (id, to) => {
+    if (isOnline()) send("actor:teleport", { id, row: to.row, col: to.col });
+    set((s) => ({
+      actors: s.actors.map((a) => (a.id === id ? { ...a, row: to.row, col: to.col, path: [] } : a)),
+    }));
+    get().recomputeVision();
+  },
+
   setActiveActor: (id) => set({ activeActorId: id }),
 
   moveActorTo: (id, goal) => {
-    const { walls, edgeWalls, rows, cols, actors } = get();
+    const { walls, edgeWalls, edgeWindows, rows, cols, actors } = get();
     const actor = actors.find((a) => a.id === id);
     if (!actor) return;
 
@@ -338,7 +370,7 @@ export const useGameStore = create<GameState>()((set, get) => ({
         ? actor.path[actor.path.length - 1]
         : { row: actor.row, col: actor.col };
 
-    const path = findPath(walls, start, goal, rows, cols, edgeWalls);
+    const path = findPath(walls, start, goal, rows, cols, edgeWalls, edgeWindows);
     if (!path) return;
 
     set((s) => ({
@@ -413,6 +445,7 @@ export const useGameStore = create<GameState>()((set, get) => ({
       fog: s.fog,
       walls: s.walls,
       edgeWalls: s.edgeWalls,
+      edgeWindows: s.edgeWindows,
       actors: s.actors,
       sectors: s.sectors,
     };
@@ -433,6 +466,7 @@ export const useGameStore = create<GameState>()((set, get) => ({
         fog: data.fog ?? s.fog,
         walls: data.walls ?? s.walls,
         edgeWalls: data.edgeWalls ?? s.edgeWalls,
+        edgeWindows: data.edgeWindows ?? s.edgeWindows,
         actors: data.actors ?? s.actors,
         sectors: data.sectors ?? s.sectors,
       };
@@ -454,6 +488,7 @@ export const useGameStore = create<GameState>()((set, get) => ({
         fogMode: scene.fogMode,
         walls: scene.walls,
         edgeWalls: scene.edgeWalls ?? [],
+        edgeWindows: scene.edgeWindows ?? [],
         sectors: scene.sectors,
         // O servidor guarda o fog no mesmo formato do cliente (0/1/3);
         // a visão atual (2) é recalculada logo abaixo.

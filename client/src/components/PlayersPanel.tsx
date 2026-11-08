@@ -185,7 +185,12 @@ export default function PlayersPanel() {
                       {" "}
                       · {actor.name}
                     </span>
-                  ) : null}
+                  ) : (
+                    <span style={{ color: "#ef4444", fontSize: 10, fontStyle: "italic" }}>
+                      {" "}
+                      (sem token)
+                    </span>
+                  )}
                 </span>
                 {p.role === "gm" && (
                   <span

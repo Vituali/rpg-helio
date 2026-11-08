@@ -610,6 +610,29 @@ io.on("connection", (socket) => {
     bump(room);
   });
 
+  socket.on("map:edge-windows", (msg) => {
+    const room = requireGm();
+    if (!room) return;
+    const m = msg as { op?: "set" | "clear" | "toggle"; edges?: string[] };
+    const edges = Array.isArray(m.edges) ? m.edges : [];
+    const current = new Set(room.scene.edgeWindows ?? []);
+
+    for (const edge of edges) {
+      if (typeof edge !== "string") continue;
+      if (m.op === "clear") {
+        current.delete(edge);
+      } else if (m.op === "set") {
+        current.add(edge);
+      } else {
+        // toggle
+        if (current.has(edge)) current.delete(edge);
+        else current.add(edge);
+      }
+    }
+    room.scene.edgeWindows = Array.from(current);
+    bump(room);
+  });
+
   socket.on("map:fog", (msg) => {
     const room = requireGm();
     if (!room) return;
@@ -636,6 +659,75 @@ io.on("connection", (socket) => {
       fogMode?: "soft" | "hard";
     };
 
+    // Se estiver trocando de cenário (bgImage mudando)
+    if (m.bgImage !== undefined && m.bgImage !== s.bgImage) {
+      if (!s.savedMaps) s.savedMaps = {};
+
+      // 1. Salva o estado do mapa atual (se houver imagem ou se for o mapa base)
+      const currentKey = s.bgImage ?? "__default__";
+      const actorPositions: Record<string, { row: number; col: number; facing: any }> = {};
+      for (const a of s.actors) {
+        actorPositions[a.name] = { row: a.row, col: a.col, facing: a.facing };
+      }
+      s.savedMaps[currentKey] = {
+        cols: s.cols,
+        rows: s.rows,
+        cell: s.cell,
+        offsetX: s.offsetX,
+        offsetY: s.offsetY,
+        walls: s.walls.map((r) => [...r]),
+        edgeWalls: [...(s.edgeWalls ?? [])],
+        edgeWindows: [...(s.edgeWindows ?? [])],
+        fogExplored: s.fogExplored.map((r) => [...r]),
+        actorPositions,
+      };
+
+      // 2. Restaura o estado do mapa de destino (se já foi visitado/configurado antes)
+      const targetKey = m.bgImage ?? "__default__";
+      const targetMap = s.savedMaps[targetKey];
+      s.bgImage = m.bgImage;
+
+      if (targetMap) {
+        s.cols = targetMap.cols;
+        s.rows = targetMap.rows;
+        s.cell = targetMap.cell;
+        s.offsetX = targetMap.offsetX ?? 0;
+        s.offsetY = targetMap.offsetY ?? 0;
+        s.walls = targetMap.walls.map((r) => [...r]);
+        s.edgeWalls = [...(targetMap.edgeWalls ?? [])];
+        s.edgeWindows = [...(targetMap.edgeWindows ?? [])];
+        s.fogExplored = targetMap.fogExplored.map((r) => [...r]);
+
+        // Reposiciona os atores nas coordenadas salvas desse mapa
+        if (targetMap.actorPositions) {
+          for (const a of s.actors) {
+            const pos = targetMap.actorPositions[a.name];
+            if (pos) {
+              a.row = clamp(pos.row, 0, s.rows - 1);
+              a.col = clamp(pos.col, 0, s.cols - 1);
+              a.facing = pos.facing ?? a.facing;
+            }
+          }
+        }
+      } else {
+        // Mapa novo: inicia limpo para este cenário em vez de herdar paredes e arestas do mapa anterior
+        // Se m.cols/rows/cell foram enviados no mesmo comando, usa-os
+        if (typeof m.cols === "number") s.cols = clamp(m.cols, 5, 120);
+        if (typeof m.rows === "number") s.rows = clamp(m.rows, 5, 120);
+        if (typeof m.cell === "number") s.cell = clamp(m.cell, 12, 160);
+        if (typeof m.offsetX === "number") s.offsetX = m.offsetX;
+        if (typeof m.offsetY === "number") s.offsetY = m.offsetY;
+        s.walls = resizeGrid([], s.rows, s.cols, false);
+        s.edgeWalls = [];
+        s.edgeWindows = [];
+        s.fogExplored = resizeGrid([], s.rows, s.cols, FOG_NONE);
+      }
+
+      if (m.fogMode === "soft" || m.fogMode === "hard") s.fogMode = m.fogMode;
+      bump(room);
+      return;
+    }
+
     if (typeof m.cols === "number" || typeof m.rows === "number") {
       const rows = clamp(Number(m.rows ?? s.rows), 5, 120);
       const cols = clamp(Number(m.cols ?? s.cols), 5, 120);
@@ -654,6 +746,19 @@ io.on("connection", (socket) => {
     if (typeof m.offsetY === "number") s.offsetY = m.offsetY;
     if (m.bgImage !== undefined) s.bgImage = m.bgImage;
     if (m.fogMode === "soft" || m.fogMode === "hard") s.fogMode = m.fogMode;
+
+    // Atualiza o snapshot do mapa ativo em savedMaps para que edições na geometria fiquem salvas
+    if (s.savedMaps) {
+      const activeKey = s.bgImage ?? "__default__";
+      if (s.savedMaps[activeKey]) {
+        s.savedMaps[activeKey].cols = s.cols;
+        s.savedMaps[activeKey].rows = s.rows;
+        s.savedMaps[activeKey].cell = s.cell;
+        s.savedMaps[activeKey].offsetX = s.offsetX;
+        s.savedMaps[activeKey].offsetY = s.offsetY;
+      }
+    }
+
     bump(room);
   });
 
@@ -687,9 +792,36 @@ io.on("connection", (socket) => {
     const { id, patch } = msg as { id?: string; patch?: Partial<Actor> };
     const actor = room.scene.actors.find((a) => a.id === id);
     if (!actor) return;
+
+    // Se o mestre estiver vinculando este ator a um jogador (ownerId mudou):
+    if (patch && "ownerId" in patch) {
+      const newOwnerId = patch.ownerId ?? null;
+      actor.ownerId = newOwnerId;
+      // Atualiza o vínculo do player no room
+      for (const p of room.players.values()) {
+        if (p.id === newOwnerId) {
+          p.actorId = actor.id;
+        } else if (p.actorId === actor.id && p.id !== newOwnerId) {
+          p.actorId = null;
+        }
+      }
+    }
+
     // `path` é predição do cliente, não existe no servidor.
-    const { path: _path, ...safe } = patch ?? {};
+    const { path: _path, ownerId: _oid, ...safe } = patch ?? {};
     Object.assign(actor, safe);
+    bump(room);
+  });
+
+  socket.on("actor:teleport", (msg) => {
+    const room = requireGm();
+    if (!room) return;
+    const { id, row, col } = msg as { id?: string; row?: number; col?: number };
+    const actor = room.scene.actors.find((a) => a.id === id);
+    if (!actor || typeof row !== "number" || typeof col !== "number") return;
+    actor.row = clamp(row, 0, room.scene.rows - 1);
+    actor.col = clamp(col, 0, room.scene.cols - 1);
+    actor.path = [];
     bump(room);
   });
 

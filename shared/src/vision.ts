@@ -23,7 +23,11 @@ function segmentsIntersect(
   const s = (-s1y * (p0x - p2x) + s1x * (p0y - p2y)) / denom;
   const t = (s2x * (p0y - p2y) - s2y * (p0x - p2x)) / denom;
 
-  return s > 0.001 && s < 1.001 && t >= -0.001 && t <= 1.001;
+  // t é o parâmetro ao longo do raio de visão [p0 -> p1] (de 0 a 1).
+  // s é o parâmetro ao longo da aresta da parede [p2 -> p3] (de 0 a 1).
+  // Se o raio atinge a quina/vértice da aresta (s próximo de 0 ou 1), ele é bloqueado
+  // para impedir que a luz vaze pelas frestas dos cantos entre duas arestas que se encontram.
+  return t >= 0.001 && t <= 0.999 && s >= -1e-4 && s <= 1 + 1e-4;
 }
 
 function edgeIntersectsRay(
@@ -55,8 +59,13 @@ function edgeIntersectsRay(
 }
 
 /**
- * Line of Sight por Bresenham: há visão de (r1,c1) para (r2,c2) se nenhuma
- * parede em bloco ou parede de borda bloquear o caminho entre os centros das células.
+ * Line of Sight com travessia exata de grade (Amanatides-Woo):
+ * Há visão de (r1,c1) para (r2,c2) se nenhuma parede em bloco ou parede de borda
+ * bloquear o caminho contínuo entre os centros das células.
+ *
+ * Ao cruzar exatamente o vértice/canto entre 4 células na diagonal, se qualquer uma
+ * das células adjacentes for uma parede sólida, o raio é bloqueado (impedindo vazamento
+ * de visão pelos cantos/quinas de paredes em bloco).
  */
 export function hasLOS(
   walls: boolean[][],
@@ -66,6 +75,8 @@ export function hasLOS(
   c2: number,
   edgeWalls?: Set<string> | string[],
 ): boolean {
+  if (r1 === r2 && c1 === c2) return true;
+
   if (edgeWalls) {
     const edges = edgeWalls instanceof Set ? edgeWalls : new Set(edgeWalls);
     for (const key of edges) {
@@ -73,31 +84,67 @@ export function hasLOS(
     }
   }
 
-  const dx = Math.abs(c2 - c1);
-  const dy = Math.abs(r2 - r1);
-  const sx = c1 < c2 ? 1 : -1;
-  const sy = r1 < r2 ? 1 : -1;
-  let err = dx - dy;
-  let cx = c1;
-  let cr = r1;
   const rows = walls.length;
   const cols = walls[0]?.length ?? 0;
 
+  const x0 = c1 + 0.5;
+  const y0 = r1 + 0.5;
+  const x1 = c2 + 0.5;
+  const y1 = r2 + 0.5;
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+
+  const stepX = dx > 0 ? 1 : dx < 0 ? -1 : 0;
+  const stepY = dy > 0 ? 1 : dy < 0 ? -1 : 0;
+
+  let currentX = c1;
+  let currentY = r1;
+
+  let tMaxX = stepX > 0 ? (currentX + 1 - x0) / dx : stepX < 0 ? (currentX - x0) / dx : Infinity;
+  let tMaxY = stepY > 0 ? (currentY + 1 - y0) / dy : stepY < 0 ? (currentY - y0) / dy : Infinity;
+
+  const tDeltaX = stepX !== 0 ? Math.abs(1 / dx) : Infinity;
+  const tDeltaY = stepY !== 0 ? Math.abs(1 / dy) : Infinity;
+
   let steps = 0;
-  while (steps++ < 200) {
-    if (cx === c2 && cr === r2) return true;
-    if (inBounds(cr, cx, rows, cols) && walls[cr][cx]) return false;
-    const e2 = 2 * err;
-    if (e2 > -dy) {
-      err -= dy;
-      cx += sx;
+  while ((currentX !== c2 || currentY !== r2) && steps++ < 300) {
+    if (Math.abs(tMaxX - tMaxY) < 1e-6) {
+      // O raio cruza exatamente a quina/canto entre 4 células
+      const adj1Y = currentY;
+      const adj1X = currentX + stepX;
+      const adj2Y = currentY + stepY;
+      const adj2X = currentX;
+
+      const wall1 = inBounds(adj1Y, adj1X, rows, cols) && walls[adj1Y][adj1X];
+      const wall2 = inBounds(adj2Y, adj2X, rows, cols) && walls[adj2Y][adj2X];
+
+      // Se o destino for uma das células adjacentes, podemos vê-la
+      if ((adj1Y === r2 && adj1X === c2) || (adj2Y === r2 && adj2X === c2)) {
+        // Alcançou o destino
+      } else if (wall1 || wall2) {
+        // Bloqueado pela quina da parede
+        return false;
+      }
+
+      currentX += stepX;
+      currentY += stepY;
+      tMaxX += tDeltaX;
+      tMaxY += tDeltaY;
+    } else if (tMaxX < tMaxY) {
+      currentX += stepX;
+      tMaxX += tDeltaX;
+    } else {
+      currentY += stepY;
+      tMaxY += tDeltaY;
     }
-    if (e2 < dx) {
-      err += dx;
-      cr += sy;
+
+    if (currentX === c2 && currentY === r2) break;
+    if (inBounds(currentY, currentX, rows, cols) && walls[currentY][currentX]) {
+      return false;
     }
   }
-  return false;
+
+  return true;
 }
 
 /**

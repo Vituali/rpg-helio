@@ -64,6 +64,17 @@ export function stepAnimations(
     const dy = target.row - anim.ry;
     const dist = Math.hypot(dx, dy);
 
+    // Se o ator foi teleportado pelo mestre (distância maior que 1.8 células sem caminho),
+    // posiciona imediatamente sem fazer o token cruzar o mapa correndo
+    if (dist > 1.8 && actor.path.length === 0) {
+      anim.rx = target.col;
+      anim.ry = target.row;
+      anim.moving = false;
+      anim.walkT = 0;
+      anim.facing = actor.facing;
+      continue;
+    }
+
     if (dist < 1e-4) {
       anim.rx = target.col;
       anim.ry = target.row;

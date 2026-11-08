@@ -1,4 +1,3 @@
-import { WALK_FPS } from "@helio/shared";
 import type { Facing } from "@helio/shared";
 
 /**
@@ -30,17 +29,6 @@ export interface SpriteSheet {
   /** Frames de caminhada por direção. */
   cols: number;
 }
-
-/** Ordem das linhas no spritesheet. */
-const DIRECTION_ROW: Record<Facing, number> = { s: 0, w: 1, e: 2, n: 3 };
-
-/** Deslocamento do rosto, para o ator "olhar" na direção certa. */
-const FACING_VEC: Record<Facing, { x: number; y: number }> = {
-  n: { x: 0, y: -1 },
-  s: { x: 0, y: 1 },
-  w: { x: -1, y: 0 },
-  e: { x: 1, y: 0 },
-};
 
 const cache = new Map<string, SpriteSheet>();
 
@@ -116,13 +104,12 @@ export interface ActorDraw {
 
 export function drawActor(
   ctx: CanvasRenderingContext2D,
-  sheet: SpriteSheet,
+  _sheet: SpriteSheet,
   p: ActorDraw,
 ): void {
-  const proceduralR = p.cell * 0.32;
-  const bodyR = p.portrait ? p.cell * 0.46 : proceduralR;
+  const bodyR = p.cell * 0.44;
 
-  // Sombra no chão
+  // Sombra suave no chão
   ctx.save();
   ctx.globalAlpha = 0.35;
   ctx.fillStyle = "#000";
@@ -131,7 +118,7 @@ export function drawActor(
     p.cx,
     p.cy + bodyR * 0.82,
     bodyR * 0.85,
-    bodyR * (p.portrait ? 0.28 : 0.34),
+    bodyR * 0.28,
     0,
     0,
     Math.PI * 2,
@@ -141,27 +128,17 @@ export function drawActor(
 
   if (p.portrait) {
     drawToken(ctx, p.portrait, p, bodyR);
-  } else if (sheet.image) {
-    drawSheet(ctx, sheet, p);
   } else {
-    drawProcedural(ctx, p, proceduralR);
+    drawTokenFallback(ctx, p, bodyR);
   }
 
-  // Anel ritualístico do ator selecionado
+  // Apenas 1 anel ao redor do token: Dourado quando selecionado, ou anel sutil do token se não selecionado
   if (p.active) {
     ctx.save();
     ctx.beginPath();
-    ctx.arc(p.cx, p.cy, bodyR * 1.24, 0, Math.PI * 2);
+    ctx.arc(p.cx, p.cy, bodyR + 2.5, 0, Math.PI * 2);
     ctx.strokeStyle = "#fbbf24";
-    ctx.lineWidth = 2;
-    ctx.setLineDash([5, 3]);
-    ctx.stroke();
-
-    ctx.beginPath();
-    ctx.arc(p.cx, p.cy, bodyR * 1.12, 0, Math.PI * 2);
-    ctx.strokeStyle = "rgba(192, 132, 252, 0.85)";
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([]);
+    ctx.lineWidth = 2.5;
     ctx.stroke();
     ctx.restore();
   }
@@ -222,96 +199,37 @@ function drawToken(
   ctx.drawImage(img, p.cx - r, p.cy - r, r * 2, r * 2);
   ctx.restore();
 
-  // Anel na cor do dono
+  // Borda única do token na cor do ator
   ctx.beginPath();
   ctx.arc(p.cx, p.cy, r, 0, Math.PI * 2);
   ctx.strokeStyle = p.color;
-  ctx.lineWidth = Math.max(2, r * 0.14);
-  ctx.stroke();
-
-  // Brilho interno, dá profundidade
-  ctx.beginPath();
-  ctx.arc(p.cx, p.cy, r, Math.PI, Math.PI * 2);
-  ctx.strokeStyle = "rgba(255,255,255,0.18)";
-  ctx.lineWidth = Math.max(1, r * 0.1);
+  ctx.lineWidth = Math.max(1.8, r * 0.08);
   ctx.stroke();
 }
 
-function drawSheet(
-  ctx: CanvasRenderingContext2D,
-  sheet: SpriteSheet,
-  p: ActorDraw,
-): void {
-  const img = sheet.image;
-  if (!img) return;
-
-  const frame = p.moving ? Math.floor(p.walkT * WALK_FPS) % sheet.cols : 0;
-  const row = DIRECTION_ROW[p.facing];
-
-  const dw = p.cell * 1.1;
-  const dh = p.cell * 1.1;
-  ctx.drawImage(
-    img,
-    frame * sheet.frameW,
-    row * sheet.frameH,
-    sheet.frameW,
-    sheet.frameH,
-    p.cx - dw / 2,
-    p.cy - dh * 0.72,
-    dw,
-    dh,
-  );
-}
-
-function drawProcedural(
+/**
+ * Token procedural circular quando não há retrato em imagem.
+ * Mantém o formato idêntico de token circular.
+ */
+function drawTokenFallback(
   ctx: CanvasRenderingContext2D,
   p: ActorDraw,
   r: number,
 ): void {
-  const swing = p.moving ? Math.sin(p.walkT * 12) * r * 0.5 : 0;
-  const bob = p.moving ? Math.abs(Math.sin(p.walkT * 12)) * r * 0.08 : 0;
-  const cy = p.cy - bob;
-  const dir = FACING_VEC[p.facing];
-
-  // Pernas
-  ctx.fillStyle = "#1f1733";
-  const legW = r * 0.34;
-  const legH = r * 0.75;
-  roundRect(ctx, p.cx - r * 0.5 + swing, cy + r * 0.05, legW, legH, legW * 0.4);
-  ctx.fill();
-  roundRect(ctx, p.cx + r * 0.16 - swing, cy + r * 0.05, legW, legH, legW * 0.4);
-  ctx.fill();
-
-  // Corpo
-  roundRect(ctx, p.cx - r * 0.62, cy - r * 0.55, r * 1.24, r * 1.15, r * 0.4);
-  ctx.fillStyle = p.color;
-  ctx.fill();
-  ctx.strokeStyle = "rgba(0,0,0,0.35)";
-  ctx.lineWidth = 1;
-  ctx.stroke();
-
-  // Cabeça
+  ctx.save();
   ctx.beginPath();
-  ctx.arc(p.cx, cy - r * 0.95, r * 0.48, 0, Math.PI * 2);
-  ctx.fillStyle = "#e8e3ff";
+  ctx.arc(p.cx, p.cy, r, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(20, 12, 36, 0.95)";
   ctx.fill();
-  ctx.strokeStyle = "rgba(0,0,0,0.3)";
+  ctx.strokeStyle = p.color;
+  ctx.lineWidth = Math.max(1.8, r * 0.08);
   ctx.stroke();
 
-  // Olhos, apontando para a direção encarada
-  const ex = dir.x * r * 0.16;
-  const ey = dir.y * r * 0.16;
-  const perp = { x: -dir.y, y: dir.x };
-  ctx.fillStyle = "#2a1f45";
-  for (const s of [-1, 1]) {
-    ctx.beginPath();
-    ctx.arc(
-      p.cx + ex + perp.x * r * 0.16 * s,
-      cy - r * 0.95 + ey + perp.y * r * 0.16 * s,
-      r * 0.075,
-      0,
-      Math.PI * 2,
-    );
-    ctx.fill();
-  }
+  // Sigilo inicial com as 2 primeiras letras
+  ctx.fillStyle = p.color;
+  ctx.font = `700 ${Math.round(r * 0.72)}px 'Cinzel', Georgia, serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(p.label.slice(0, 2).toUpperCase(), p.cx, p.cy);
+  ctx.restore();
 }
