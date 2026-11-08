@@ -4,6 +4,9 @@ Cada fase termina em algo **utilizável e demonstrável**. Nada de "metade de tu
 
 Legenda: ✅ feito · 🔜 próximo · ⬜ pendente
 
+**v1.0 = Fases 0–3** — o VTT jogável: mapa, tokens, multiplayer autoritativo, sessão que sobrevive,
+papéis/permissões e fog individual por jogador. O que vem depois da Fase 3 é polimento pós-1.0.
+
 ---
 
 ## Fase 0 — Estrutura e estado ✅
@@ -122,18 +125,29 @@ resultado, sem mandar a cena inteira — continua opcional e não muda a experi�
 
 ## Fase 4 — Polimento ⬜
 
-- 🟡 **RBAC de verdade**: contas, sessão assinada, papel de mestre pelo **vínculo** com a missão
-  (ADRs #16 e #19) e a **outorga do papel pelo próprio mestre** (ADR #22) já existem; falta a permissão
-  por token e o `GM_KEY` sair — o que depende de recuperação de senha e revogação de sessão. É o passo
-  para virar projeto e não só mesa de amigos; planejado para escalar.
+O núcleo do VTT já está de pé. Esta fase é o que separa "mesa de amigos" de "projeto que escala".
+
+Já feito (não estava previsto para cá, mas saiu junto):
+
+- ✅ **RBAC por token**: além do global, cada ator tem `canMove`, validado no servidor e editável no
+  painel do mestre.
+- ✅ **Reconexão pela sessão**: cair, dar F5 ou voltar no dia seguinte reencontra a mesma conta e o
+  mesmo token (o servidor reaproveita o ator pelo nome da conta em vez de criar outro).
+- ✅ **Testes de `shared/`**: suíte vitest com 42 testes (grade, LOS/visão, pathfinding, constantes, id).
+
+Falta:
+
+- ⬜ **Aposentar o `GM_KEY`**: depende de recuperação de senha self-service e revogação de sessão.
+  Hoje o painel `/admin` troca senha, mas o `GM_KEY` segue como escapatória de mestre.
 - ⬜ Voz (WebRTC) — Socket.IO já é a sinalização
 - ⬜ Rolagem de dados com histórico
 - ⬜ Fichas de personagem (Ordem Paranormal customizado)
 - ⬜ Chat e log de eventos
 - ⬜ Biblioteca de mapas e tokens (upload pelo GM)
 - ⬜ Deploy "sem Docker": Node SEA + Caddy `.exe` num PS1 (ver `DEPLOY.md`)
-- ⬜ Reconexão robusta e reentrada pelo mesmo `actorId`
-- ⬜ Testes automatizados de `shared/` (colisão, LOS, pathfinding, validação)
+- ⬜ Arrastar token do mestre para o jogador
+- ⬜ Anti-cheat completo: servidor envia só o recorte visível, sem mandar a cena inteira
+- ⬜ CI com smoke de ponta a ponta (hoje o workflow cobre typecheck, testes de `shared/` e build)
 
 ---
 

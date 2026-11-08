@@ -14,7 +14,8 @@ O computador **não joga**: ele apresenta o mapa e as ferramentas. Quem narra é
 - mapa com grade e **fog of war** (explorado compartilhado; visão **individual por jogador**);
 - **tokens** que o mestre e os jogadores movem pelo mapa;
 - **permissão**: o mestre libera quem pode andar;
-- ferramentas de apoio: paredes, setores nomeados, medição, dados, fichas, handouts.
+- ferramentas de apoio: paredes finas/invisíveis/janelas, setores nomeados, minimapa e
+  export/import da cena. Dados, fichas e handouts estão no roadmap (Fase 4), ainda não no jogo.
 
 O que **não** é, e não pretende ser:
 
@@ -58,8 +59,9 @@ Portado para o projeto de verdade:
   só.
 
 O que ainda falta está em [`docs/ROADMAP.md`](docs/ROADMAP.md), e o quadro do momento em
-[`docs/KANBAN.md`](docs/KANBAN.md). A Fase 3 (fog individual por jogador) está concluída; o próximo
-passo natural é a Fase 4.
+[`docs/KANBAN.md`](docs/KANBAN.md). Com a Fase 3 (fog individual por jogador), o **núcleo da v1.0**
+está fechado: mapa, tokens, multiplayer, sessão que sobrevive, papéis/permissões e fog individual.
+O que vem depois é a **Fase 4** (polimento: dados, fichas, chat, voz, biblioteca de mapas).
 
 ## Arte
 
