@@ -146,6 +146,19 @@ function applyState(state: ServerState): void {
   setSender(sendIntent);
   game.applyServerScene(state.scene);
 
+  /*
+   * O jogador entra com o próprio token já selecionado. Sem isto, depois de um
+   * F5 as setas ficam mudas até ele clicar no token no painel — a permissão de
+   * andar está viva, mas o cliente não sabe qual ator mover.
+   */
+  if ((me?.role ?? "player") === "player") {
+    const mine = state.scene.actors.filter((a) => a.ownerId === state.you);
+    const current = useGameStore.getState().activeActorId;
+    if (mine.length > 0 && !mine.some((a) => a.id === current)) {
+      useGameStore.getState().setActiveActor(mine[0].id);
+    }
+  }
+
   for (const a of state.scene.actors) {
     confirmed.set(a.id, { row: a.row, col: a.col });
   }

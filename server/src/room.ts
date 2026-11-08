@@ -81,12 +81,28 @@ export interface Room {
   scene: ServerScene;
   players: Map<string, Player>;
   /**
+   * Liberação geral de movimento por conta, não por socket. O socket morre no
+   * F5; a conta não. Sem isto, uma reconexão no meio da partida travava o
+   * agente de novo, mesmo com o mestre tendo liberado o movimento.
+   *
+   * Vive enquanto a sala viver — permissão é da sessão, não do banco.
+   */
+  moveAllowed: Map<string, boolean>;
+  /**
    * Tokens criados para jogadores (via `room:join`). NÃO são persistidos: um
    * token de jogador pertence à sessão, e o `ownerId` dele é um socket, que não
    * sobrevive a um restart. Gravar isso seria gravar lixo. Volta a existir
    * quando o jogador entra de novo.
    */
   pcActors: Set<string>;
+}
+
+/** Chave estável da permissão: a conta, ou o nome quando não há conta. */
+export function permissionKey(
+  accountId: string | null,
+  name: string,
+): string {
+  return accountId ? `acc:${accountId}` : `name:${name.toLowerCase()}`;
 }
 
 export function createScene(): ServerScene {
@@ -120,6 +136,7 @@ export function createRoom(
     campaignId,
     scene: createScene(),
     players: new Map(),
+    moveAllowed: new Map(),
     pcActors: new Set(),
   };
 }

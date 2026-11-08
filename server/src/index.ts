@@ -27,7 +27,13 @@ import { dbEnabled } from "./db.js";
 import { handleHttp, adminAccount } from "./http.js";
 import { onRoleChange } from "./live.js";
 import { migrate } from "./migrate.js";
-import { createRoom, publicState, type Player, type Room } from "./room.js";
+import {
+  createRoom,
+  permissionKey,
+  publicState,
+  type Player,
+  type Room,
+} from "./room.js";
 import { normalizeCode } from "./selo.js";
 import { loadSettings, registrationOpen, settings } from "./settings.js";
 import {
@@ -481,13 +487,17 @@ io.on("connection", (socket) => {
     // O nome vem da conta: não há campo de nome na entrada (ADR #20/#21).
     const name = account.name;
 
+    // A permissão é da conta, não do socket: o F5 troca o socket e não pode
+    // travar de novo quem o mestre já liberou.
+    const moveAllowedKey = permissionKey(account.accountId, name);
+
     const player: Player = {
       id: socket.id,
       name,
       role,
       accountId: account.accountId,
       actorId: null,
-      canMoveGlobal: false,
+      canMoveGlobal: room.moveAllowed.get(moveAllowedKey) ?? false,
     };
     room.players.set(socket.id, player);
     socket.join(room.code);
@@ -885,7 +895,17 @@ io.on("connection", (socket) => {
     };
     if (m.playerId && typeof m.canMoveGlobal === "boolean") {
       const p = room.players.get(m.playerId);
-      if (p) p.canMoveGlobal = m.canMoveGlobal;
+      if (p) {
+        const key = permissionKey(p.accountId, p.name);
+        // Guarda pela conta para sobreviver ao F5; aplica em todas as abas
+        // abertas com a mesma conta.
+        room.moveAllowed.set(key, m.canMoveGlobal);
+        for (const other of room.players.values()) {
+          if (permissionKey(other.accountId, other.name) === key) {
+            other.canMoveGlobal = m.canMoveGlobal;
+          }
+        }
+      }
     }
     if (m.actorId && typeof m.canMove === "boolean") {
       const a = room.scene.actors.find((x) => x.id === m.actorId);

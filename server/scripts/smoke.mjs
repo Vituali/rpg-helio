@@ -172,6 +172,45 @@ check(
   `mestre e jogador concordam na posição (${cellOf(gm, myActor.id)})`,
 );
 
+// 5b) F5 no meio da partida: a permissão é da conta, não do socket
+jogador.socket.disconnect();
+await until(
+  () => gm.last?.players.every((p) => p.role === "gm"),
+  "o mestre vê o agente sair",
+);
+jogador.socket.connect();
+await joined(jogador);
+const rejoin = await join(jogador);
+check(rejoin?.ok === true, "o agente reconecta depois do F5");
+check(
+  me(jogador)?.canMoveGlobal === true,
+  "a liberação de movimento sobrevive à reconexão",
+);
+check(
+  jogador.last.scene.actors.length === 1,
+  "a reconexão não duplica o token",
+);
+check(
+  jogador.last.scene.actors[0]?.ownerId === jogador.last.you,
+  "o token reencontra o dono depois do F5",
+);
+const depoisDoF5 = actorOf(jogador, myActor.id);
+const antesDoPasso = cellOf(jogador, myActor.id);
+jogador.errors.length = 0;
+jogador.socket.emit("actor:intent-move", {
+  actorId: myActor.id,
+  row: depoisDoF5.row + 1,
+  col: depoisDoF5.col,
+});
+await until(
+  () => cellOf(jogador, myActor.id) !== antesDoPasso,
+  "o token anda depois do F5",
+);
+check(
+  jogador.errors.length === 0,
+  "movimento continua liberado depois da reconexão",
+);
+
 // 6) parede bloqueia
 const agora = actorOf(jogador, myActor.id);
 gm.socket.emit("map:walls", {
