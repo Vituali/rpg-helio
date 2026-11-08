@@ -154,10 +154,10 @@ function applyState(state: ServerState): void {
 
 /** Conta ao servidor o que o token do jogador passou a enxergar. */
 function reportNewFog(): void {
-  const { fog } = useGameStore.getState();
+  const { visibleNow } = useGameStore.getState();
   const fresh: Cell[] = [];
-  for (let r = 0; r < fog.length; r += 1) {
-    const row = fog[r];
+  for (let r = 0; r < visibleNow.length; r += 1) {
+    const row = visibleNow[r];
     if (!row) continue;
     for (let c = 0; c < row.length; c += 1) {
       if (row[c] !== FOG_VIS) continue;

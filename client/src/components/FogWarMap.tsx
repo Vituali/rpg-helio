@@ -98,6 +98,7 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
   const fogMode = useGameStore((s) => s.fogMode);
   const gmMode = useGameStore((s) => s.gmMode);
   const fog = useGameStore((s) => s.fog);
+  const visibleNow = useGameStore((s) => s.visibleNow);
   const walls = useGameStore((s) => s.walls);
   const actors = useGameStore((s) => s.actors);
   const sectors = useGameStore((s) => s.sectors);
@@ -115,6 +116,7 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
   const setBgImage = useGameStore((s) => s.setBgImage);
   const setFogMode = useGameStore((s) => s.setFogMode);
   const toggleGm = useGameStore((s) => s.toggleGm);
+  const computeMyVisibleNow = useGameStore((s) => s.computeMyVisibleNow);
   const resetFog = useGameStore((s) => s.resetFog);
   const clearWalls = useGameStore((s) => s.clearWalls);
   const addActor = useGameStore((s) => s.addActor);
@@ -161,6 +163,11 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
       alive = false;
     };
   }, []);
+
+  // Recalcula a visão individual (visibleNow) quando os atores ou o jogador logado mudam.
+  useEffect(() => {
+    computeMyVisibleNow();
+  }, [actors, computeMyVisibleNow, youId]);
 
   // ── Refs ──────────────────────────────────────────────────────────────────
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -526,31 +533,14 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
 
     // ── Fog of War ──
     if (!gm) {
-      // Determina quais atores contam para a visão deste jogador (perspectiva de visão única)
-      const isSoloPerspective = !ui.current.isMaster && !ui.current.sharedVision && ui.current.youId;
-      let effectiveFog = f;
-      if (isSoloPerspective) {
-        // Encontra o ator ou atores controlados por este jogador
-        const myActors = t.filter(
-          (a) => a.ownerId === ui.current.youId || a.id === activeId,
-        );
-        if (myActors.length > 0) {
-          // Calcula a visão local exclusiva destes atores
-          effectiveFog = computeVision(
-            f.map((row) => row.map((v) => (v === FOG_VIS ? 1 : v) as any)),
-            w,
-            myActors,
-            nr,
-            nc,
-            ew,
-          );
-        }
-      }
+      // Jogador vê apenas o que seu token enxerga (visibleNow, calculado pelo store).
+      // GM vê tudo (bloco abaixo pula o fog inteiro).
+      const vf = visibleNow;
 
       if (fm === "hard") {
         for (let r = 0; r < nr; r++) {
           for (let c = 0; c < nc; c++) {
-            const fv = effectiveFog[r]?.[c] ?? FOG_NONE;
+            const fv = vf[r]?.[c] ?? FOG_NONE;
             if (fv === FOG_NONE) {
               ctx.fillStyle = PALETTE.fog0;
               ctx.fillRect(oxGrid + c * cs, oyGrid + r * cs, cs, cs);
@@ -580,11 +570,11 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
           ox.fillStyle = PALETTE.fog0;
           ox.fillRect(0, 0, offW, offH);
 
-          // Recorta o que está visível agora
+          // Recorta o que está visível agora (visibleNow do jogador)
           ox.globalCompositeOperation = "destination-out";
           for (let r = 0; r < nr; r++) {
             for (let c = 0; c < nc; c++) {
-              if ((effectiveFog[r]?.[c] ?? FOG_NONE) >= FOG_VIS) {
+              if ((vf[r]?.[c] ?? FOG_NONE) >= FOG_VIS) {
                 ox.globalAlpha = 1;
                 ox.fillRect(c * cs, r * cs, cs, cs);
               }
@@ -595,7 +585,7 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
           // Já explorado: escurece parcialmente
           for (let r = 0; r < nr; r++) {
             for (let c = 0; c < nc; c++) {
-              if ((effectiveFog[r]?.[c] ?? FOG_NONE) === 1) {
+              if ((vf[r]?.[c] ?? FOG_NONE) === 1) {
                 ox.globalAlpha = 0.62;
                 ox.fillStyle = "#04020a";
                 ox.fillRect(c * cs, r * cs, cs, cs);
@@ -617,12 +607,12 @@ export default function FogWarMap({ onExit }: FogWarMapProps = {}) {
           ];
           for (let r = 0; r < nr; r++) {
             for (let c = 0; c < nc; c++) {
-              if ((effectiveFog[r]?.[c] ?? 0) < FOG_VIS) continue;
+              if ((vf[r]?.[c] ?? 0) < FOG_VIS) continue;
               for (const [dr, dc] of neighbors) {
                 const nr2 = r + dr;
                 const nc2 = c + dc;
                 if (nr2 < 0 || nr2 >= nr || nc2 < 0 || nc2 >= nc) continue;
-                if ((effectiveFog[nr2]?.[nc2] ?? 0) !== FOG_NONE) continue;
+                if ((vf[nr2]?.[nc2] ?? 0) !== FOG_NONE) continue;
                 const grd = ox.createLinearGradient(
                   c * cs + cs / 2,
                   r * cs + cs / 2,

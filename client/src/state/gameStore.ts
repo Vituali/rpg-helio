@@ -6,6 +6,7 @@ import {
   DEFAULT_COLS,
   DEFAULT_ROWS,
   FOG_NONE,
+  FOG_VIS,
   SECTOR_COLORS,
   clamp,
   computeVision,
@@ -15,9 +16,11 @@ import {
   makeWalls,
   resizeGrid,
   uid,
+  visibleCellsFrom,
 } from "@helio/shared";
 import type { Actor, Cell, FogMode, FogValue, GameSnapshot, Sector } from "@helio/shared";
 import { isOnline, send } from "../net/bridge";
+import { useNetStore } from "../state/netStore";
 
 /**
  * Store do jogo — a fonte da verdade NO CLIENTE.
@@ -101,6 +104,8 @@ export interface GameState {
 
   // conteúdo
   fog: FogValue[][];
+  /** Visão atual do jogador logado (apenas o que SEU token enxerga). 0/2. */
+  visibleNow: FogValue[][];
   walls: boolean[][];
   edgeWalls: string[];
   edgeWindows: string[];
@@ -127,6 +132,8 @@ export interface GameState {
   paintEdgeWindows: (edges: string[], op: "set" | "clear" | "toggle") => void;
   paintFog: (cells: Cell[], value: FogValue) => void;
   recomputeVision: () => void;
+  /** Recalcula a visão individual (visibleNow) baseada nos atores deste jogador. */
+  computeMyVisibleNow: () => void;
 
   // ── ações de ator ──
   addActor: (partial?: Partial<Actor>) => void;
@@ -168,6 +175,7 @@ export const useGameStore = create<GameState>()(
       gmMode: false,
 
       fog: INITIAL_FOG,
+      visibleNow: INITIAL_FOG,
       walls: INITIAL_WALLS,
       edgeWalls: [],
       edgeWindows: [],
@@ -189,6 +197,7 @@ export const useGameStore = create<GameState>()(
           walls: resizeGrid(s.walls, r, c, false),
         }));
         get().recomputeVision();
+        get().computeMyVisibleNow();
       },
 
       setCell: (cell) => {
@@ -237,6 +246,7 @@ export const useGameStore = create<GameState>()(
           edgeWindows: [],
         }));
         get().recomputeVision();
+        get().computeMyVisibleNow();
       },
 
       paintWalls: (cells, value) => {
@@ -251,6 +261,7 @@ export const useGameStore = create<GameState>()(
           return { walls };
         });
         get().recomputeVision();
+        get().computeMyVisibleNow();
       },
 
       paintEdgeWalls: (edges, op) => {
@@ -270,6 +281,7 @@ export const useGameStore = create<GameState>()(
           return { edgeWalls: Array.from(setEdges) };
         });
         get().recomputeVision();
+        get().computeMyVisibleNow();
       },
 
       paintEdgeWindows: (edges, op) => {
@@ -289,6 +301,7 @@ export const useGameStore = create<GameState>()(
           return { edgeWindows: Array.from(setEdges) };
         });
         get().recomputeVision();
+        get().computeMyVisibleNow();
       },
 
       paintFog: (cells, value) => {
@@ -313,6 +326,25 @@ export const useGameStore = create<GameState>()(
           fog: computeVision(fog, walls, actors, rows, cols, edgeWalls, edgeWindows),
         });
       },
+      computeMyVisibleNow: () => {
+        const { walls, edgeWalls, edgeWindows, actors, rows, cols } = get();
+        const you = useNetStore.getState().you;
+        // Jogador vê apenas o que seus próprios atores enxergam.
+        // Se não houver `you` (modo local), usa todos os atores (compatível com Fase 0/1).
+        const myActors = you
+          ? actors.filter((a) => a.ownerId === you || a.id === get().activeActorId)
+          : actors;
+        const fresh = computeVision(
+          get().fog.map((row) => row.map((v) => FOG_NONE)),
+          walls,
+          myActors,
+          rows,
+          cols,
+          edgeWalls,
+          edgeWindows,
+        );
+        set({ visibleNow: fresh });
+      },
 
       // ── atores ──
       addActor: (partial) => {
@@ -336,6 +368,7 @@ export const useGameStore = create<GameState>()(
           return { actors: [...s.actors, actor], activeActorId: actor.id };
         });
         get().recomputeVision();
+        get().computeMyVisibleNow();
       },
 
       removeActor: (id) => {
@@ -349,6 +382,7 @@ export const useGameStore = create<GameState>()(
           };
         });
         get().recomputeVision();
+        get().computeMyVisibleNow();
       },
 
       updateActor: (id, patch) => {
@@ -364,6 +398,7 @@ export const useGameStore = create<GameState>()(
           actors: s.actors.map((a) => (a.id === id ? { ...a, row: to.row, col: to.col, path: [] } : a)),
         }));
         get().recomputeVision();
+        get().computeMyVisibleNow();
       },
 
       setActiveActor: (id) => set({ activeActorId: id }),
@@ -411,6 +446,7 @@ export const useGameStore = create<GameState>()(
         // Andar é predição local; o servidor valida e desfaz se negar.
         send("actor:intent-move", { actorId: id, row: step.row, col: step.col });
         get().recomputeVision();
+        get().computeMyVisibleNow();
       },
 
       clearActorPath: (id) => {
@@ -481,6 +517,7 @@ export const useGameStore = create<GameState>()(
           };
         });
         get().recomputeVision();
+        get().computeMyVisibleNow();
       },
 
       // ── rede ──
@@ -511,6 +548,7 @@ export const useGameStore = create<GameState>()(
           };
         });
         get().recomputeVision();
+        get().computeMyVisibleNow();
       },
 
       snapActorTo: (id, at) => {
@@ -522,6 +560,7 @@ export const useGameStore = create<GameState>()(
           ),
         }));
         get().recomputeVision();
+        get().computeMyVisibleNow();
       },
     }),
     {
