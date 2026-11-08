@@ -50,6 +50,17 @@ describe("hasLOS", () => {
   });
 });
 
+describe("hasLOS com edge walls em diagonal", () => {
+  it("edge wall bloqueia travessia diagonal em canto", () => {
+    // (0,0) -> (1,1) cruza o canto entre (0,1) e (1,0)
+    // Se qualquer uma for parede, a quina bloqueia
+    expect(hasLOS(walls3x3([{ row: 0, col: 1 }]), 0, 0, 1, 1)).toBe(false);
+    expect(hasLOS(walls3x3([{ row: 1, col: 0 }]), 0, 0, 1, 1)).toBe(false);
+    // Sem parede adjacente, a diagonal é livre
+    expect(hasLOS(walls3x3([]), 0, 0, 1, 1)).toBe(true);
+  });
+});
+
 describe("visibleCellsFrom", () => {
   it("retorna células dentro do raio com LOS", () => {
     const origin: Cell = { row: 1, col: 1 };

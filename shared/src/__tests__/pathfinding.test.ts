@@ -134,4 +134,30 @@ describe("findPath", () => {
     );
     expect(path).toBeNull();
   });
+
+  it("edge windows são consideradas junto com edge walls", () => {
+    const walls = emptyWalls(1, 3);
+    // (0,0) -> (0,1) bloqueado por wall, (0,1) -> (0,2) bloqueado por window
+    const path = findPath(
+      walls,
+      { row: 0, col: 0 },
+      { row: 0, col: 2 },
+      1,
+      3,
+      ["0,1,v"],
+      ["0,2,v"],
+    );
+    expect(path).toBeNull();
+  });
+
+  it("caminho contorna parede quando existe rota alternativa", () => {
+    const walls = emptyWalls(3, 3);
+    walls[1][1] = true; // centro bloqueado
+    const path = findPath(walls, { row: 0, col: 0 }, { row: 2, col: 2 }, 3, 3);
+    expect(path).not.toBeNull();
+    // Caminho deve evitar (1,1)
+    for (const cell of path) {
+      expect(cell.row !== 1 || cell.col !== 1).toBe(true);
+    }
+  });
 });
